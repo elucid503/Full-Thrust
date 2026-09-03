@@ -26,6 +26,9 @@ public static class Program {
         HullMassProperties();
         MeridianStage();
         AttitudeHolds();
+        OrbitGeometry();
+        ManeuverNodes();
+        ReactionControl();
 
         Console.WriteLine();
         Console.WriteLine($"{_checks - _failures}/{_checks} checks passed");
@@ -76,6 +79,32 @@ public static class Program {
 
         Close("shortest arc between opposing axes", QuaternionD.FromTo(Vector3d.UnitZ, -Vector3d.UnitZ).Rotate(Vector3d.UnitZ), -Vector3d.UnitZ, 1e-12);
         Close("shortest arc onto a new axis", QuaternionD.FromTo(Vector3d.UnitZ, Vector3d.UnitX).Rotate(Vector3d.UnitZ), Vector3d.UnitX, 1e-14);
+
+        foreach ((Vector3d nose, Vector3d dorsal) in new[] {
+
+            (Vector3d.UnitX, Vector3d.UnitZ),
+            (Vector3d.UnitZ, Vector3d.UnitY),
+            (-Vector3d.UnitZ, Vector3d.UnitX),
+            (new Vector3d(0.3, -0.9, 0.31), new Vector3d(-0.5, 0.2, 0.84)),
+            (new Vector3d(1.0, 0.0, 0.0), new Vector3d(2.0, 0.0, 0.0)),
+
+        }) {
+
+            QuaternionD aimed = QuaternionD.LookAlong(nose, dorsal);
+
+            Close($"look along {nose} puts the nose on target", aimed.Rotate(Vector3d.UnitZ), nose.Normalized, 1e-12);
+            Near($"look along {nose} stays orthonormal", Vector3d.Dot(aimed.Rotate(Vector3d.UnitX), aimed.Rotate(Vector3d.UnitY)), 0.0, 1e-12);
+            Near($"look along {nose} keeps handedness", Vector3d.Dot(Vector3d.Cross(aimed.Rotate(Vector3d.UnitX), aimed.Rotate(Vector3d.UnitY)), aimed.Rotate(Vector3d.UnitZ)), 1.0, 1e-12);
+
+            Vector3d wanted = dorsal - nose.Normalized * Vector3d.Dot(dorsal, nose.Normalized);
+
+            if (wanted.LengthSquared > 1e-12) {
+
+                Close($"look along {nose} rolls to the reference", aimed.Rotate(Vector3d.UnitY), wanted.Normalized, 1e-12);
+
+            }
+
+        }
 
         QuaternionD spun = QuaternionD.Identity;
 
@@ -492,7 +521,7 @@ public static class Program {
         Near("radial points away from the body", Vector3d.Dot(radial, vessel.Position.Normalized), 1.0, 1e-12);
         Close("retrograde opposes prograde", Autopilot.Reference(AttitudeHold.Retrograde, vessel.Position, vessel.Velocity), -prograde, 1e-12);
 
-        Autopilot autopilot = new Autopilot { MaxTorque = Meridian.ControlTorque, Hold = AttitudeHold.Prograde };
+        Autopilot autopilot = new Autopilot { Hold = AttitudeHold.Prograde };
 
         vessel.Orientation = QuaternionD.FromTo(Vector3d.UnitZ, -prograde);
 
@@ -527,6 +556,197 @@ public static class Program {
         }
 
         Near("a stability hold kills the rotation", vessel.AngularVelocity.Length, 0.0, 1e-3);
+
+    }
+
+    private static void OrbitGeometry() {
+
+        Section("orbit geometry");
+
+        Orbit orbit = Orbit.FromStateVectors(new Vector3d(1344200.0, 0.0, 0.0), Rotated(new Vector3d(0.0, 3900.0, 0.0), 0.45), Home.Mu, 0.0);
+
+        double worst = 0.0;
+
+        for (int sample = 0; sample <= 400; sample++) {
+
+            double time = orbit.Period * sample / 400.0;
+
+            (Vector3d state, _) = orbit.StateAt(time);
+
+            Vector3d traced = orbit.PositionAtTrueAnomaly(orbit.TrueAnomalyAt(time));
+
+            worst = Math.Max(worst, (traced - state).Length);
+
+        }
+
+        Near("the traced path follows the propagated state", worst, 0.0, 1e-6);
+
+        Near("periapsis radius from the conic", orbit.RadiusAtTrueAnomaly(0.0), orbit.PeriapsisRadius, 1e-6);
+        Near("apoapsis radius from the conic", orbit.RadiusAtTrueAnomaly(Math.PI), orbit.ApoapsisRadius, 1e-6);
+
+        double toApoapsis = orbit.TimeToApoapsis(0.0);
+
+        (Vector3d atApoapsis, _) = orbit.StateAt(toApoapsis);
+
+        Near("time to apoapsis lands on apoapsis", atApoapsis.Length, orbit.ApoapsisRadius, 1e-3);
+        Expect("time to apoapsis is within one period", toApoapsis >= 0.0 && toApoapsis <= orbit.Period, $"{toApoapsis:F1} s of {orbit.Period:F1} s");
+
+        (Vector3d atPeriapsis, _) = orbit.StateAt(orbit.TimeToPeriapsis(0.0));
+
+        Near("time to periapsis lands on periapsis", atPeriapsis.Length, orbit.PeriapsisRadius, 1e-3);
+
+        Vector3d ascending = orbit.PositionAtTrueAnomaly(orbit.AscendingNodeTrueAnomaly);
+        Vector3d descending = orbit.PositionAtTrueAnomaly(orbit.DescendingNodeTrueAnomaly);
+
+        Near("the ascending node lies in the reference plane", ascending.Z, 0.0, 1e-6);
+        Near("the descending node lies in the reference plane", descending.Z, 0.0, 1e-6);
+
+        (_, Vector3d climbing) = orbit.StateAt(orbit.TimeToTrueAnomaly(0.0, orbit.AscendingNodeTrueAnomaly));
+
+        Expect("the vessel is climbing at the ascending node", climbing.Z > 0.0, $"z rate {climbing.Z:F3} m/s");
+
+        Near("the plane normal is a unit vector", orbit.PlaneNormal.Length, 1.0, 1e-12);
+        Near("the plane normal carries the inclination", Math.Acos(orbit.PlaneNormal.Z), orbit.Inclination, 1e-12);
+
+        Orbit escape = Orbit.FromStateVectors(new Vector3d(1474200.0, 0.0, 0.0), new Vector3d(500.0, 4800.0, 1200.0), Home.Mu, 0.0);
+
+        Expect("an open conic reports a finite anomaly limit", escape.TrueAnomalyLimit < Math.PI, $"{escape.TrueAnomalyLimit:F3} rad");
+        Near("a hyperbolic true anomaly round trips", escape.PositionAtTrueAnomaly(escape.TrueAnomalyAt(600.0)).Length, escape.StateAt(600.0).Position.Length, 1e-3);
+
+    }
+
+    private static void ManeuverNodes() {
+
+        Section("maneuver nodes");
+
+        double radius = 1344200.0;
+        double circular = Home.CircularVelocityAt(70000.0);
+
+        Orbit orbit = Orbit.FromStateVectors(new Vector3d(radius, 0.0, 0.0), new Vector3d(0.0, circular, 0.0), Home.Mu, 0.0);
+
+        Maneuver node = new Maneuver { Time = orbit.Period * 0.5, Prograde = 200.0 };
+
+        Near("delta-v is the magnitude of the components", node.DeltaV, 200.0, 1e-12);
+
+        Orbit raised = node.Result(orbit);
+
+        Near("a prograde burn leaves periapsis at the node", raised.PeriapsisRadius, radius, 1.0);
+        Expect("a prograde burn raises apoapsis", raised.ApoapsisRadius > radius + 100000.0, $"apoapsis {raised.ApoapsisRadius - Home.Radius:F0} m");
+        Near("and leaves the plane alone", raised.Inclination, orbit.Inclination, 1e-9);
+
+        Maneuver plane = new Maneuver { Time = orbit.Period * 0.25, Normal = 400.0 };
+
+        Orbit tilted = plane.Result(orbit);
+
+        Expect("a normal burn tilts the plane", tilted.Inclination > 0.1, $"inclination {tilted.Inclination:F4} rad");
+        Near("and holds the speed", tilted.SpeedAt(radius), Math.Sqrt(circular * circular + 400.0 * 400.0), 1e-6);
+
+        Vessel vessel = Meridian.Build();
+
+        double burn = new Maneuver { Prograde = 500.0 }.BurnSeconds(vessel);
+
+        double exhaust = Meridian.SpecificImpulse * Vessel.StandardGravity;
+        double expected = vessel.Mass * (1.0 - Math.Exp(-500.0 / exhaust)) / vessel.MassFlowRate;
+
+        Near("burn time follows the rocket equation", burn, expected, 1e-9);
+        Expect("a burn beyond the tank is impossible", double.IsInfinity(new Maneuver { Prograde = vessel.DeltaV * 2.0 }.BurnSeconds(vessel)), "reported a finite burn");
+
+        Maneuver centred = new Maneuver { Time = 1000.0, Prograde = 500.0 };
+
+        Near("ignition is half a burn before the node", centred.IgnitionTime(vessel), 1000.0 - burn * 0.5, 1e-9);
+
+        // Flying the impulse as a real burn should land close to the conic the node predicted.
+        Vessel flown = Meridian.Build();
+
+        (flown.Position, flown.Velocity) = orbit.StateAt(centred.IgnitionTime(flown));
+
+        flown.Orientation = QuaternionD.FromTo(Vector3d.UnitZ, flown.Velocity.Normalized);
+        flown.Throttle = 1.0;
+
+        double step = 1.0 / 240.0;
+        double elapsed = 0.0;
+
+        while (elapsed < burn) {
+
+            Integrator.Step(flown, Home, step);
+
+            elapsed += step;
+
+        }
+
+        Orbit achieved = flown.OrbitAround(Home, 0.0);
+        Orbit predicted = centred.Result(orbit);
+
+        Near("a flown burn matches the predicted apoapsis", achieved.ApoapsisRadius, predicted.ApoapsisRadius, predicted.ApoapsisRadius * 0.02);
+
+    }
+
+    private static void ReactionControl() {
+
+        Section("reaction control");
+
+        Vessel vessel = Meridian.Build();
+
+        Near("the split rejoins the tank", vessel.FuelMass + vessel.OxidiserMass, vessel.PropellantMass, 1e-9);
+        Near("oxidiser leads at the mixture ratio", vessel.OxidiserMass / vessel.FuelMass, vessel.MixtureRatio, 1e-12);
+
+        Expect("a loaded cluster is live", vessel.HasRcs, "cluster reported dry");
+
+        Autopilot autopilot = new Autopilot();
+
+        vessel.RcsEnabled = false;
+        autopilot.ManualCommand = Vector3d.UnitX;
+        autopilot.Update(vessel, 1.0 / 60.0);
+
+        Near("a disabled cluster raises no torque", vessel.ControlTorque.Length, 0.0, 1e-12);
+
+        vessel.RcsEnabled = true;
+        autopilot.Update(vessel, 1.0 / 60.0);
+
+        Near("an enabled cluster raises full torque", vessel.ControlTorque.X, Meridian.ControlTorque, 1e-9);
+
+        double duty = vessel.RcsDuty;
+        double before = vessel.RcsPropellantMass;
+
+        Integrator.StepAttitude(vessel, 1.0);
+
+        Near("firing spends the bottle at the rated flow", before - vessel.RcsPropellantMass, duty * vessel.RcsMassFlowRate, 1e-9);
+
+        vessel.ControlTorque = Vector3d.Zero;
+        autopilot.ManualCommand = Vector3d.Zero;
+
+        before = vessel.RcsPropellantMass;
+
+        Integrator.StepAttitude(vessel, 10.0);
+
+        Near("a converged hold spends nothing", vessel.RcsPropellantMass, before, 1e-12);
+
+        vessel.TranslationCommand = Vector3d.UnitZ;
+        vessel.Orientation = QuaternionD.Identity;
+
+        Close("translation pushes along the commanded body axis", vessel.RcsForce.Normalized, Vector3d.UnitZ, 1e-12);
+        Near("at a third of the cluster rating", vessel.RcsForce.Length, Meridian.RcsThrustNewtons / 3.0, 1e-9);
+
+        vessel.RcsPropellantMass = 0.0;
+
+        Near("a dry cluster pushes nothing", vessel.RcsForce.Length, 0.0, 1e-12);
+        Expect("and is not accelerating", !vessel.IsAccelerating, "reported acceleration");
+
+        Vessel drained = Meridian.Build();
+
+        drained.TranslationCommand = Vector3d.UnitZ;
+
+        double seconds = 0.0;
+
+        while (drained.RcsPropellantMass > 0.0 && seconds < 10000.0) {
+
+            Integrator.StepAttitude(drained, 0.25);
+
+            seconds += 0.25;
+
+        }
+
+        Expect("the bottle outlasts a long trim", seconds > 200.0, $"dry after {seconds:F0} s");
 
     }
 

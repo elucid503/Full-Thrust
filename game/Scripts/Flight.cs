@@ -19,6 +19,9 @@ public sealed partial class Flight : Node {
 
     private const double ThrottleRate = 0.6;
 
+    // Warp is stepped down so that whatever factor is running still leaves this long before ignition.
+    private const double WarpMargin = 12.0;
+
     public static readonly double[] WarpFactors = { 1.0, 2.0, 5.0, 10.0, 50.0, 100.0, 1000.0 };
 
     public static Flight Active { get; private set; }
@@ -27,6 +30,11 @@ public sealed partial class Flight : Node {
     public Vessel Vessel { get; private set; }
 
     public Autopilot Autopilot { get; private set; }
+
+    /// <summary>The planned impulse, or null when nothing is planned.</summary>
+    public Maneuver Node { get; private set; }
+
+    public bool WarpingToNode { get; private set; }
 
     public double Time { get; private set; }
 
@@ -44,7 +52,7 @@ public sealed partial class Flight : Node {
         Body = BodyCatalog.Home;
         Vessel = Meridian.Build();
 
-        Autopilot = new Autopilot { MaxTorque = Meridian.ControlTorque };
+        Autopilot = new Autopilot();
 
         double radius = Body.Radius + StartAltitude;
         double speed = Body.CircularVelocityAt(StartAltitude);
@@ -58,7 +66,8 @@ public sealed partial class Flight : Node {
         Vessel.Position = new Vector3d(radius * cosine, radius * sine * inclinationCosine, radius * sine * inclinationSine);
         Vessel.Velocity = new Vector3d(-speed * sine, speed * cosine * inclinationCosine, speed * cosine * inclinationSine);
 
-        Vessel.Orientation = QuaternionD.FromTo(Vector3d.UnitZ, Vessel.Velocity.Normalized);
+        // A shortest-arc rotation leaves the roll wherever it lands, which reads as a crooked navball.
+        Vessel.Orientation = QuaternionD.LookAlong(Vessel.Velocity, Vessel.Position);
 
         Autopilot.Hold = AttitudeHold.Prograde;
 
@@ -72,11 +81,15 @@ public sealed partial class Flight : Node {
 
         ReadControls(delta);
 
+        Retire();
+        AimAtNode();
+        RunWarpToNode();
+
         double step = delta * Warp;
 
         Time += step;
 
-        if (Vessel.CurrentThrust > 0.0) {
+        if (Vessel.IsAccelerating) {
 
             _integrationDebt += step;
 
@@ -125,6 +138,134 @@ public sealed partial class Flight : Node {
 
     public Orbit Orbit => _rails;
 
+    /// <summary>The conic the planned node would leave the vessel on, or null when nothing is planned.</summary>
+    public Orbit PlannedOrbit => Node != null && !Node.IsEmpty ? Node.Result(_rails) : null;
+
+    /// <summary>Places a node at a true anomaly on the current orbit, keeping any impulse already dialled in.</summary>
+    public void PlaceNode(double trueAnomaly) {
+
+        Node ??= new Maneuver();
+
+        RetimeNode(trueAnomaly);
+
+    }
+
+    public void RetimeNode(double trueAnomaly) {
+
+        if (Node == null) {
+
+            return;
+
+        }
+
+        double ahead = _rails.TimeToTrueAnomaly(Time, trueAnomaly);
+
+        if (double.IsNaN(ahead)) {
+
+            return;
+
+        }
+
+        Node.Time = Time + ahead;
+
+    }
+
+    public void ClearNode() {
+
+        Node = null;
+
+        WarpingToNode = false;
+
+        if (Autopilot.Hold == AttitudeHold.Maneuver) {
+
+            Autopilot.Hold = AttitudeHold.Stability;
+
+        }
+
+    }
+
+    public void ToggleWarpToNode() {
+
+        WarpingToNode = Node != null && !Node.IsEmpty && !WarpingToNode;
+
+        if (!WarpingToNode) {
+
+            SetWarpStep(0);
+
+        }
+
+    }
+
+    /// <summary>Seconds until the engine must light for the planned node, or NaN when there is none.</summary>
+    public double TimeToIgnition => Node != null && !Node.IsEmpty ? Node.IgnitionTime(Vessel) - Time : double.NaN;
+
+    private void Retire() {
+
+        if (Node != null && Time > Node.Time + 2.0) {
+
+            ClearNode();
+
+        }
+
+    }
+
+    private void AimAtNode() {
+
+        if (Node == null || Node.IsEmpty) {
+
+            if (Autopilot.Hold == AttitudeHold.Maneuver) {
+
+                Autopilot.Hold = AttitudeHold.Stability;
+
+            }
+
+            return;
+
+        }
+
+        Autopilot.ManeuverDirection = Node.WorldDeltaV(_rails);
+
+    }
+
+    // Warp comes down the ladder as the node approaches rather than being cut, so the rails never overshoot it.
+    private void RunWarpToNode() {
+
+        if (!WarpingToNode) {
+
+            return;
+
+        }
+
+        double remaining = TimeToIgnition;
+
+        if (double.IsNaN(remaining) || remaining <= WarpMargin) {
+
+            WarpingToNode = false;
+
+            SetWarpStep(0);
+
+            return;
+
+        }
+
+        int wanted = 0;
+
+        for (int step = WarpFactors.Length - 1; step > 0; step--) {
+
+            if (remaining / WarpFactors[step] >= WarpMargin) {
+
+                wanted = step;
+
+                break;
+
+            }
+
+        }
+
+        SetWarpStep(wanted);
+
+    }
+
     public double Altitude => Body.AltitudeOf(Vessel.Position);
 
     /// <summary>Steps the warp factor, refusing to leave 1x while the engine is lit.</summary>
@@ -132,7 +273,7 @@ public sealed partial class Flight : Node {
 
         step = Math.Clamp(step, 0, WarpFactors.Length - 1);
 
-        if (step > 0 && Vessel.CurrentThrust > 0.0) {
+        if (step > 0 && Vessel.IsAccelerating) {
 
             return false;
 
@@ -167,6 +308,23 @@ public sealed partial class Flight : Node {
             case Key.Key5: Autopilot.Hold = AttitudeHold.RadialOut; break;
             case Key.Key6: Autopilot.Hold = AttitudeHold.RadialIn; break;
 
+            case Key.Key7:
+
+                if (Node != null && !Node.IsEmpty) {
+
+                    Autopilot.Hold = AttitudeHold.Maneuver;
+
+                }
+
+                break;
+
+            case Key.R: Vessel.RcsEnabled = !Vessel.RcsEnabled; break;
+
+            case Key.M: MapView.Active?.Toggle(); break;
+
+            case Key.Tab: ToggleWarpToNode(); break;
+            case Key.Delete: ClearNode(); break;
+
             case Key.Z: Vessel.Throttle = 1.0; break;
             case Key.X: Vessel.Throttle = 0.0; break;
 
@@ -191,7 +349,7 @@ public sealed partial class Flight : Node {
 
         }
 
-        if (Vessel.CurrentThrust > 0.0) {
+        if (Vessel.IsAccelerating) {
 
             WarpStep = 0;
 
@@ -202,6 +360,14 @@ public sealed partial class Flight : Node {
             Axis(Key.S, Key.W),
             Axis(Key.A, Key.D),
             Axis(Key.E, Key.Q)
+
+        );
+
+        Vessel.TranslationCommand = new Vector3d(
+
+            Axis(Key.L, Key.J),
+            Axis(Key.I, Key.K),
+            Axis(Key.H, Key.N)
 
         );
 

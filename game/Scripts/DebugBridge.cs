@@ -242,11 +242,62 @@ public sealed partial class DebugBridge : Node {
 
         }
 
+        if (bool.TryParse(query["rcs"], out bool rcs)) {
+
+            flight.Vessel.RcsEnabled = rcs;
+
+        }
+
+        if (bool.TryParse(query["map"], out bool map) && map != (MapView.Active?.Open ?? false)) {
+
+            MapView.Active?.Toggle();
+
+        }
+
+        if (double.TryParse(query["nodeAt"], out double trueAnomaly)) {
+
+            flight.PlaceNode(trueAnomaly);
+
+        }
+
+        if (query["clearNode"] != null) {
+
+            flight.ClearNode();
+
+        }
+
+        if (flight.Node != null) {
+
+            if (double.TryParse(query["prograde"], out double prograde)) {
+
+                flight.Node.Prograde = prograde;
+
+            }
+
+            if (double.TryParse(query["normal"], out double normal)) {
+
+                flight.Node.Normal = normal;
+
+            }
+
+            if (double.TryParse(query["radial"], out double radial)) {
+
+                flight.Node.Radial = radial;
+
+            }
+
+        }
+
         return new Dictionary<string, object> {
 
             ["throttle"] = flight.Vessel.Throttle,
             ["hold"] = flight.Autopilot.Hold.ToString(),
             ["warp"] = flight.Warp,
+
+            ["rcs"] = flight.Vessel.RcsEnabled,
+            ["map"] = MapView.Active?.Open ?? false,
+
+            ["nodeDeltaV"] = flight.Node?.DeltaV ?? 0.0,
 
         };
 
@@ -330,6 +381,43 @@ public sealed partial class DebugBridge : Node {
             state["throttle"] = flight.Vessel.Throttle;
             state["warp"] = flight.Warp;
             state["hold"] = flight.Autopilot.Hold.ToString();
+
+            state["eccentricity"] = flight.Orbit.Eccentricity;
+            state["timeToApoapsis"] = flight.Orbit.TimeToApoapsis(flight.Time);
+            state["timeToPeriapsis"] = flight.Orbit.TimeToPeriapsis(flight.Time);
+
+            state["fuelMass"] = flight.Vessel.FuelMass;
+            state["oxidiserMass"] = flight.Vessel.OxidiserMass;
+
+            state["rcsEnabled"] = flight.Vessel.RcsEnabled;
+            state["rcsPropellant"] = flight.Vessel.RcsPropellantMass;
+
+            state["map"] = MapView.Active?.Open ?? false;
+            state["warpingToNode"] = flight.WarpingToNode;
+
+            Maneuver node = flight.Node;
+
+            if (node != null) {
+
+                state["nodeTime"] = node.Time;
+                state["nodeDeltaV"] = node.DeltaV;
+                state["nodePrograde"] = node.Prograde;
+                state["nodeNormal"] = node.Normal;
+                state["nodeRadial"] = node.Radial;
+                state["nodeBurnSeconds"] = node.BurnSeconds(flight.Vessel);
+                state["timeToIgnition"] = flight.TimeToIgnition;
+
+                Orbit planned = flight.PlannedOrbit;
+
+                if (planned != null) {
+
+                    state["plannedApoapsis"] = planned.ApoapsisRadius - flight.Body.Radius;
+                    state["plannedPeriapsis"] = planned.PeriapsisRadius - flight.Body.Radius;
+                    state["plannedInclination"] = planned.Inclination;
+
+                }
+
+            }
 
         }
 

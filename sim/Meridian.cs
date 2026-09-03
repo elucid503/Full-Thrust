@@ -50,6 +50,11 @@ public static class Meridian {
     // Four RCS quads on the forward tank, sized so the stage slews a right angle in about twenty seconds.
     public const double ControlTorque = 7000.0;
 
+    // Hydrazine monoprop in its own spherical bottle, enough for a few hundred slews before the stage is deaf.
+    public const double RcsThrustNewtons = 1_600.0;
+    public const double RcsSpecificImpulse = 224.0;
+    public const double RcsPropellantMass = 120.0;
+
     public const double ThrustNewtons = 180_000.0;
     public const double SpecificImpulse = 342.0;
 
@@ -125,6 +130,14 @@ public static class Meridian {
 
             ThrustNewtons = ThrustNewtons,
             SpecificImpulse = SpecificImpulse,
+
+            RcsPropellantMass = RcsPropellantMass,
+            RcsPropellantCapacity = RcsPropellantMass,
+
+            RcsThrustNewtons = RcsThrustNewtons,
+            RcsSpecificImpulse = RcsSpecificImpulse,
+
+            ControlTorqueLimit = ControlTorque,
 
         };
 

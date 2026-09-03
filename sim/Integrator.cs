@@ -12,6 +12,8 @@ public static class Integrator {
     // Body-frame Euler rates for a diagonal inertia; attitude still advances on a coasting trajectory.
     public static void StepAttitude(Vessel vessel, double dt) {
 
+        SpendRcs(vessel, dt);
+
         Vector3d inertia = vessel.Inertia;
         Vector3d rate = vessel.AngularVelocity;
         Vector3d torque = vessel.ControlTorque;
@@ -36,6 +38,7 @@ public static class Integrator {
         double flow = thrust > 0.0 ? vessel.MassFlowRate * Math.Clamp(vessel.Throttle, 0.0, 1.0) : 0.0;
 
         Vector3d thrustAxis = vessel.Nose;
+        Vector3d translation = vessel.RcsForce;
 
         double mu = body.Mu;
 
@@ -44,7 +47,7 @@ public static class Integrator {
             double radius = position.Length;
 
             Vector3d gravity = position * (-mu / (radius * radius * radius));
-            Vector3d acceleration = gravity + thrustAxis * (thrust / mass);
+            Vector3d acceleration = gravity + (thrustAxis * thrust + translation) / mass;
 
             return (velocity, acceleration, -flow);
 
@@ -72,6 +75,22 @@ public static class Integrator {
             vessel.RecomputeMassProperties();
 
         }
+
+    }
+
+
+    // The quads are the whole attitude authority, so holding an attitude costs propellant like any other burn.
+    private static void SpendRcs(Vessel vessel, double dt) {
+
+        double duty = vessel.RcsDuty;
+
+        if (duty <= 0.0) {
+
+            return;
+
+        }
+
+        vessel.RcsPropellantMass = Math.Max(0.0, vessel.RcsPropellantMass - duty * vessel.RcsMassFlowRate * dt);
 
     }
 

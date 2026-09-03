@@ -20,7 +20,7 @@ public sealed partial class Main : Node3D {
     private Flight _flight;
     private Planet _planet;
     private VesselView _vessel;
-    private Telemetry _telemetry;
+    private MapView _map;
     private OrbitCamera _camera;
 
     private DirectionalLight3D _sun;
@@ -33,7 +33,7 @@ public sealed partial class Main : Node3D {
         _flight = GetNode<Flight>("Flight");
         _planet = GetNode<Planet>("Planet");
         _vessel = GetNode<VesselView>("Vessel");
-        _telemetry = GetNode<Telemetry>("Telemetry");
+        _map = GetNode<MapView>("Map");
         _camera = GetNode<OrbitCamera>("CameraRig");
 
         _sun = GetNode<DirectionalLight3D>("Sun");
@@ -107,9 +107,9 @@ public sealed partial class Main : Node3D {
 
         _earthlight.Position = focus;
 
-        _telemetry.Sync(_flight);
-
         _camera.Sync(focus);
+
+        _map.Sync(delta);
 
     }
 

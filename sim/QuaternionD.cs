@@ -93,6 +93,55 @@ public readonly struct QuaternionD {
     }
 
     // Body-frame angular velocity, so the rate quaternion multiplies on the right.
+    /// <summary>Orientation whose nose is the body's +Z and whose dorsal +Y lies as near the reference as it can.</summary>
+    public static QuaternionD LookAlong(Vector3d nose, Vector3d dorsal) {
+
+        Vector3d z = nose.Normalized;
+        Vector3d y = dorsal - z * Vector3d.Dot(dorsal, z);
+
+        if (y.LengthSquared < 1e-12) {
+
+            return FromTo(Vector3d.UnitZ, z);
+
+        }
+
+        y = y.Normalized;
+
+        Vector3d x = Vector3d.Cross(y, z);
+
+        // Shepperd's branch: the largest diagonal term is picked so the divisor never approaches zero.
+        double trace = x.X + y.Y + z.Z;
+
+        if (trace > 0.0) {
+
+            double scale = Math.Sqrt(trace + 1.0) * 2.0;
+
+            return new QuaternionD((y.Z - z.Y) / scale, (z.X - x.Z) / scale, (x.Y - y.X) / scale, scale * 0.25).Normalized;
+
+        }
+
+        if (x.X > y.Y && x.X > z.Z) {
+
+            double scale = Math.Sqrt(1.0 + x.X - y.Y - z.Z) * 2.0;
+
+            return new QuaternionD(scale * 0.25, (y.X + x.Y) / scale, (z.X + x.Z) / scale, (y.Z - z.Y) / scale).Normalized;
+
+        }
+
+        if (y.Y > z.Z) {
+
+            double scale = Math.Sqrt(1.0 + y.Y - x.X - z.Z) * 2.0;
+
+            return new QuaternionD((y.X + x.Y) / scale, scale * 0.25, (z.Y + y.Z) / scale, (z.X - x.Z) / scale).Normalized;
+
+        }
+
+        double axial = Math.Sqrt(1.0 + z.Z - x.X - y.Y) * 2.0;
+
+        return new QuaternionD((z.X + x.Z) / axial, (z.Y + y.Z) / axial, axial * 0.25, (x.Y - y.X) / axial).Normalized;
+
+    }
+
     public static QuaternionD Integrate(QuaternionD orientation, Vector3d angularVelocity, double dt) {
 
         QuaternionD rate = new QuaternionD(angularVelocity.X, angularVelocity.Y, angularVelocity.Z, 0.0);

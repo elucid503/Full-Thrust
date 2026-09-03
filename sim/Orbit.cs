@@ -46,6 +46,80 @@ public sealed class Orbit {
 
     public double SpeedAt(double radius) => Math.Sqrt(Mu * (2.0 / radius - 1.0 / SemiMajorAxis));
 
+    /// <summary>Rotation carrying the perifocal frame onto the inertial one.</summary>
+    public QuaternionD PerifocalToInertial => QuaternionD.FromAxisAngle(Vector3d.UnitZ, LongitudeOfAscendingNode) * QuaternionD.FromAxisAngle(Vector3d.UnitX, Inclination) * QuaternionD.FromAxisAngle(Vector3d.UnitZ, ArgumentOfPeriapsis);
+
+    public double SemiLatusRectum => SemiMajorAxis * (1.0 - Eccentricity * Eccentricity);
+
+    /// <summary>Unit normal of the orbital plane, along the angular momentum.</summary>
+    public Vector3d PlaneNormal => PerifocalToInertial.Rotate(Vector3d.UnitZ);
+
+    /// <summary>True anomaly where the vessel crosses the reference plane going north.</summary>
+    public double AscendingNodeTrueAnomaly => Wrap(-ArgumentOfPeriapsis);
+
+    public double DescendingNodeTrueAnomaly => Wrap(Math.PI - ArgumentOfPeriapsis);
+
+    /// <summary>True anomaly the conic runs out at; pi for a closed orbit, the asymptote for an open one.</summary>
+    public double TrueAnomalyLimit => IsClosed ? Math.PI : Math.Acos(-1.0 / Eccentricity);
+
+    public double RadiusAtTrueAnomaly(double trueAnomaly) => SemiLatusRectum / (1.0 + Eccentricity * Math.Cos(trueAnomaly));
+
+    public Vector3d PositionAtTrueAnomaly(double trueAnomaly) {
+
+        double radius = RadiusAtTrueAnomaly(trueAnomaly);
+
+        return PerifocalToInertial.Rotate(new Vector3d(radius * Math.Cos(trueAnomaly), radius * Math.Sin(trueAnomaly), 0.0));
+
+    }
+
+    public double MeanAnomalyAt(double time) => MeanAnomalyAtEpoch + MeanMotion * (time - Epoch);
+
+    public double TrueAnomalyAt(double time) {
+
+        if (IsClosed) {
+
+            double eccentricAnomaly = SolveElliptical(Wrap(MeanAnomalyAt(time)), Eccentricity);
+
+            return Wrap(2.0 * Math.Atan2(Math.Sqrt(1.0 + Eccentricity) * Math.Sin(eccentricAnomaly * 0.5), Math.Sqrt(1.0 - Eccentricity) * Math.Cos(eccentricAnomaly * 0.5)));
+
+        }
+
+        double hyperbolicAnomaly = SolveHyperbolic(MeanAnomalyAt(time), Eccentricity);
+
+        return 2.0 * Math.Atan2(Math.Sqrt(Eccentricity + 1.0) * Math.Tanh(hyperbolicAnomaly * 0.5), Math.Sqrt(Eccentricity - 1.0));
+
+    }
+
+    /// <summary>Seconds until the vessel next reaches a true anomaly, or NaN where it never will again.</summary>
+    public double TimeToTrueAnomaly(double time, double trueAnomaly) {
+
+        double target = MeanAnomalyFromTrue(Wrap(trueAnomaly), Eccentricity);
+
+        if (!IsClosed) {
+
+            double ahead = (target - MeanAnomalyAt(time)) / MeanMotion;
+
+            return ahead > 0.0 ? ahead : double.NaN;
+
+        }
+
+        return Wrap(target - Wrap(MeanAnomalyAt(time))) / MeanMotion;
+
+    }
+
+    public double TimeToPeriapsis(double time) => TimeToTrueAnomaly(time, 0.0);
+
+    public double TimeToApoapsis(double time) => IsClosed ? TimeToTrueAnomaly(time, Math.PI) : double.PositiveInfinity;
+
+    /// <summary>The orbit that results from adding an impulse at the given time.</summary>
+    public Orbit WithImpulse(double time, Vector3d deltaV) {
+
+        (Vector3d position, Vector3d velocity) = StateAt(time);
+
+        return FromStateVectors(position, velocity + deltaV, Mu, time);
+
+    }
+
     public static Orbit FromStateVectors(Vector3d position, Vector3d velocity, double mu, double epoch) {
 
         double radius = position.Length;
@@ -157,7 +231,7 @@ public sealed class Orbit {
 
         }
 
-        QuaternionD toInertial = QuaternionD.FromAxisAngle(Vector3d.UnitZ, LongitudeOfAscendingNode) * QuaternionD.FromAxisAngle(Vector3d.UnitX, Inclination) * QuaternionD.FromAxisAngle(Vector3d.UnitZ, ArgumentOfPeriapsis);
+        QuaternionD toInertial = PerifocalToInertial;
 
         return (toInertial.Rotate(perifocalPosition), toInertial.Rotate(perifocalVelocity));
 

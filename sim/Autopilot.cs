@@ -11,6 +11,7 @@ public enum AttitudeHold {
     Antinormal,
     RadialOut,
     RadialIn,
+    Maneuver,
 
 }
 
@@ -19,9 +20,6 @@ public sealed class Autopilot {
 
     // Above this the hold is considered converged and only the residual rate is damped.
     private const double Deadband = 1e-4;
-
-    /// <summary>Peak torque about any one body axis, newton-metres.</summary>
-    public double MaxTorque { get; init; } = 7000.0;
 
     /// <summary>Ceiling on the slew rate a hold will command, radians per second.</summary>
     public double MaxSlewRate { get; init; } = 0.35;
@@ -34,6 +32,9 @@ public sealed class Autopilot {
     /// <summary>Pilot demand about the body axes, each in [-1, 1]; non-zero input drops the hold.</summary>
     public Vector3d ManualCommand { get; set; }
 
+    /// <summary>World direction the maneuver hold points at; set from the planned node each frame.</summary>
+    public Vector3d ManeuverDirection { get; set; }
+
     public void Update(Vessel vessel, double dt) {
 
         if (dt <= 0.0) {
@@ -41,6 +42,17 @@ public sealed class Autopilot {
             return;
 
         }
+
+        // The quads are the only attitude authority aboard, so a dry or disabled cluster means no control at all.
+        if (!vessel.HasRcs) {
+
+            vessel.ControlTorque = Vector3d.Zero;
+
+            return;
+
+        }
+
+        double maxTorque = vessel.ControlTorqueLimit;
 
         Vector3d manual = new Vector3d(
 
@@ -54,7 +66,7 @@ public sealed class Autopilot {
 
             Hold = AttitudeHold.Off;
 
-            vessel.ControlTorque = manual * MaxTorque;
+            vessel.ControlTorque = manual * maxTorque;
 
             return;
 
@@ -70,12 +82,12 @@ public sealed class Autopilot {
 
         Vector3d error = Hold == AttitudeHold.Stability ? Vector3d.Zero : PointingError(vessel);
 
-        vessel.ControlTorque = Brake(error, vessel.AngularVelocity, vessel.Inertia, dt);
+        vessel.ControlTorque = Brake(error, vessel.AngularVelocity, vessel.Inertia, maxTorque, dt);
 
     }
 
     /// <summary>Unit direction the nose should point for a hold, or zero where the frame is degenerate.</summary>
-    public static Vector3d Reference(AttitudeHold hold, Vector3d position, Vector3d velocity) {
+    public static Vector3d Reference(AttitudeHold hold, Vector3d position, Vector3d velocity, Vector3d maneuver = default) {
 
         Vector3d prograde = velocity.Normalized;
         Vector3d normal = Vector3d.Cross(position, velocity).Normalized;
@@ -94,6 +106,8 @@ public sealed class Autopilot {
             AttitudeHold.RadialOut => radial,
             AttitudeHold.RadialIn => -radial,
 
+            AttitudeHold.Maneuver => maneuver.Normalized,
+
             _ => Vector3d.Zero,
 
         };
@@ -102,7 +116,7 @@ public sealed class Autopilot {
 
     private Vector3d PointingError(Vessel vessel) {
 
-        Vector3d wanted = Reference(Hold, vessel.Position, vessel.Velocity);
+        Vector3d wanted = Reference(Hold, vessel.Position, vessel.Velocity, ManeuverDirection);
 
         if (wanted.LengthSquared <= 0.0) {
 
@@ -129,27 +143,27 @@ public sealed class Autopilot {
     }
 
     // Bang-bang with a braking-distance rate limit: no gains to tune, and it cannot overshoot.
-    private Vector3d Brake(Vector3d error, Vector3d rate, Vector3d inertia, double dt) {
+    private Vector3d Brake(Vector3d error, Vector3d rate, Vector3d inertia, double maxTorque, double dt) {
 
         return new Vector3d(
 
-            AxisTorque(error.X, rate.X, inertia.X, dt),
-            AxisTorque(error.Y, rate.Y, inertia.Y, dt),
-            AxisTorque(error.Z, rate.Z, inertia.Z, dt)
+            AxisTorque(error.X, rate.X, inertia.X, maxTorque, dt),
+            AxisTorque(error.Y, rate.Y, inertia.Y, maxTorque, dt),
+            AxisTorque(error.Z, rate.Z, inertia.Z, maxTorque, dt)
 
         );
 
     }
 
-    private double AxisTorque(double error, double rate, double inertia, double dt) {
+    private double AxisTorque(double error, double rate, double inertia, double maxTorque, double dt) {
 
-        double acceleration = MaxTorque / inertia;
+        double acceleration = maxTorque / inertia;
 
         double wanted = Math.Sign(error) * Math.Min(MaxSlewRate, Math.Sqrt(2.0 * acceleration * Math.Abs(error)) * Damping);
 
         double demand = (wanted - rate) * inertia / dt;
 
-        return Math.Clamp(demand, -MaxTorque, MaxTorque);
+        return Math.Clamp(demand, -maxTorque, maxTorque);
 
     }
 

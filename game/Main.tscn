@@ -5,7 +5,7 @@
 [ext_resource type="Script" path="res://Scripts/Planet.cs" id="3_planet"]
 [ext_resource type="Script" path="res://Scripts/OrbitCamera.cs" id="4_camera"]
 [ext_resource type="Script" path="res://Scripts/VesselView.cs" id="5_vessel"]
-[ext_resource type="Script" path="res://Scripts/Telemetry.cs" id="6_telemetry"]
+[ext_resource type="Script" path="res://Scripts/MapView.cs" id="7_map"]
 
 [node name="Main" type="Node3D"]
 script = ExtResource("1_main")
@@ -27,10 +27,10 @@ script = ExtResource("3_planet")
 [node name="Vessel" type="Node3D" parent="."]
 script = ExtResource("5_vessel")
 
-[node name="Telemetry" type="CanvasLayer" parent="."]
-script = ExtResource("6_telemetry")
-
 [node name="CameraRig" type="Node3D" parent="."]
 script = ExtResource("4_camera")
 
 [node name="Camera3D" type="Camera3D" parent="CameraRig"]
+
+[node name="Map" type="Node3D" parent="."]
+script = ExtResource("7_map")

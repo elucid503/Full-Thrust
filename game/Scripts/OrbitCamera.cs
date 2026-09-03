@@ -75,6 +75,8 @@ public sealed partial class OrbitCamera : Node3D {
 
     }
 
+    public void MakeCurrent() => _camera.Current = true;
+
     /// <summary>Swings the arm so the camera looks along the given direction.</summary>
     public void AimAt(Vector3 direction) {
 
