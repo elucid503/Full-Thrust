@@ -4,13 +4,13 @@ public static class Integrator {
 
     public static void Step(Vessel vessel, CelestialBody body, double dt) {
 
-        StepRotation(vessel, dt);
+        StepAttitude(vessel, dt);
         StepTranslation(vessel, body, dt);
 
     }
 
-    // Euler's equations for a diagonal inertia tensor, in the body frame.
-    private static void StepRotation(Vessel vessel, double dt) {
+    // Body-frame Euler rates for a diagonal inertia; attitude still advances on a coasting trajectory.
+    public static void StepAttitude(Vessel vessel, double dt) {
 
         Vector3d inertia = vessel.Inertia;
         Vector3d rate = vessel.AngularVelocity;
@@ -66,6 +66,12 @@ public static class Integrator {
 
         // ponytail: propellant is debited at the step boundary, so a tank empties up to one step late; sub-step the burn if that ever matters
         vessel.PropellantMass = Math.Max(0.0, vessel.PropellantMass - flow * dt);
+
+        if (flow > 0.0) {
+
+            vessel.RecomputeMassProperties();
+
+        }
 
     }
 

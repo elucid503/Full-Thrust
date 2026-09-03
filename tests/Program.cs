@@ -23,6 +23,8 @@ public static class Program {
         ProgradeBurnRaisesApoapsis();
         PropellantAndDeltaV();
         RigidBodyRotation();
+        HullMassProperties();
+        MeridianStage();
 
         Console.WriteLine();
         Console.WriteLine($"{_checks - _failures}/{_checks} checks passed");
@@ -285,6 +287,75 @@ public static class Program {
 
         Near("burn time matches mass flow", elapsed, expectedBurn, dt * 2.0);
         Near("delta-v is spent", vessel.DeltaV, 0.0, 1e-12);
+
+    }
+
+    private static void HullMassProperties() {
+
+        Section("hull mass properties");
+
+        Hull.Station[] cylinder = {
+
+            new Hull.Station(0.0, 2.0),
+            new Hull.Station(6.0, 2.0),
+
+        };
+
+        Hull hull = new Hull(cylinder, 0.0, 6.0);
+
+        Near("cylinder volume", hull.Volume, Math.PI * 4.0 * 6.0, 1e-9);
+        Near("cylinder length", hull.Length, 6.0, 1e-12);
+        Near("cylinder max radius", hull.MaxRadius, 2.0, 1e-12);
+
+        MassProperties shell = hull.Structure(120.0);
+
+        Near("shell centre of mass", shell.CentreZ, 3.0, 1e-9);
+        Near("shell axial moment", shell.Inertia.Z, 120.0 * 4.0, 1e-6);
+        Near("shell transverse moment", shell.Inertia.X, 120.0 * (4.0 / 2.0 + 36.0 / 12.0), 1e-3);
+
+        MassProperties full = hull.Propellant(500.0, 1.0);
+
+        Near("full column centre of mass", full.CentreZ, 3.0, 1e-6);
+        Near("full column axial moment", full.Inertia.Z, 500.0 * 4.0 / 2.0, 1e-6);
+        Near("full column transverse moment", full.Inertia.X, 500.0 * (4.0 / 4.0 + 36.0 / 12.0), 1e-3);
+
+        MassProperties half = hull.Propellant(250.0, 0.5);
+
+        Near("half column sits low", half.CentreZ, 1.5, 1e-4);
+        Near("half column transverse moment", half.Inertia.X, 250.0 * (4.0 / 4.0 + 9.0 / 12.0), 1e-3);
+
+        MassProperties stacked = MassProperties.Combine(new MassProperties(2.0, -1.0, Vector3d.Zero), new MassProperties(2.0, 1.0, Vector3d.Zero));
+
+        Near("combined centre of mass", stacked.CentreZ, 0.0, 1e-12);
+        Near("combined transverse moment uses parallel axis", stacked.Inertia.X, 4.0, 1e-12);
+
+        Hull cone = new Hull(new[] { new Hull.Station(0.0, 0.0), new Hull.Station(3.0, 1.0) }, 0.0, 3.0);
+
+        Near("cone volume", cone.Volume, Math.PI * 1.0 * 3.0 / 3.0, 1e-4);
+        Near("cone centre of mass", cone.Propellant(10.0, 1.0).CentreZ, 2.25, 1e-3);
+
+    }
+
+    private static void MeridianStage() {
+
+        Section("meridian stage");
+
+        Vessel vessel = Meridian.Build();
+
+        Near("hull length", vessel.Hull.Length, Meridian.OverallLength, 1e-12);
+        Near("tank capacity", vessel.PropellantCapacity, vessel.Hull.TankVolume * Meridian.PropellantDensity, 1e-9);
+
+        Expect("nose closes to a point", vessel.Hull.RadiusAt(Meridian.OverallLength) < 1e-9, $"tip radius {vessel.Hull.RadiusAt(Meridian.OverallLength):G6}");
+        Expect("centre of mass lies inside the hull", vessel.CentreOfMassZ > 0.0 && vessel.CentreOfMassZ < Meridian.OverallLength, $"centre {vessel.CentreOfMassZ:F3} m");
+        Expect("stage is slender", vessel.Inertia.X > vessel.Inertia.Z * 4.0, $"transverse {vessel.Inertia.X:F0}, axial {vessel.Inertia.Z:F0}");
+
+        double loadedCentre = vessel.CentreOfMassZ;
+
+        vessel.PropellantMass = 0.0;
+        vessel.RecomputeMassProperties();
+
+        Expect("burning off propellant moves the centre of mass forward", vessel.CentreOfMassZ > loadedCentre, $"{loadedCentre:F3} m to {vessel.CentreOfMassZ:F3} m");
+        Near("empty stage inertia is the structure alone", vessel.Inertia.Z, vessel.Hull.Structure(Meridian.DryMass).Inertia.Z, 1e-6);
 
     }
 

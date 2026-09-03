@@ -6,4 +6,8 @@
     <RootNamespace>FullThrust.Game</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="../sim/FullThrust.Sim.csproj" />
+  </ItemGroup>
+
 </Project>

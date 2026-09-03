@@ -121,6 +121,18 @@ public sealed partial class DebugBridge : Node {
 
                     break;
 
+                case "/tune":
+
+                    Respond(context, Tune(context.Request.QueryString));
+
+                    break;
+
+                case "/camera":
+
+                    Respond(context, AimCamera(context.Request.QueryString));
+
+                    break;
+
                 case "/screenshot":
 
                     _ = Capture(context, context.Request.QueryString["path"]);
@@ -152,11 +164,85 @@ public sealed partial class DebugBridge : Node {
 
     }
 
+    private static Dictionary<string, object> Tune(System.Collections.Specialized.NameValueCollection query) {
+
+        Planet planet = Planet.Active;
+
+        string target = query["target"];
+
+        if (planet == null || string.IsNullOrEmpty(target)) {
+
+            return new Dictionary<string, object> { ["error"] = "usage: /tune?target=surface|clouds|atmosphere&<uniform>=<value>" };
+
+        }
+
+        Dictionary<string, object> applied = new Dictionary<string, object>();
+
+        foreach (string key in query.AllKeys) {
+
+            if (key == null || key == "target") {
+
+                continue;
+
+            }
+
+            applied[key] = planet.Tune(target, key, query[key]) ? query[key] : "rejected";
+
+        }
+
+        return applied;
+
+    }
+
+    private static Dictionary<string, object> AimCamera(System.Collections.Specialized.NameValueCollection query) {
+
+        OrbitCamera camera = OrbitCamera.Active;
+
+        if (camera == null) {
+
+            return new Dictionary<string, object> { ["error"] = "no camera" };
+
+        }
+
+        if (float.TryParse(query["yaw"], out float yaw)) {
+
+            camera.Yaw = yaw;
+
+        }
+
+        if (float.TryParse(query["pitch"], out float pitch)) {
+
+            camera.Pitch = pitch;
+
+        }
+
+        if (float.TryParse(query["distance"], out float distance)) {
+
+            camera.Distance = distance;
+
+        }
+
+        return new Dictionary<string, object> {
+
+            ["yaw"] = camera.Yaw,
+            ["pitch"] = camera.Pitch,
+            ["distance"] = camera.Distance,
+
+            ["current"] = camera.IsCurrent,
+            ["eye"] = camera.Eye.ToString(),
+            ["forward"] = camera.Forward.ToString(),
+            ["near"] = camera.NearPlane,
+            ["far"] = camera.FarPlane,
+
+        };
+
+    }
+
     private Dictionary<string, object> Snapshot() {
 
         Vector2I window = DisplayServer.WindowGetSize();
 
-        return new Dictionary<string, object> {
+        Dictionary<string, object> state = new Dictionary<string, object> {
 
             ["fps"] = Engine.GetFramesPerSecond(),
             ["frame"] = Engine.GetProcessFrames(),
@@ -169,6 +255,24 @@ public sealed partial class DebugBridge : Node {
             ["windowHeight"] = window.Y,
 
         };
+
+        Flight flight = Flight.Active;
+
+        if (flight != null) {
+
+            state["missionTime"] = flight.Time;
+            state["altitude"] = flight.Altitude;
+            state["speed"] = flight.Vessel.Velocity.Length;
+            state["apoapsis"] = flight.Orbit.ApoapsisRadius - flight.Body.Radius;
+            state["periapsis"] = flight.Orbit.PeriapsisRadius - flight.Body.Radius;
+            state["inclination"] = flight.Orbit.Inclination;
+            state["period"] = flight.Orbit.Period;
+            state["mass"] = flight.Vessel.Mass;
+            state["deltaV"] = flight.Vessel.DeltaV;
+
+        }
+
+        return state;
 
     }
 
