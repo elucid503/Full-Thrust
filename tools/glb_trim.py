@@ -50,4 +50,5 @@ def trim(path):
 if __name__ == "__main__":
 
     for argument in sys.argv[1:]:
+
         trim(argument)

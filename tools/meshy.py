@@ -34,9 +34,11 @@ REFERENCES = {
 PROMPTS = {
 
     "avionics": (
+
         "spacecraft avionics module, rectangular machined aluminium housing with milled cooling "
         "ribs, circular military connectors on the face, a bundled cable harness with lacing, "
         "white thermal paint over bare metal, real flight hardware, single part, no stand"
+
     ),
 
 }
@@ -47,6 +49,7 @@ def key():
     for line in (ROOT / ".env").read_text().splitlines():
 
         if line.startswith("MESHY_KEY="):
+
             return line.split("=", 1)[1].strip()
 
     sys.exit("MESHY_KEY missing from .env")
@@ -67,6 +70,7 @@ def call(path, token, payload=None):
     )
 
     with urllib.request.urlopen(request) as response:
+
         return json.load(response)
 
 
@@ -78,9 +82,11 @@ def wait(api, task, token):
         status = state["status"]
 
         if status == "SUCCEEDED":
+
             return state
 
         if status in ("FAILED", "CANCELED"):
+
             sys.exit(f"{task}: {status} {state.get('task_error')}")
 
         print(f"  {task} {status} {state.get('progress', 0)}%", flush=True)
@@ -96,6 +102,7 @@ def data_uri(url):
     if not local.exists():
 
         with fetch(url) as response:
+
             local.write_bytes(response.read())
 
     import base64
@@ -108,6 +115,7 @@ def from_image(name, url, token, entry):
     if "image" not in entry:
 
         entry["image"] = call(IMAGE_API, token, {
+
             "image_url": data_uri(url),
             "ai_model": "meshy-5",
             "topology": "triangle",
@@ -116,6 +124,7 @@ def from_image(name, url, token, entry):
             "should_texture": True,
             "enable_pbr": True,
             "symmetry_mode": "auto",
+
         })["result"]
 
         save(entry)
@@ -130,6 +139,7 @@ def from_text(name, prompt, token, entry):
     if "preview" not in entry:
 
         entry["preview"] = call(TEXT_API, token, {
+
             "mode": "preview",
             "prompt": prompt,
             "art_style": "realistic",
@@ -138,6 +148,7 @@ def from_text(name, prompt, token, entry):
             "target_polycount": 40000,
             "should_remesh": True,
             "symmetry_mode": "auto",
+
         })["result"]
 
         save(entry)
@@ -148,9 +159,11 @@ def from_text(name, prompt, token, entry):
     if "refine" not in entry:
 
         entry["refine"] = call(TEXT_API, token, {
+
             "mode": "refine",
             "preview_task_id": entry["preview"],
             "enable_pbr": True,
+
         })["result"]
 
         save(entry)
@@ -184,15 +197,20 @@ def main():
         entry = _cache.setdefault(name, {})
 
         if name in REFERENCES:
+
             state = from_image(name, REFERENCES[name], token, entry)
+
         else:
+
             state = from_text(name, PROMPTS[name], token, entry)
 
         with fetch(state["model_urls"]["glb"]) as response:
+
             (OUT / f"{name}.glb").write_bytes(response.read())
 
         print(f"{name}: wrote {OUT / (name + '.glb')}", flush=True)
 
 
 if __name__ == "__main__":
+
     main()

@@ -24,3 +24,5 @@ obj/
 # Downloaded source imagery
 
 tools/.cache/
+
+__pycache__/

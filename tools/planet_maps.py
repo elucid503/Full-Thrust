@@ -25,11 +25,13 @@ OUT = os.path.join(ROOT, "game", "Assets", "Planet")
 BASE = "https://eoimages.gsfc.nasa.gov/images/imagerecords"
 
 SOURCES = {
+
     "albedo.jpg": f"{BASE}/74000/74092/world.200407.3x21600x10800.jpg",
     "elevation.png": f"{BASE}/73000/73934/gebco_08_rev_elev_21600x10800.png",
     "night.source.jpg": f"{BASE}/79000/79765/dnb_land_ocean_ice.2012.13500x6750.jpg",
     "cloud.w.png": f"{BASE}/57000/57747/cloud.W.2001210.21600x21600.png",
     "cloud.e.png": f"{BASE}/57000/57747/cloud.E.2001210.21600x21600.png",
+
 }
 
 WIDTH = 8192
@@ -37,6 +39,7 @@ HEIGHT = 4096
 
 
 def fetch(name, url):
+
     path = os.path.join(CACHE, name)
 
     if os.path.exists(path) and os.path.getsize(path) > 0:
@@ -46,10 +49,14 @@ def fetch(name, url):
     print(f"downloading {name}")
 
     with urllib.request.urlopen(url) as response, open(path + ".part", "wb") as handle:
+
         while True:
+
             chunk = response.read(1 << 20)
+
             if not chunk:
                 break
+
             handle.write(chunk)
 
     os.replace(path + ".part", path)
@@ -163,13 +170,16 @@ def build_terrain():
 
 
 def main():
+
     os.makedirs(OUT, exist_ok=True)
 
     stages = {
+
         "albedo": build_albedo,
         "night": build_night,
         "clouds": build_clouds,
         "terrain": build_terrain,
+
     }
 
     wanted = sys.argv[1:] or list(stages)

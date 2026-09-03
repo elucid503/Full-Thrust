@@ -22,13 +22,16 @@ for path in root.rglob("*.import"):
     text = path.read_text()
 
     if 'importer="texture"' not in text:
+
         continue
 
     patched = text
 
     for key, value in WANTED.items():
+
         patched = re.sub(rf"(?m)^{re.escape(key)}=.*$", f"{key}={value}", patched)
 
     if patched != text:
+
         path.write_text(patched)
         print(f"patched {path}")
