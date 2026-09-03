@@ -1,1 +1,22 @@
+# Documentation
+
 CLAUDE.md
+HANDOFF.md
+MILESTONES.md
+REQUIREMENTS.md
+
+# Godot
+
+.godot/
+.artifacts/
+*.translation
+
+# .NET
+
+bin/
+obj/
+*.user
+
+# Secrets
+
+.env

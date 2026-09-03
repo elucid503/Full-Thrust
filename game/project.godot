@@ -1,0 +1,19 @@
+config_version=5
+
+[application]
+
+config/name="Full-Thrust"
+run/main_scene="res://Main.tscn"
+config/features=PackedStringArray("4.7", "C#", "Forward Plus")
+
+[autoload]
+
+DebugBridge="*res://Scripts/DebugBridge.cs"
+
+[dotnet]
+
+project/assembly_name="FullThrust.Game"
+
+[rendering]
+
+renderer/rendering_method="forward_plus"
