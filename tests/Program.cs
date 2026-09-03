@@ -346,7 +346,8 @@ public static class Program {
         Near("hull length", vessel.Hull.Length, Meridian.OverallLength, 1e-12);
         Near("tank capacity", vessel.PropellantCapacity, vessel.Hull.TankVolume * Meridian.PropellantDensity, 1e-9);
 
-        Near("nose closes on the capsule deck", vessel.Hull.RadiusAt(Meridian.OverallLength), Meridian.DeckRadius, 1e-9);
+        Near("nose closes to a point", vessel.Hull.RadiusAt(Meridian.OverallLength), 0.0, 1e-9);
+        Near("nose meets the body wall tangentially", vessel.Hull.RadiusAt(Meridian.NoseBase + 0.01), Meridian.BodyRadius, 1e-3);
         Expect("centre of mass lies inside the hull", vessel.CentreOfMassZ > 0.0 && vessel.CentreOfMassZ < Meridian.OverallLength, $"centre {vessel.CentreOfMassZ:F3} m");
         Expect("stage is slender", vessel.Inertia.X > vessel.Inertia.Z * 4.0, $"transverse {vessel.Inertia.X:F0}, axial {vessel.Inertia.Z:F0}");
 

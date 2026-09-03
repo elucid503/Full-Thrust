@@ -27,7 +27,14 @@ for path in root.rglob("*.import"):
 
     patched = text
 
-    for key, value in WANTED.items():
+    wanted = dict(WANTED)
+
+    # Left on Detect, a normal map imported headlessly lands as plain colour and its detail is gone.
+    if "_normal" in path.name:
+
+        wanted["compress/normal_map"] = "1"
+
+    for key, value in wanted.items():
 
         patched = re.sub(rf"(?m)^{re.escape(key)}=.*$", f"{key}={value}", patched)
 

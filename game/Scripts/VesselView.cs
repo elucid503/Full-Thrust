@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 using FullThrust.Sim;
@@ -6,31 +7,50 @@ using Godot;
 
 namespace FullThrust.Game;
 
-/// <summary>The flight vehicle: imported shells stretched onto its own mould line, its detail parts, and the plume.</summary>
+/// <summary>The flight vehicle: a lathed hull off its own mould line, the engine, and the plume.</summary>
 public sealed partial class VesselView : Node3D {
 
     private const int RadialSegments = 96;
+    private const int NozzleSegments = 32;
 
-    // The imported bell is 0.2935 of the engine's own length across, so this height puts its mouth
-    // on BellRadius exactly; the two move together or the plume leaves the nozzle.
-    private const float EngineHeight = 2.05f;
-    private const float BellRadius = 0.60f;
+    // A hull drawn as one surface has no wall: its open tail reads as a razor edge and the whole
+    // stage looks like foil. The interior shell stands off by this much and the tail rim closes it.
+    private const float WallThickness = 0.055f;
 
-    // Only the injector head sits up inside the aft skirt: the turbopumps and their plumbing are
-    // the reason for carrying a modelled engine at all, so they stay out where they can be seen.
-    private const float EngineRecess = 0.30f;
+    // Facets meeting at less than this weld into one smooth surface. The proud rings and the tail
+    // rim all turn harder than it, so they keep their edge while the ogive stays smooth.
+    private const float SmoothAngle = 20.0f;
 
-    // The stations the imported tank shell is stretched between.
-    private const float TankLow = (float)Meridian.SkirtTop;
-    private const float TankHigh = (float)Meridian.NoseBase;
+    // A whole number of tiles has to wrap the body or the texture shows a seam down one side.
+    private const int TilesAround = 6;
 
-    // The tank's aft dome, clear of both the boattail's rim and the tank shell's own bottom flange.
-    private const float ClosureHeight = 0.75f;
+    // Conical thrust structure: it carries the engine and is also what closes the tail, so nothing
+    // behind it is ever drawn.
+    private const float MountRadius = 0.40f;
+    private const float MountDeck = 0.42f;
 
-    // On the forward tank, standing off far enough that the mounting boss buries itself in the wall.
+    // The engine hangs below the mount deck with its powerhead just inside the skirt.
+    private const float EngineDeck = 0.36f;
+    private const float EngineLength = 2.55f;
+
+    // Flush RCS: the ports are holes cut clean through the tank wall, and the only hardware that
+    // shows is the pair of nozzles recessed at the bottom of each one.
+    private const int RcsPorts = 4;
+    private const int RcsHalfSteps = 3;
     private const float RcsHeight = 6.90f;
-    private const float RcsRadius = 1.26f;
-    private const float RcsSize = 0.42f;
+    private const float RcsHalfHeight = 0.30f;
+    private const float RcsDepth = 0.26f;
+    private const float RcsCant = 0.50f;
+
+    // A canted bell reaches further up the pocket than its own length, and further in than its own
+    // depth: the pocket is cut to clear both, and the pair sits close enough that neither mouth
+    // cuts back out through the sill or the lintel.
+    private const float RcsOffset = 0.085f;
+
+    // Where the mounting plate and the bell mouth sit on the nozzle's own axis. The plate lands flat
+    // on the pocket floor; standing the nozzle on its throat instead buries half of it in the plate.
+    private const float NozzleBase = 0.126f;
+    private const float NozzleReach = 0.135f;
 
     private const float PlumeLength = 18.0f;
     private const float PlumeFlare = 3.6f;
@@ -48,6 +68,9 @@ public sealed partial class VesselView : Node3D {
     private ShaderMaterial _plumeMaterial;
     private readonly List<OmniLight3D> _plumeLights = new List<OmniLight3D>();
 
+    private float _bellRadius;
+    private float _bellPlane;
+
     private float _throttle;
 
     public void Build(Vessel vessel) {
@@ -63,14 +86,15 @@ public sealed partial class VesselView : Node3D {
         _body.AddChild(new MeshInstance3D {
 
             Name = "Hull",
-            Mesh = BuildHullMesh(datum),
+            Mesh = BuildHullMesh(vessel.Hull, datum),
 
             CastShadow = GeometryInstance3D.ShadowCastingSetting.On,
 
         });
 
-        AttachParts(datum);
-        AttachPlume(datum);
+        AttachThrusters(datum);
+        AttachEngine(datum);
+        AttachPlume();
 
     }
 
@@ -130,27 +154,326 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    private static ArrayMesh BuildHullMesh(float datum) {
+    private static float TileMetres => Mathf.Tau * (float)Meridian.BodyRadius / TilesAround;
+
+    private static float PortLow => RcsHeight - RcsHalfHeight;
+    private static float PortHigh => RcsHeight + RcsHalfHeight;
+
+    // Ports sit between the quadrant axes so none of them ever fires straight along a control axis
+    // on its own; the window is a whole number of segments wide, so its edges land on the grid.
+    private static int PortCentre(int index) => RadialSegments / (RcsPorts * 2) + RadialSegments / RcsPorts * index;
+
+    private static bool InsidePort(int step, float low, float high) {
+
+        if (high <= PortLow || low >= PortHigh) {
+
+            return false;
+
+        }
+
+        for (int index = 0; index < RcsPorts; index++) {
+
+            int offset = step - PortCentre(index);
+
+            if (offset >= -RcsHalfSteps && offset < RcsHalfSteps) {
+
+                return true;
+
+            }
+
+        }
+
+        return false;
+
+    }
+
+    private static ArrayMesh BuildHullMesh(Hull hull, float datum) {
 
         ArrayMesh mesh = new ArrayMesh();
 
-        // Skirt, tank and capsule are imported shells covering the whole mould line between them, so
-        // all the lathe still owns is the tank's two domes. Both stand off the stations where a shell
-        // rim sits, because a disc coplanar with one flickers against it.
-        SurfaceTool closure = new SurfaceTool();
+        SurfaceTool skin = new SurfaceTool();
 
-        closure.Begin(Mesh.PrimitiveType.Triangles);
+        skin.Begin(Mesh.PrimitiveType.Triangles);
 
-        Cap(closure, new Vector2((float)Meridian.BodyRadius, ClosureHeight - datum), Vector3.Down);
-        Cap(closure, new Vector2((float)Meridian.BodyRadius, (float)Meridian.NoseBase - 0.06f - datum), Vector3.Up);
+        Revolve(skin, OuterProfile(hull, datum), RadialSegments, true, (step, low, high) => InsidePort(step, low + datum, high + datum));
 
-        closure.GenerateTangents();
-        closure.Commit(mesh);
+        skin.GenerateTangents();
 
-        mesh.SurfaceSetName(mesh.GetSurfaceCount() - 1, "Closure");
-        mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, Paint(new Color(0.27f, 0.263f, 0.252f), 0.35f, 0.58f));
+        Commit(mesh, skin, "Skin", HullMaterial(new Color(0.97f, 0.972f, 0.975f), 0.15f, 1.0f));
+
+        SurfaceTool core = new SurfaceTool();
+
+        core.Begin(Mesh.PrimitiveType.Triangles);
+
+        Revolve(core, InnerProfile(hull, datum), RadialSegments, false, null);
+
+        core.GenerateTangents();
+
+        Commit(mesh, core, "Core", HullMaterial(new Color(0.27f, 0.27f, 0.278f), 0.40f, 1.0f));
+
+        SurfaceTool ports = new SurfaceTool();
+
+        ports.Begin(Mesh.PrimitiveType.Triangles);
+
+        for (int index = 0; index < RcsPorts; index++) {
+
+            Pocket(ports, PortCentre(index), hull, datum);
+
+        }
+
+        Commit(mesh, ports, "Ports", Paint(new Color(0.46f, 0.462f, 0.47f), 0.05f, 0.72f));
 
         return mesh;
+
+    }
+
+    private static void Commit(ArrayMesh mesh, SurfaceTool surface, string name, Material material) {
+
+        surface.Commit(mesh);
+
+        mesh.SurfaceSetName(mesh.GetSurfaceCount() - 1, name);
+        mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, material);
+
+    }
+
+    /// <summary>The mould line itself, with the port edges spliced in so the cutouts land on stations.</summary>
+    private static Vector2[] OuterProfile(Hull hull, float datum) {
+
+        List<float> heights = new List<float>();
+
+        foreach (Hull.Station station in hull.Stations) {
+
+            heights.Add((float)station.Z);
+
+        }
+
+        heights.Add(PortLow);
+        heights.Add(PortHigh);
+
+        heights.Sort();
+
+        List<Vector2> profile = new List<Vector2>();
+
+        foreach (float height in heights) {
+
+            if (profile.Count > 0 && Mathf.Abs(profile[profile.Count - 1].Y + datum - height) < 1e-4f) {
+
+                continue;
+
+            }
+
+            profile.Add(new Vector2((float)hull.RadiusAt(height), height - datum));
+
+        }
+
+        return profile.ToArray();
+
+    }
+
+    /// <summary>Tail rim, skirt lining and thrust cone as one profile, so the tail closes in a single surface.</summary>
+    private static Vector2[] InnerProfile(Hull hull, float datum) {
+
+        float lining = (float)hull.RadiusAt(0.0) - WallThickness;
+
+        return new[] {
+
+            new Vector2((float)hull.RadiusAt(0.0), -datum),
+            new Vector2(lining, -datum),
+
+            new Vector2(lining, (float)Meridian.SkirtTop - datum),
+
+            new Vector2(MountRadius, MountDeck - datum),
+            new Vector2(0.0f, MountDeck - datum),
+
+        };
+
+    }
+
+    /// <summary>Sweeps a radius/height profile about the nose axis, welding facets that meet shallowly.</summary>
+    private static void Revolve(SurfaceTool surface, Vector2[] profile, int segments, bool outward, Func<int, float, float, bool> hole) {
+
+        int facets = profile.Length - 1;
+
+        Vector2[] normal = new Vector2[facets];
+        float[] arc = new float[profile.Length];
+
+        for (int index = 0; index < facets; index++) {
+
+            Vector2 step = profile[index + 1] - profile[index];
+
+            normal[index] = new Vector2(step.Y, -step.X).Normalized();
+            arc[index + 1] = arc[index] + step.Length();
+
+        }
+
+        float weld = Mathf.Cos(Mathf.DegToRad(SmoothAngle));
+
+        for (int index = 0; index < facets; index++) {
+
+            Vector2 low = profile[index];
+            Vector2 high = profile[index + 1];
+
+            if (low.X <= 0.0f && high.X <= 0.0f) {
+
+                continue;
+
+            }
+
+            Vector2 lowNormal = index > 0 && normal[index].Dot(normal[index - 1]) > weld
+                ? (normal[index] + normal[index - 1]).Normalized()
+                : normal[index];
+
+            Vector2 highNormal = index + 1 < facets && normal[index].Dot(normal[index + 1]) > weld
+                ? (normal[index] + normal[index + 1]).Normalized()
+                : normal[index];
+
+            for (int step = 0; step < segments; step++) {
+
+                if (hole != null && hole(step, low.Y, high.Y)) {
+
+                    continue;
+
+                }
+
+                float first = Mathf.Tau * step / segments;
+                float second = Mathf.Tau * (step + 1) / segments;
+
+                float leftU = (float)step / segments * TilesAround;
+                float rightU = (float)(step + 1) / segments * TilesAround;
+
+                float lowV = arc[index] / TileMetres;
+                float highV = arc[index + 1] / TileMetres;
+
+                // Godot takes clockwise winding as front-facing, so an inward sweep is the same two
+                // triangles with their last two corners swapped. Flipping only the shading normal
+                // leaves the surface back-facing, and the whole tail is then seen through.
+                if (outward) {
+
+                    Ring(surface, low, lowNormal, first, leftU, lowV, true);
+                    Ring(surface, low, lowNormal, second, rightU, lowV, true);
+                    Ring(surface, high, highNormal, first, leftU, highV, true);
+
+                    Ring(surface, low, lowNormal, second, rightU, lowV, true);
+                    Ring(surface, high, highNormal, second, rightU, highV, true);
+                    Ring(surface, high, highNormal, first, leftU, highV, true);
+
+                }
+                else {
+
+                    Ring(surface, low, lowNormal, first, leftU, lowV, false);
+                    Ring(surface, high, highNormal, first, leftU, highV, false);
+                    Ring(surface, low, lowNormal, second, rightU, lowV, false);
+
+                    Ring(surface, low, lowNormal, second, rightU, lowV, false);
+                    Ring(surface, high, highNormal, first, leftU, highV, false);
+                    Ring(surface, high, highNormal, second, rightU, highV, false);
+
+                }
+
+            }
+
+        }
+
+    }
+
+    private static void Ring(SurfaceTool surface, Vector2 point, Vector2 normal, float angle, float u, float v, bool outward) {
+
+        float cosine = Mathf.Cos(angle);
+        float sine = Mathf.Sin(angle);
+
+        Vector3 facing = new Vector3(normal.X * cosine, normal.Y, normal.X * sine);
+
+        surface.SetNormal(outward ? facing : -facing);
+        surface.SetUV(new Vector2(u, v));
+
+        surface.AddVertex(new Vector3(point.X * cosine, point.Y, point.X * sine));
+
+    }
+
+    private static void Pocket(SurfaceTool surface, int centre, Hull hull, float datum) {
+
+        float outer = (float)hull.RadiusAt(RcsHeight);
+        float floor = outer - RcsDepth;
+
+        float low = PortLow - datum;
+        float high = PortHigh - datum;
+
+        float from = Mathf.Tau * (centre - RcsHalfSteps) / RadialSegments;
+        float to = Mathf.Tau * (centre + RcsHalfSteps) / RadialSegments;
+
+        Vector3 middle = Radial((from + to) * 0.5f);
+
+        // Floor, drawn one segment at a time so it keeps the hull's curvature rather than chording it.
+        for (int step = -RcsHalfSteps; step < RcsHalfSteps; step++) {
+
+            float a = Mathf.Tau * (centre + step) / RadialSegments;
+            float b = Mathf.Tau * (centre + step + 1) / RadialSegments;
+
+            Quad(surface, At(a, floor, low), At(b, floor, low), At(b, floor, high), At(a, floor, high), (Radial(a) + Radial(b)).Normalized());
+
+        }
+
+        // Sides, then sill and lintel: each spans the full depth, so the wall's thickness is what
+        // shows at the lip of the cut.
+        Quad(surface, At(from, floor, low), At(from, outer, low), At(from, outer, high), At(from, floor, high), middle.Cross(Vector3.Down).Normalized() * -1.0f);
+        Quad(surface, At(to, floor, low), At(to, outer, low), At(to, outer, high), At(to, floor, high), middle.Cross(Vector3.Down).Normalized());
+
+        Quad(surface, At(from, floor, low), At(to, floor, low), At(to, outer, low), At(from, outer, low), Vector3.Up);
+        Quad(surface, At(from, floor, high), At(to, floor, high), At(to, outer, high), At(from, outer, high), Vector3.Down);
+
+    }
+
+    private static Vector3 Radial(float angle) => new Vector3(Mathf.Cos(angle), 0.0f, Mathf.Sin(angle));
+
+    private static Vector3 At(float angle, float radius, float height) => Radial(angle) * radius + Vector3.Up * height;
+
+    private static void Quad(SurfaceTool surface, Vector3 a, Vector3 b, Vector3 c, Vector3 d, Vector3 facing) {
+
+        if ((b - a).Cross(c - a).Dot(facing) > 0.0f) {
+
+            (b, d) = (d, b);
+
+        }
+
+        Corner(surface, a, facing, new Vector2(0.0f, 0.0f));
+        Corner(surface, b, facing, new Vector2(1.0f, 0.0f));
+        Corner(surface, c, facing, new Vector2(1.0f, 1.0f));
+
+        Corner(surface, a, facing, new Vector2(0.0f, 0.0f));
+        Corner(surface, c, facing, new Vector2(1.0f, 1.0f));
+        Corner(surface, d, facing, new Vector2(0.0f, 1.0f));
+
+    }
+
+    private static void Corner(SurfaceTool surface, Vector3 point, Vector3 facing, Vector2 uv) {
+
+        surface.SetNormal(facing);
+        surface.SetUV(uv);
+
+        surface.AddVertex(point);
+
+    }
+
+    private static StandardMaterial3D HullMaterial(Color albedo, float metallic, float roughness) {
+
+        // A fully metallic hull reads near-black in sunlight - its brightness is all specular, and a
+        // white livery is a dielectric. The paint stays low-metallic and the maps carry the detail.
+        return new StandardMaterial3D {
+
+            AlbedoColor = albedo,
+            AlbedoTexture = GD.Load<Texture2D>("res://Assets/Vessel/hull_color.jpg"),
+
+            NormalEnabled = true,
+            NormalTexture = GD.Load<Texture2D>("res://Assets/Vessel/hull_normal.jpg"),
+            NormalScale = 2.0f,
+
+            RoughnessTexture = GD.Load<Texture2D>("res://Assets/Vessel/hull_roughness.jpg"),
+
+            Metallic = metallic,
+            MetallicSpecular = 0.5f,
+            Roughness = roughness,
+
+        };
 
     }
 
@@ -168,138 +491,117 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    private static void Cap(SurfaceTool surface, Vector2 root, Vector3 facing) {
+    private static ArrayMesh BuildNozzleMesh() {
 
-        for (int step = 0; step < RadialSegments; step++) {
+        // Mounting boss, then the chamber pinching down to the throat, then the bell. Sampling the
+        // bell along its own curve is what stops it reading as a plain cone at this size.
+        Vector2[] profile = {
 
-            float first = Mathf.Tau * step / RadialSegments;
-            float second = Mathf.Tau * (step + 1) / RadialSegments;
+            new Vector2(0.000f, -NozzleBase),
+            new Vector2(0.077f, -NozzleBase),
+            new Vector2(0.077f, -0.101f),
+            new Vector2(0.056f, -0.094f),
+            new Vector2(0.056f, -0.063f),
 
-            // Front faces are clockwise, so the rim order is what decides which way the disc is seen.
-            float a = facing == Vector3.Down ? first : second;
-            float b = facing == Vector3.Down ? second : first;
+            new Vector2(0.043f, -0.038f),
+            new Vector2(0.028f, 0.000f),
 
-            surface.SetNormal(facing);
-            surface.SetUV(new Vector2(0.5f, 0.5f));
-            surface.AddVertex(new Vector3(0.0f, root.Y, 0.0f));
+            new Vector2(0.037f, 0.027f),
+            new Vector2(0.050f, 0.056f),
+            new Vector2(0.064f, 0.088f),
+            new Vector2(0.076f, 0.122f),
+            new Vector2(0.081f, NozzleReach),
 
-            surface.SetNormal(facing);
-            surface.SetUV(new Vector2(Mathf.Cos(b) * 0.5f + 0.5f, Mathf.Sin(b) * 0.5f + 0.5f));
-            surface.AddVertex(new Vector3(Mathf.Cos(b) * root.X, root.Y, Mathf.Sin(b) * root.X));
+        };
 
-            surface.SetNormal(facing);
-            surface.SetUV(new Vector2(Mathf.Cos(a) * 0.5f + 0.5f, Mathf.Sin(a) * 0.5f + 0.5f));
-            surface.AddVertex(new Vector3(Mathf.Cos(a) * root.X, root.Y, Mathf.Sin(a) * root.X));
+        SurfaceTool surface = new SurfaceTool();
+
+        surface.Begin(Mesh.PrimitiveType.Triangles);
+
+        Revolve(surface, profile, NozzleSegments, true, null);
+
+        ArrayMesh mesh = new ArrayMesh();
+
+        Commit(mesh, surface, "Nozzle", NozzleMaterial());
+
+        return mesh;
+
+    }
+
+    private static StandardMaterial3D NozzleMaterial() {
+
+        StandardMaterial3D material = Paint(new Color(0.44f, 0.415f, 0.38f), 0.85f, 0.30f);
+
+        // The bell is a single thin skin, so its inside only exists if back faces are drawn.
+        material.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+
+        return material;
+
+    }
+
+    private void AttachThrusters(float datum) {
+
+        ArrayMesh nozzle = BuildNozzleMesh();
+
+        float floor = (float)Meridian.BodyRadius - RcsDepth;
+
+        for (int index = 0; index < RcsPorts; index++) {
+
+            float angle = Mathf.Tau * PortCentre(index) / RadialSegments;
+
+            Vector3 outward = Radial(angle);
+            Vector3 side = Vector3.Up.Cross(outward).Normalized();
+
+            // One nozzle canted forward and one aft: a port that only fired radially could not pitch.
+            for (int sense = -1; sense <= 1; sense += 2) {
+
+                Vector3 axis = (outward * Mathf.Cos(RcsCant) + Vector3.Up * (Mathf.Sin(RcsCant) * sense)).Normalized();
+
+                _body.AddChild(new MeshInstance3D {
+
+                    Name = $"Rcs{index}{(sense > 0 ? "Fore" : "Aft")}",
+                    Mesh = nozzle,
+
+                    Transform = new Transform3D(
+                        new Basis(side, axis, side.Cross(axis).Normalized()),
+                        outward * floor + axis * NozzleBase + Vector3.Up * (RcsHeight + RcsOffset * sense - datum)),
+
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+
+                });
+
+            }
 
         }
 
     }
 
-    /// <summary>Stretches a unit shell onto a band of the mould line, so an imported skin lands on the
-    /// same stations the mass properties were integrated from.</summary>
-    private void Shell(string name, float low, float high, float radius, float datum, bool twoSided = false) {
+    private void AttachEngine(float datum) {
 
-        Node3D shell = LoadModel(name);
+        Node3D engine = Part("engine", EngineLength, Basis.Identity);
 
-        if (shell == null) {
+        if (engine == null) {
 
             return;
 
         }
 
-        shell.Scale = new Vector3(radius, high - low, radius);
-        shell.Position = new Vector3(0.0f, (low + high) * 0.5f - datum, 0.0f);
+        Aabb bounds = Bounds(engine, Transform3D.Identity);
 
-        if (twoSided) {
+        // The plume has to leave the nozzle the model actually has, so the bell is measured off the
+        // scaled mesh rather than carried as a constant beside it. Plumbing hangs off one side and
+        // widens that axis, so the narrower of the two is the one that reads the bell.
+        _bellRadius = Mathf.Min(bounds.Size.X, bounds.Size.Z) * 0.5f;
 
-            ShowBackFaces(shell);
+        engine.Position = new Vector3(0.0f, EngineDeck - bounds.Size.Y * 0.5f - datum, 0.0f);
 
-        }
+        _bellPlane = engine.Position.Y - bounds.Size.Y * 0.5f;
 
-        _body.AddChild(shell);
-
-    }
-
-    // A shell modelled as a thin open barrel has no inside, so its far wall is culled away and the
-    // stage reads as see-through. Drawing both faces costs nothing at this triangle count.
-    private static void ShowBackFaces(Node node) {
-
-        if (node is MeshInstance3D instance && instance.Mesh != null) {
-
-            for (int surface = 0; surface < instance.Mesh.GetSurfaceCount(); surface++) {
-
-                if (instance.Mesh.SurfaceGetMaterial(surface) is BaseMaterial3D material) {
-
-                    material.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
-
-                }
-
-            }
-
-        }
-
-        foreach (Node child in node.GetChildren()) {
-
-            ShowBackFaces(child);
-
-        }
+        _body.AddChild(engine);
 
     }
 
-    private void AttachParts(float datum) {
-
-        // Every one of these is a thin open barrel with no inside, so all three are drawn two-sided.
-        Shell("skirt", 0.0f, TankLow, (float)Meridian.BodyRadius, datum, twoSided: true);
-
-        Shell("tank", TankLow, TankHigh, (float)Meridian.BodyRadius, datum, twoSided: true);
-
-        // The capsule sits straight on the tank flange, so its base is the full body radius.
-        Shell("nose", (float)Meridian.NoseBase, (float)Meridian.OverallLength, (float)Meridian.BodyRadius, datum, twoSided: true);
-
-
-        // The engine hangs on the stage axis: its own long axis is already the thrust axis, bell aft.
-        Node3D engine = Part("engine", EngineHeight, Basis.Identity);
-
-        if (engine != null) {
-
-            engine.Position = new Vector3(0.0f, -datum - EngineHeight * 0.5f + EngineRecess, 0.0f);
-
-            _body.AddChild(engine);
-
-        }
-
-        // The quad carries its mounting boss on +X and its nozzle cross on -X, so -X is what has to
-        // end up pointing off the hull; the boss then buries itself in the equipment bay wall.
-        Mount("rcs", RcsSize, new Basis(Vector3.Back, -Mathf.Pi * 0.5f), RcsHeight - datum, RcsRadius, 4, Mathf.Pi * 0.25f);
-
-    }
-
-    private void Mount(string name, float size, Basis fix, float height, float radius, int count, float phase) {
-
-        for (int index = 0; index < count; index++) {
-
-            Node3D part = Part(name, size, fix);
-
-            if (part == null) {
-
-                return;
-
-            }
-
-            float angle = Mathf.Tau * index / count + phase;
-
-            Vector3 outward = new Vector3(Mathf.Cos(angle), 0.0f, Mathf.Sin(angle));
-
-            part.Position = outward * radius + new Vector3(0.0f, height, 0.0f);
-            part.Basis = new Basis(outward.Cross(Vector3.Up), outward, Vector3.Up);
-
-            _body.AddChild(part);
-
-        }
-
-    }
-
-    /// <summary>Loads a generated part, squares up its axes and rescales it to a known size about its centre.</summary>
+    /// <summary>Loads a part, squares up its axes and rescales it to a known size about its centre.</summary>
     private static Node3D Part(string name, float size, Basis fix) {
 
         Node3D source = LoadModel(name);
@@ -339,6 +641,8 @@ public sealed partial class VesselView : Node3D {
         string path = "res://Assets/Vessel/" + name + ".glb";
 
         if (!ResourceLoader.Exists(path)) {
+
+            GD.PushError($"missing {path}");
 
             return null;
 
@@ -417,7 +721,7 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    private void AttachPlume(float datum) {
+    private void AttachPlume() {
 
         _plumeMaterial = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Plume.gdshader") };
         _plumeMaterial.RenderPriority = 3;
@@ -425,7 +729,7 @@ public sealed partial class VesselView : Node3D {
         _plume = new MeshInstance3D {
 
             Name = "Plume",
-            Mesh = BuildPlumeMesh(),
+            Mesh = BuildPlumeMesh(_bellRadius),
 
             MaterialOverride = _plumeMaterial,
 
@@ -434,26 +738,26 @@ public sealed partial class VesselView : Node3D {
 
         };
 
-        _plume.Position = new Vector3(0.0f, -datum - EngineHeight + EngineRecess, 0.0f);
+        _plume.Position = new Vector3(0.0f, _bellPlane, 0.0f);
 
         _body.AddChild(_plume);
 
         // One source at the throat lights the engine, and a ring out in the plume rakes the tank wall,
         // which a light on the axis alone never can: the barrel's normals are perpendicular to it.
-        AddPlumeLight(new Vector3(0.0f, -datum - EngineHeight + EngineRecess - 1.0f, 0.0f), 12.0f);
+        AddPlumeLight(new Vector3(0.0f, _bellPlane - 1.0f, 0.0f), 12.0f);
 
         for (int index = 0; index < PlumeLightRing; index++) {
 
             float angle = Mathf.Tau * index / PlumeLightRing;
 
-            AddPlumeLight(new Vector3(Mathf.Cos(angle) * 1.5f, -datum - EngineHeight + EngineRecess - 4.5f, Mathf.Sin(angle) * 1.5f), 22.0f);
+            AddPlumeLight(new Vector3(Mathf.Cos(angle) * 1.5f, _bellPlane - 4.5f, Mathf.Sin(angle) * 1.5f), 22.0f);
 
         }
 
     }
 
     // An under-expanded vacuum plume: nested shells stand in for the volume, dense on the axis and soft at the rim.
-    private static ArrayMesh BuildPlumeMesh() {
+    private static ArrayMesh BuildPlumeMesh(float bell) {
 
         SurfaceTool surface = new SurfaceTool();
 
@@ -469,8 +773,8 @@ public sealed partial class VesselView : Node3D {
                 float lowerT = (float)station / PlumeStations;
                 float upperT = (float)(station + 1) / PlumeStations;
 
-                float lowerR = girth * BellRadius * (1.0f + PlumeFlare * Mathf.Pow(lowerT, 0.62f));
-                float upperR = girth * BellRadius * (1.0f + PlumeFlare * Mathf.Pow(upperT, 0.62f));
+                float lowerR = girth * bell * (1.0f + PlumeFlare * Mathf.Pow(lowerT, 0.62f));
+                float upperR = girth * bell * (1.0f + PlumeFlare * Mathf.Pow(upperT, 0.62f));
 
                 float lowerY = -PlumeLength * lowerT;
                 float upperY = -PlumeLength * upperT;

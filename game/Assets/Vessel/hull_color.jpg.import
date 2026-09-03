@@ -2,20 +2,17 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://r3eig181c1nc"
-path.bptc="res://.godot/imported/engine_2.png-f5bbe7b3075e8539c5b0bb53f3c6db18.bptc.ctex"
+uid="uid://bgvmj1bykgiwb"
+path.bptc="res://.godot/imported/hull_color.jpg-1dafd551924eda2ce79abcee8e5c45a4.bptc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
 }
-generator_parameters={
-"md5": "2b2e62ea9ca9f920768e8b11a88dacdd"
-}
 
 [deps]
 
-source_file="res://Assets/Vessel/engine_2.png"
-dest_files=["res://.godot/imported/engine_2.png-f5bbe7b3075e8539c5b0bb53f3c6db18.bptc.ctex"]
+source_file="res://Assets/Vessel/hull_color.jpg"
+dest_files=["res://.godot/imported/hull_color.jpg-1dafd551924eda2ce79abcee8e5c45a4.bptc.ctex"]
 
 [params]
 

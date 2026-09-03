@@ -2,20 +2,17 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b5w6ww2snabpu"
-path.bptc="res://.godot/imported/tank_0.png-c102a85bf7a32b5e7cb279a64445891e.bptc.ctex"
+uid="uid://cwsh7uw1x6ims"
+path.bptc="res://.godot/imported/hull_roughness.jpg-d7495f62a9d2e44c1d58b9975a22715a.bptc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
 }
-generator_parameters={
-"md5": "e78a3638539cd5adc8c685697e7e1f8a"
-}
 
 [deps]
 
-source_file="res://Assets/Vessel/tank_0.png"
-dest_files=["res://.godot/imported/tank_0.png-c102a85bf7a32b5e7cb279a64445891e.bptc.ctex"]
+source_file="res://Assets/Vessel/hull_roughness.jpg"
+dest_files=["res://.godot/imported/hull_roughness.jpg-d7495f62a9d2e44c1d58b9975a22715a.bptc.ctex"]
 
 [params]
 
