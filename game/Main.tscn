@@ -16,6 +16,8 @@ script = ExtResource("1_main")
 
 [node name="Earthshine" type="DirectionalLight3D" parent="."]
 
+[node name="Earthlight" type="ReflectionProbe" parent="."]
+
 [node name="Flight" type="Node" parent="."]
 script = ExtResource("2_flight")
 

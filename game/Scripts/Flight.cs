@@ -9,7 +9,9 @@ namespace FullThrust.Game;
 /// <summary>Advances the vessel; coasts on the analytic conic, integrates only under thrust.</summary>
 public sealed partial class Flight : Node {
 
-    private const double StartAltitude = 70000.0;
+    // The surface maps are 8192 x 4096 - 977 m a texel - so at 70 km one texel covered twenty screen
+    // pixels and the ground read as mush. Held here until M4's LOD surface earns a lower orbit back.
+    private const double StartAltitude = 300000.0;
     private const double StartInclination = 0.61;
     private const double StartTrueAnomaly = 0.60;
 

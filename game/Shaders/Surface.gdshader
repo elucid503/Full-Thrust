@@ -17,12 +17,21 @@ uniform float planet_radius = 1274200.0;
 uniform float relief_metres = 8800.0;
 uniform float relief_strength = 2.6;
 
+// Bump relief has no self-shadowing, so at grazing light it flips the lambert term texel by texel
+// and the ground reads as crinkled foil. Fade the perturbation out as the sun approaches the horizon.
+uniform float relief_horizon = 0.02;
+uniform float relief_daylight = 0.34;
+
 uniform float cloud_altitude = 10000.0;
 uniform float cloud_drift = 0.0;
 uniform float cloud_shadow = 0.62;
 
 uniform vec3 ocean_colour : source_color = vec3(0.008, 0.024, 0.055);
-uniform float night_gain = 3.4;
+uniform float night_gain = 0.8;
+
+// Cities belong below the geometric terminator; lighting them while the ground is still lit paints a gold band along it.
+uniform float night_dusk = -0.02;
+uniform float night_dark = -0.20;
 
 varying vec3 world_normal;
 
@@ -75,7 +84,11 @@ void fragment() {
     float slope_east = (east_height - west_height) * relief_metres / (2.0 * metres_east);
     float slope_north = (south_height - north_height) * relief_metres / (2.0 * metres_north);
 
-    vec3 relief = normalize(vec3(-slope_east * relief_strength, -slope_north * relief_strength, 1.0));
+    float sun_elevation = dot(world_normal, sun_direction);
+
+    float standing = relief_strength * smoothstep(relief_horizon, relief_daylight, sun_elevation);
+
+    vec3 relief = normalize(vec3(-slope_east * standing, -slope_north * standing, 1.0));
 
     NORMAL_MAP = mix(relief, vec3(0.0, 0.0, 1.0), water) * 0.5 + 0.5;
     NORMAL_MAP_DEPTH = 1.0;
@@ -89,7 +102,7 @@ void fragment() {
     ROUGHNESS = mix(mix(0.94, 0.55, ice), 0.055, water);
     SPECULAR = mix(0.5, 0.25, water);
 
-    float night = smoothstep(0.12, -0.10, dot(world_normal, sun_direction));
+    float night = smoothstep(night_dusk, night_dark, sun_elevation);
 
     EMISSION = texture(night_map, uv).rgb * night_gain * night * lit;
 

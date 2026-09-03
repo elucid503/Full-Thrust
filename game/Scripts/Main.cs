@@ -11,6 +11,9 @@ public sealed partial class Main : Node3D {
 
     private const float EarthshineEnergy = 0.26f;
 
+    // Wide enough to hold the vessel and its plume; the probe is a mirror of the planet, not a room.
+    private const float ProbeExtent = 48.0f;
+
     // The vessel is the only shadow caster, so the cascade only has to cover the chase arm and a little slack.
     private const float ShadowSlack = 45.0f;
 
@@ -22,6 +25,7 @@ public sealed partial class Main : Node3D {
 
     private DirectionalLight3D _sun;
     private DirectionalLight3D _earthshine;
+    private ReflectionProbe _earthlight;
     private WorldEnvironment _environment;
 
     public override void _Ready() {
@@ -34,6 +38,7 @@ public sealed partial class Main : Node3D {
 
         _sun = GetNode<DirectionalLight3D>("Sun");
         _earthshine = GetNode<DirectionalLight3D>("Earthshine");
+        _earthlight = GetNode<ReflectionProbe>("Earthlight");
         _environment = GetNode<WorldEnvironment>("WorldEnvironment");
 
         _sun.LookAtFromPosition(Vector3.Zero, -SunDirection, Vector3.Up);
@@ -47,11 +52,21 @@ public sealed partial class Main : Node3D {
         _sun.DirectionalShadowBlendSplits = false;
         _sun.DirectionalShadowFadeStart = 1.0f;
         _sun.ShadowBias = 0.06f;
-        _sun.ShadowNormalBias = 1.6f;
-        _sun.ShadowBlur = 1.2f;
+        _sun.ShadowNormalBias = 0.8f;
+        _sun.ShadowBlur = 0.35f;
 
         _earthshine.LightColor = new Color(0.62f, 0.72f, 0.88f);
         _earthshine.ShadowEnabled = false;
+
+        // The sky is a star map, so on its own it leaves a metal nothing to mirror. In low orbit the
+        // planet is the brightest thing in the scene and belongs in the reflection, not just the diffuse.
+        _earthlight.Size = new Vector3(ProbeExtent, ProbeExtent, ProbeExtent);
+        _earthlight.MaxDistance = 0.0f;
+        _earthlight.UpdateMode = ReflectionProbe.UpdateModeEnum.Always;
+        _earthlight.AmbientMode = ReflectionProbe.AmbientModeEnum.Disabled;
+        _earthlight.BoxProjection = false;
+        _earthlight.EnableShadows = false;
+        _earthlight.Intensity = 1.0f;
 
         _environment.Environment = BuildEnvironment();
 
@@ -86,11 +101,15 @@ public sealed partial class Main : Node3D {
 
         _sun.DirectionalShadowMaxDistance = _camera.Distance + ShadowSlack;
 
-        _vessel.Sync(Frames.Point(_flight.Vessel.Position), Frames.Rotation(_flight.Vessel.Orientation), _flight.Vessel.Throttle);
+        Vector3 focus = Frames.Point(_flight.Vessel.Position);
+
+        _vessel.Sync(focus, Frames.Rotation(_flight.Vessel.Orientation), _flight.Vessel.Throttle);
+
+        _earthlight.Position = focus;
 
         _telemetry.Sync(_flight);
 
-        _camera.Sync(Frames.Point(_flight.Vessel.Position));
+        _camera.Sync(focus);
 
     }
 

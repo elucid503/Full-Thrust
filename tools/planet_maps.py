@@ -27,7 +27,7 @@ BASE = "https://eoimages.gsfc.nasa.gov/images/imagerecords"
 SOURCES = {
     "albedo.jpg": f"{BASE}/74000/74092/world.200407.3x21600x10800.jpg",
     "elevation.png": f"{BASE}/73000/73934/gebco_08_rev_elev_21600x10800.png",
-    "night.jpg": f"{BASE}/79000/79765/dnb_land_ocean_ice.2012.13500x6750.jpg",
+    "night.source.jpg": f"{BASE}/79000/79765/dnb_land_ocean_ice.2012.13500x6750.jpg",
     "cloud.w.png": f"{BASE}/57000/57747/cloud.W.2001210.21600x21600.png",
     "cloud.e.png": f"{BASE}/57000/57747/cloud.E.2001210.21600x21600.png",
 }
@@ -75,15 +75,17 @@ def build_albedo():
 
 
 def build_night():
-    colour = np.asarray(resample(load("night.jpg", "RGB")), dtype=np.float32) / 255.0
+    colour = np.asarray(resample(load("night.source.jpg", "RGB")), dtype=np.float32) / 255.0
 
     # The source composites city lights over a bluish land-and-ice plate that would otherwise glow.
     # Only the lights are warm, so red over blue separates them from ice sheets and open ocean.
     warm = np.clip((colour[..., 0] - colour[..., 2] + 0.015) / 0.09, 0.0, 1.0)
 
-    lights = np.clip(colour * warm[..., None] * 1.6, 0.0, 1.0)
+    # No gain here. Multiplying up and clipping flattened every city core to a white plateau, which
+    # the shader then read as a hard-edged block; the brightness belongs in night_gain instead.
+    lights = np.clip(colour * warm[..., None], 0.0, 1.0)
 
-    Image.fromarray((lights * 255.0 + 0.5).astype(np.uint8), "RGB").save(os.path.join(OUT, "night.jpg"), quality=92, optimize=True)
+    Image.fromarray((lights * 255.0 + 0.5).astype(np.uint8), "RGB").save(os.path.join(OUT, "night.png"), optimize=True)
 
 
 def build_clouds():

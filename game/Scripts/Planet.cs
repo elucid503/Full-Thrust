@@ -37,7 +37,7 @@ public sealed partial class Planet : Node3D {
 
         Texture2D albedo = GD.Load<Texture2D>("res://Assets/Planet/albedo.jpg");
         Texture2D terrain = GD.Load<Texture2D>("res://Assets/Planet/terrain.png");
-        Texture2D night = GD.Load<Texture2D>("res://Assets/Planet/night.jpg");
+        Texture2D night = GD.Load<Texture2D>("res://Assets/Planet/night.png");
         Texture2D cloud = GD.Load<Texture2D>("res://Assets/Planet/clouds.jpg");
 
         _surface = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Surface.gdshader") };
@@ -54,6 +54,7 @@ public sealed partial class Planet : Node3D {
         _clouds = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Clouds.gdshader") };
 
         _clouds.SetShaderParameter("cloud_map", cloud);
+        _clouds.SetShaderParameter("sun_direction", sunDirection);
         _clouds.RenderPriority = 1;
 
         _atmosphere = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Atmosphere.gdshader") };

@@ -9,7 +9,8 @@ uniform vec3 flame_colour : source_color = vec3(1.00, 0.55, 0.24);
 
 uniform float rim_power = 2.2;
 uniform float reach = 2.4;
-uniform float brightness = 0.85;
+// Fourteen additive shells stack, so this is per shell and the sum is what must stay off the clip.
+uniform float brightness = 0.40;
 uniform float flicker_rate = 24.0;
 
 void fragment() {

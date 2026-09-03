@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 
 using FullThrust.Sim;
@@ -16,6 +17,13 @@ public sealed partial class DebugBridge : Node {
 
     private const string DefaultUrl = "http://localhost:9080/";
     private const string ShotDirectory = "res://.artifacts";
+
+    // A hyperbolic orbit has an infinite period, which plain JSON cannot carry at all.
+    private static readonly JsonSerializerOptions Json = new JsonSerializerOptions {
+
+        NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
+
+    };
 
     private readonly ConcurrentQueue<HttpListenerContext> _pending = new();
 
@@ -363,7 +371,7 @@ public sealed partial class DebugBridge : Node {
 
     private static void Respond(HttpListenerContext context, Dictionary<string, object> body, int status = 200) {
 
-        byte[] payload = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(body));
+        byte[] payload = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(body, Json));
 
         context.Response.StatusCode = status;
         context.Response.ContentType = "application/json";
