@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace FullThrust.Sim;
 
 public sealed class Vessel {
@@ -22,6 +24,11 @@ public sealed class Vessel {
     /// <summary>Oxidiser to fuel by mass; the two share one tank, so this only splits the readout.</summary>
     public double MixtureRatio { get; init; } = 2.56;
 
+    /// <summary>What the tank is loaded with. The sim carries one propellant column; these say what
+    /// the two halves of it are, which is all the difference the readouts need.</summary>
+    public Propellant Fuel { get; init; }
+    public Propellant Oxidiser { get; init; }
+
     public double RcsPropellantMass { get; set; }
     public double RcsPropellantCapacity { get; init; }
 
@@ -37,6 +44,9 @@ public sealed class Vessel {
     /// <summary>The mould line this vessel's mass properties and geometry are both derived from.</summary>
     public Hull Hull { get; init; }
 
+    /// <summary>What the vessel is built from, ordered tail to nose.</summary>
+    public IReadOnlyList<Part> Parts { get; init; } = Array.Empty<Part>();
+
     /// <summary>Centre of mass measured from the hull datum, along the nose axis.</summary>
     public double CentreOfMassZ { get; private set; }
 
@@ -45,6 +55,73 @@ public sealed class Vessel {
 
     public double Throttle { get; set; }
     public Vector3d ControlTorque { get; set; }
+
+    private bool[] _engines = Array.Empty<bool>();
+
+    /// <summary>One switch per engine in the cluster. A shut engine passes neither thrust nor propellant.</summary>
+    public IReadOnlyList<bool> Engines => _engines;
+
+    public int EngineCount => _engines.Length;
+
+    public int EnginesLit {
+
+        get {
+
+            int lit = 0;
+
+            foreach (bool engine in _engines) {
+
+                if (engine) {
+
+                    lit++;
+
+                }
+
+            }
+
+            return lit;
+
+        }
+
+    }
+
+    /// <summary>Fraction of the cluster's rating currently available. A vessel that declares no
+    /// engine parts has no switches to throw and carries its whole rating.</summary>
+    public double ThrustFraction => _engines.Length == 0 ? 1.0 : (double)EnginesLit / _engines.Length;
+
+    public bool IsEngineLit(int index) => index >= 0 && index < _engines.Length && _engines[index];
+
+    public void SetEngine(int index, bool lit) {
+
+        if (index >= 0 && index < _engines.Length) {
+
+            _engines[index] = lit;
+
+        }
+
+    }
+
+    /// <summary>Fits one switch to every engine the part list carries, all of them open. Separate
+    /// from the mass properties because those are re-derived in flight and these must survive it.</summary>
+    public void CommissionEngines() {
+
+        int count = 0;
+
+        foreach (Part part in Parts) {
+
+            if (part.Kind == PartKind.Engine) {
+
+                count += Math.Max(part.Count, 1);
+
+            }
+
+        }
+
+        _engines = new bool[count];
+
+        Array.Fill(_engines, true);
+
+    }
 
     /// <summary>Pilot demand for RCS translation about the body axes, each in [-1, 1].</summary>
     public Vector3d TranslationCommand { get; set; }
@@ -56,13 +133,37 @@ public sealed class Vessel {
     public double MassFlowRate => ThrustNewtons / (SpecificImpulse * StandardGravity);
     public double DeltaV => SpecificImpulse * StandardGravity * Math.Log(Mass / DryMass);
 
-    public double CurrentThrust => PropellantMass > 0.0 ? ThrustNewtons * Math.Clamp(Throttle, 0.0, 1.0) : 0.0;
+    public double CurrentThrust => PropellantMass > 0.0 ? ThrustNewtons * ThrustFraction * Math.Clamp(Throttle, 0.0, 1.0) : 0.0;
+
+    /// <summary>Propellant the engines are drawing right now. Taken from the thrust actually being
+    /// made, so a shut engine cannot burn and the two can never disagree.</summary>
+    public double CurrentMassFlow => SpecificImpulse > 0.0 ? CurrentThrust / (SpecificImpulse * StandardGravity) : 0.0;
+
+    /// <summary>Fraction of the rating actually being made. This, not the throttle lever, is what
+    /// the plume follows: a shut or dry engine is making nothing however far the lever is open.</summary>
+    public double ThrustSetting => ThrustNewtons > 0.0 ? CurrentThrust / ThrustNewtons : 0.0;
 
     public double OxidiserMass => PropellantMass * MixtureRatio / (1.0 + MixtureRatio);
     public double FuelMass => PropellantMass / (1.0 + MixtureRatio);
 
     public double OxidiserCapacity => PropellantCapacity * MixtureRatio / (1.0 + MixtureRatio);
     public double FuelCapacity => PropellantCapacity / (1.0 + MixtureRatio);
+
+    public double FuelVolume => Fuel != null && Fuel.Density > 0.0 ? FuelMass / Fuel.Density : 0.0;
+    public double OxidiserVolume => Oxidiser != null && Oxidiser.Density > 0.0 ? OxidiserMass / Oxidiser.Density : 0.0;
+
+    /// <summary>Share of the loaded volume that is oxidiser, which is where the bulkhead sits.</summary>
+    public double OxidiserVolumeFraction {
+
+        get {
+
+            double total = FuelVolume + OxidiserVolume;
+
+            return total > 0.0 ? OxidiserVolume / total : 0.0;
+
+        }
+
+    }
 
     public bool HasRcs => RcsEnabled && RcsPropellantMass > 0.0;
 

@@ -44,11 +44,58 @@ public static class Meridian {
 
     public const double DryMass = 2400.0;
 
-    // LOX and RP-1 at their loaded mixture ratio, averaged over the common-bulkhead tank.
-    public const double PropellantDensity = 1029.0;
+    public const double MixtureRatio = 2.56;
+
+    // Kerosene at ambient and oxygen at its boiling point. Everything the tank knows about density
+    // comes from these two, so the mould line and the readouts cannot end up disagreeing about it.
+    public static readonly Propellant Fuel = new Propellant {
+
+        Name = "RP-1",
+
+        Density = 820.0,
+        Temperature = 288.0,
+
+    };
+
+    public static readonly Propellant Oxidiser = new Propellant {
+
+        Name = "Liquid Oxygen",
+
+        Density = 1141.0,
+        Temperature = 90.0,
+
+        IsCryogenic = true,
+
+    };
+
+    // The average over the common-bulkhead tank, which is the two species at the ratio they load at.
+    public static readonly double PropellantDensity =
+        (1.0 + MixtureRatio) / (1.0 / Fuel.Density + MixtureRatio / Oxidiser.Density);
 
     // Four RCS quads on the forward tank, sized so the stage slews a right angle in about twenty seconds.
     public const double ControlTorque = 7000.0;
+
+    // Where the hardware that is not on the mould line sits. The lathe, the part list and the
+    // craft diagram all read these, so none of them can place a nozzle the others disagree with.
+    public const int RcsPorts = 4;
+
+    public const double RcsHeight = 6.90;
+    public const double RcsHalfHeight = 0.30;
+    public const double RcsPortRadius = 0.18;
+
+    public const double EngineDeck = 0.36;
+    public const double EngineLength = 2.55;
+
+    public const double EngineMouthRadius = 0.62;
+    public const double EngineThroatRadius = 0.115;
+    public const double EngineChamberRadius = 0.30;
+
+    // Where the chamber ends and where the throat sits, as fractions of the engine's length below
+    // the deck. The bell is everything under the throat.
+    private const double ChamberDepth = 0.26;
+    private const double ThroatDepth = 0.34;
+
+    private const int BellStations = 12;
 
     // Hydrazine monoprop in its own spherical bottle, enough for a few hundred slews before the stage is deaf.
     public const double RcsThrustNewtons = 1_600.0;
@@ -112,6 +159,134 @@ public static class Meridian {
 
     }
 
+    /// <summary>The nozzle in section: a cylindrical chamber, a throat, and a bell opening out
+    /// from it. Drawn from the same figures the engine is rated on rather than sketched.</summary>
+    private static Hull.Station[] BuildBell() {
+
+        double top = EngineDeck;
+        double chamber = top - EngineLength * ChamberDepth;
+        double throat = top - EngineLength * ThroatDepth;
+        double mouth = top - EngineLength;
+
+        List<Hull.Station> stations = new List<Hull.Station> {
+
+            new Hull.Station(top, EngineChamberRadius * 0.72),
+            new Hull.Station(top - 0.06, EngineChamberRadius),
+
+            new Hull.Station(chamber, EngineChamberRadius),
+            new Hull.Station(throat, EngineThroatRadius),
+
+        };
+
+        // Bell-shaped rather than conical: the radius opens fastest just past the throat and flattens
+        // towards the mouth, which is what an actual contour does and what reads as an engine.
+        for (int index = 1; index <= BellStations; index++) {
+
+            double fraction = (double)index / BellStations;
+
+            double radius = EngineThroatRadius + (EngineMouthRadius - EngineThroatRadius) * Math.Sqrt(fraction);
+
+            stations.Add(new Hull.Station(throat + (mouth - throat) * fraction, radius));
+
+        }
+
+        return stations.ToArray();
+
+    }
+
+    /// <summary>A quad in section: one pocket in the tank wall with a nozzle mouth at each end of it.</summary>
+    private static Hull.Station[] BuildQuad() {
+
+        double low = RcsHeight - RcsHalfHeight;
+        double high = RcsHeight + RcsHalfHeight;
+
+        return new[] {
+
+            new Hull.Station(low, RcsPortRadius * 0.55),
+            new Hull.Station(low + 0.06, RcsPortRadius),
+            new Hull.Station(RcsHeight - 0.06, RcsPortRadius),
+
+            new Hull.Station(RcsHeight, RcsPortRadius * 0.42),
+
+            new Hull.Station(RcsHeight + 0.06, RcsPortRadius),
+            new Hull.Station(high - 0.06, RcsPortRadius),
+            new Hull.Station(high, RcsPortRadius * 0.55),
+
+        };
+
+    }
+
+    /// <summary>The stage broken into the pieces a pilot can point at, tail to nose.</summary>
+    public static Part[] BuildParts() {
+
+        return new[] {
+
+            new Part {
+
+                Name = "Main Engine",
+
+                Kind = PartKind.Engine,
+
+                Bottom = EngineDeck - EngineLength,
+                Top = EngineDeck,
+
+                Profile = BuildBell(),
+
+            },
+
+            new Part {
+
+                Name = "Aft Skirt",
+
+                Kind = PartKind.Structure,
+
+                Bottom = 0.0,
+                Top = SkirtTop,
+
+            },
+
+            new Part {
+
+                Name = "Propellant Tank",
+
+                Kind = PartKind.Tank,
+
+                Bottom = SkirtTop,
+                Top = TankTop,
+
+            },
+
+            new Part {
+
+                Name = "RCS Quad",
+
+                Kind = PartKind.Thruster,
+
+                Bottom = RcsHeight - RcsHalfHeight,
+                Top = RcsHeight + RcsHalfHeight,
+
+                Count = RcsPorts,
+                RingRadius = BodyRadius - RcsPortRadius,
+
+                Profile = BuildQuad(),
+
+            },
+
+            new Part {
+
+                Name = "Nose Fairing",
+
+                Kind = PartKind.Structure,
+
+                Bottom = TankTop,
+                Top = OverallLength,
+
+            },
+
+        };
+
+    }
+
     public static Vessel Build() {
 
         Hull hull = BuildHull();
@@ -123,6 +298,7 @@ public static class Meridian {
             Name = "Meridian",
 
             Hull = hull,
+            Parts = BuildParts(),
 
             DryMass = DryMass,
             PropellantMass = capacity,
@@ -139,8 +315,14 @@ public static class Meridian {
 
             ControlTorqueLimit = ControlTorque,
 
+            MixtureRatio = MixtureRatio,
+
+            Fuel = Fuel,
+            Oxidiser = Oxidiser,
+
         };
 
+        vessel.CommissionEngines();
         vessel.RecomputeMassProperties();
 
         return vessel;

@@ -35,7 +35,7 @@ public static class Integrator {
     private static void StepTranslation(Vessel vessel, CelestialBody body, double dt) {
 
         double thrust = vessel.CurrentThrust;
-        double flow = thrust > 0.0 ? vessel.MassFlowRate * Math.Clamp(vessel.Throttle, 0.0, 1.0) : 0.0;
+        double flow = vessel.CurrentMassFlow;
 
         Vector3d thrustAxis = vessel.Nose;
         Vector3d translation = vessel.RcsForce;

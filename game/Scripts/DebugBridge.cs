@@ -149,6 +149,12 @@ public sealed partial class DebugBridge : Node {
 
                     break;
 
+                case "/click":
+
+                    Respond(context, Click(context.Request.QueryString));
+
+                    break;
+
                 case "/screenshot":
 
                     _ = Capture(context, context.Request.QueryString["path"]);
@@ -300,6 +306,46 @@ public sealed partial class DebugBridge : Node {
             ["nodeDeltaV"] = flight.Node?.DeltaV ?? 0.0,
 
         };
+
+    }
+
+    /// <summary>Points the mouse at a screen position and optionally clicks it, so the interface
+    /// can be worked from the command line the same way the rest of the game can.</summary>
+    private static Dictionary<string, object> Click(System.Collections.Specialized.NameValueCollection query) {
+
+        if (!float.TryParse(query["x"], out float x) || !float.TryParse(query["y"], out float y)) {
+
+            return new Dictionary<string, object> { ["error"] = "usage: /click?x=<px>&y=<py>[&press=false]" };
+
+        }
+
+        Vector2 at = new Vector2(x, y);
+
+        Input.WarpMouse(at);
+
+        Input.ParseInputEvent(new InputEventMouseMotion { Position = at, GlobalPosition = at });
+
+        if (!bool.TryParse(query["press"], out bool press) || press) {
+
+            foreach (bool down in new[] { true, false }) {
+
+                Input.ParseInputEvent(new InputEventMouseButton {
+
+                    Position = at,
+                    GlobalPosition = at,
+
+                    ButtonIndex = MouseButton.Left,
+                    ButtonMask = down ? MouseButtonMask.Left : 0,
+
+                    Pressed = down,
+
+                });
+
+            }
+
+        }
+
+        return new Dictionary<string, object> { ["at"] = at.ToString() };
 
     }
 

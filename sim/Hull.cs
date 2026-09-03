@@ -75,6 +75,10 @@ public sealed class Hull {
     public double TankBottom { get; }
     public double TankTop { get; }
 
+    /// <summary>Structural wall standing inside the mould line. The lathe and the cross-section
+    /// diagram both draw the inner surface off it, so it is carried here rather than in either.</summary>
+    public double WallThickness { get; init; } = 0.055;
+
     public Hull(Station[] stations, double tankBottom, double tankTop) {
 
         if (stations == null || stations.Length < 2) {
@@ -122,6 +126,9 @@ public sealed class Hull {
     public double Volume => Sweep(Base, Tip, false).Measure;
 
     public double TankVolume => Sweep(TankBottom, TankTop, false).Measure;
+
+    /// <summary>Swept area of the mould line over a span; dry mass divides by this, so a run of it carries its share.</summary>
+    public double ShellArea(double low, double high) => Sweep(Math.Max(low, Base), Math.Min(high, Tip), true).Measure;
 
     public double RadiusAt(double z) {
 
@@ -285,7 +292,8 @@ public sealed class Hull {
 
     }
 
-    private double FillHeight(double fillFraction) {
+    /// <summary>Height the propellant surface stands at for a given fill, measured from the datum.</summary>
+    public double FillHeight(double fillFraction) {
 
         double capacity = TankVolume;
 

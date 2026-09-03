@@ -13,10 +13,6 @@ public sealed partial class VesselView : Node3D {
     private const int RadialSegments = 96;
     private const int NozzleSegments = 32;
 
-    // A hull drawn as one surface has no wall: its open tail reads as a razor edge and the whole
-    // stage looks like foil. The interior shell stands off by this much and the tail rim closes it.
-    private const float WallThickness = 0.055f;
-
     // Facets meeting at less than this weld into one smooth surface. The proud rings and the tail
     // rim all turn harder than it, so they keep their edge while the ogive stays smooth.
     private const float SmoothAngle = 20.0f;
@@ -30,15 +26,15 @@ public sealed partial class VesselView : Node3D {
     private const float MountDeck = 0.42f;
 
     // The engine hangs below the mount deck with its powerhead just inside the skirt.
-    private const float EngineDeck = 0.36f;
-    private const float EngineLength = 2.55f;
+    private const float EngineDeck = (float)Meridian.EngineDeck;
+    private const float EngineLength = (float)Meridian.EngineLength;
 
     // Flush RCS: the ports are holes cut clean through the tank wall, and the only hardware that
     // shows is the pair of nozzles recessed at the bottom of each one.
-    private const int RcsPorts = 4;
+    private const int RcsPorts = Meridian.RcsPorts;
     private const int RcsHalfSteps = 3;
-    private const float RcsHeight = 6.90f;
-    private const float RcsHalfHeight = 0.30f;
+    private const float RcsHeight = (float)Meridian.RcsHeight;
+    private const float RcsHalfHeight = (float)Meridian.RcsHalfHeight;
     private const float RcsDepth = 0.26f;
     private const float RcsCant = 0.50f;
 
@@ -71,7 +67,7 @@ public sealed partial class VesselView : Node3D {
     private float _bellRadius;
     private float _bellPlane;
 
-    private float _throttle;
+    private float _thrust;
 
     public void Build(Vessel vessel) {
 
@@ -98,14 +94,14 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    public void Sync(Vector3 point, Quaternion orientation, double throttle) {
+    public void Sync(Vector3 point, Quaternion orientation, double thrust) {
 
         Position = point;
         Basis = new Basis(orientation);
 
-        _throttle = Mathf.Lerp(_throttle, (float)throttle, 0.35f);
+        _thrust = Mathf.Lerp(_thrust, (float)thrust, 0.35f);
 
-        bool lit = _throttle > 0.002f;
+        bool lit = _thrust > 0.002f;
 
         _plume.Visible = lit;
 
@@ -121,14 +117,14 @@ public sealed partial class VesselView : Node3D {
 
         }
 
-        _plumeMaterial.SetShaderParameter("throttle", _throttle);
+        _plumeMaterial.SetShaderParameter("throttle", _thrust);
 
         // A throttled engine runs a shorter, narrower plume rather than a dimmer one of the same size.
-        _plume.Scale = new Vector3(0.55f + 0.45f * _throttle, 0.35f + 0.65f * _throttle, 0.55f + 0.45f * _throttle);
+        _plume.Scale = new Vector3(0.55f + 0.45f * _thrust, 0.35f + 0.65f * _thrust, 0.55f + 0.45f * _thrust);
 
         foreach (OmniLight3D light in _plumeLights) {
 
-            light.LightEnergy = light.OmniRange * 0.13f * _throttle;
+            light.LightEnergy = light.OmniRange * 0.13f * _thrust;
 
         }
 
@@ -273,7 +269,9 @@ public sealed partial class VesselView : Node3D {
     /// <summary>Tail rim, skirt lining and thrust cone as one profile, so the tail closes in a single surface.</summary>
     private static Vector2[] InnerProfile(Hull hull, float datum) {
 
-        float lining = (float)hull.RadiusAt(0.0) - WallThickness;
+        // A hull drawn as one surface has no wall: its open tail reads as a razor edge and the whole
+        // stage looks like foil. The interior shell stands off by the mould line's own wall thickness.
+        float lining = (float)(hull.RadiusAt(0.0) - hull.WallThickness);
 
         return new[] {
 
@@ -578,7 +576,7 @@ public sealed partial class VesselView : Node3D {
 
     private void AttachEngine(float datum) {
 
-        Node3D engine = Part("engine", EngineLength, Basis.Identity);
+        Node3D engine = Import("engine", EngineLength, Basis.Identity);
 
         if (engine == null) {
 
@@ -602,7 +600,7 @@ public sealed partial class VesselView : Node3D {
     }
 
     /// <summary>Loads a part, squares up its axes and rescales it to a known size about its centre.</summary>
-    private static Node3D Part(string name, float size, Basis fix) {
+    private static Node3D Import(string name, float size, Basis fix) {
 
         Node3D source = LoadModel(name);
 

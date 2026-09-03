@@ -21,6 +21,7 @@ public sealed partial class Main : Node3D {
     private Planet _planet;
     private VesselView _vessel;
     private MapView _map;
+    private Hud _hud;
     private OrbitCamera _camera;
 
     private DirectionalLight3D _sun;
@@ -34,6 +35,7 @@ public sealed partial class Main : Node3D {
         _planet = GetNode<Planet>("Planet");
         _vessel = GetNode<VesselView>("Vessel");
         _map = GetNode<MapView>("Map");
+        _hud = GetNode<Hud>("Hud");
         _camera = GetNode<OrbitCamera>("CameraRig");
 
         _sun = GetNode<DirectionalLight3D>("Sun");
@@ -72,6 +74,7 @@ public sealed partial class Main : Node3D {
 
         _planet.Build(_flight.Body, SunDirection);
         _vessel.Build(_flight.Vessel);
+        _hud.Build(_flight);
 
         Vector3 nadir = -Frames.Direction(_flight.Vessel.Position.Normalized);
         Vector3 prograde = Frames.Direction(_flight.Vessel.Velocity.Normalized);
@@ -103,13 +106,15 @@ public sealed partial class Main : Node3D {
 
         Vector3 focus = Frames.Point(_flight.Vessel.Position);
 
-        _vessel.Sync(focus, Frames.Rotation(_flight.Vessel.Orientation), _flight.Vessel.Throttle);
+        _vessel.Sync(focus, Frames.Rotation(_flight.Vessel.Orientation), _flight.Vessel.ThrustSetting);
 
         _earthlight.Position = focus;
 
         _camera.Sync(focus);
 
         _map.Sync(delta);
+
+        _hud.Sync();
 
     }
 
