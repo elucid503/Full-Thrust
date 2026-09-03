@@ -6,6 +6,8 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 
+using FullThrust.Sim;
+
 using Godot;
 
 namespace FullThrust.Game;
@@ -127,6 +129,12 @@ public sealed partial class DebugBridge : Node {
 
                     break;
 
+                case "/control":
+
+                    Respond(context, Control(context.Request.QueryString));
+
+                    break;
+
                 case "/camera":
 
                     Respond(context, AimCamera(context.Request.QueryString));
@@ -172,7 +180,7 @@ public sealed partial class DebugBridge : Node {
 
         if (planet == null || string.IsNullOrEmpty(target)) {
 
-            return new Dictionary<string, object> { ["error"] = "usage: /tune?target=surface|clouds|atmosphere&<uniform>=<value>" };
+            return new Dictionary<string, object> { ["error"] = "usage: /tune?target=surface|clouds|atmosphere|plume&<uniform>=<value>" };
 
         }
 
@@ -186,11 +194,53 @@ public sealed partial class DebugBridge : Node {
 
             }
 
-            applied[key] = planet.Tune(target, key, query[key]) ? query[key] : "rejected";
+            bool ok = target == "plume"
+                ? VesselView.Active != null && VesselView.Active.Tune(key, query[key])
+                : planet.Tune(target, key, query[key]);
+
+            applied[key] = ok ? query[key] : "rejected";
 
         }
 
         return applied;
+
+    }
+
+    private static Dictionary<string, object> Control(System.Collections.Specialized.NameValueCollection query) {
+
+        Flight flight = Flight.Active;
+
+        if (flight == null) {
+
+            return new Dictionary<string, object> { ["error"] = "no flight" };
+
+        }
+
+        if (double.TryParse(query["throttle"], out double throttle)) {
+
+            flight.Vessel.Throttle = Math.Clamp(throttle, 0.0, 1.0);
+
+        }
+
+        if (Enum.TryParse(query["hold"], true, out AttitudeHold hold)) {
+
+            flight.Autopilot.Hold = hold;
+
+        }
+
+        if (int.TryParse(query["warp"], out int warp)) {
+
+            flight.SetWarpStep(warp);
+
+        }
+
+        return new Dictionary<string, object> {
+
+            ["throttle"] = flight.Vessel.Throttle,
+            ["hold"] = flight.Autopilot.Hold.ToString(),
+            ["warp"] = flight.Warp,
+
+        };
 
     }
 
@@ -269,6 +319,9 @@ public sealed partial class DebugBridge : Node {
             state["period"] = flight.Orbit.Period;
             state["mass"] = flight.Vessel.Mass;
             state["deltaV"] = flight.Vessel.DeltaV;
+            state["throttle"] = flight.Vessel.Throttle;
+            state["warp"] = flight.Warp;
+            state["hold"] = flight.Autopilot.Hold.ToString();
 
         }
 

@@ -25,6 +25,7 @@ public static class Program {
         RigidBodyRotation();
         HullMassProperties();
         MeridianStage();
+        AttitudeHolds();
 
         Console.WriteLine();
         Console.WriteLine($"{_checks - _failures}/{_checks} checks passed");
@@ -345,7 +346,7 @@ public static class Program {
         Near("hull length", vessel.Hull.Length, Meridian.OverallLength, 1e-12);
         Near("tank capacity", vessel.PropellantCapacity, vessel.Hull.TankVolume * Meridian.PropellantDensity, 1e-9);
 
-        Expect("nose closes to a point", vessel.Hull.RadiusAt(Meridian.OverallLength) < 1e-9, $"tip radius {vessel.Hull.RadiusAt(Meridian.OverallLength):G6}");
+        Near("nose closes on the capsule deck", vessel.Hull.RadiusAt(Meridian.OverallLength), Meridian.DeckRadius, 1e-9);
         Expect("centre of mass lies inside the hull", vessel.CentreOfMassZ > 0.0 && vessel.CentreOfMassZ < Meridian.OverallLength, $"centre {vessel.CentreOfMassZ:F3} m");
         Expect("stage is slender", vessel.Inertia.X > vessel.Inertia.Z * 4.0, $"transverse {vessel.Inertia.X:F0}, axial {vessel.Inertia.Z:F0}");
 
@@ -466,6 +467,65 @@ public static class Program {
 
         Close($"{name}: position", position, state.Position, state.Position.Length * 1e-9);
         Close($"{name}: velocity", velocity, state.Velocity, state.Velocity.Length * 1e-8);
+
+    }
+
+    private static void AttitudeHolds() {
+
+        Section("attitude holds");
+
+        Vessel vessel = Meridian.Build();
+
+        double radius = Home.Radius + 200000.0;
+        double speed = Home.CircularVelocityAt(200000.0);
+
+        vessel.Position = new Vector3d(radius, 0.0, 0.0);
+        vessel.Velocity = new Vector3d(0.0, speed * 0.8, speed * 0.6);
+
+        Vector3d prograde = Autopilot.Reference(AttitudeHold.Prograde, vessel.Position, vessel.Velocity);
+        Vector3d normal = Autopilot.Reference(AttitudeHold.Normal, vessel.Position, vessel.Velocity);
+        Vector3d radial = Autopilot.Reference(AttitudeHold.RadialOut, vessel.Position, vessel.Velocity);
+
+        Near("prograde is a unit vector", prograde.Length, 1.0, 1e-12);
+        Near("the reference triad is orthogonal", Vector3d.Dot(prograde, normal) + Vector3d.Dot(normal, radial) + Vector3d.Dot(radial, prograde), 0.0, 1e-12);
+        Near("radial points away from the body", Vector3d.Dot(radial, vessel.Position.Normalized), 1.0, 1e-12);
+        Close("retrograde opposes prograde", Autopilot.Reference(AttitudeHold.Retrograde, vessel.Position, vessel.Velocity), -prograde, 1e-12);
+
+        Autopilot autopilot = new Autopilot { MaxTorque = Meridian.ControlTorque, Hold = AttitudeHold.Prograde };
+
+        vessel.Orientation = QuaternionD.FromTo(Vector3d.UnitZ, -prograde);
+
+        double step = 1.0 / 60.0;
+
+        for (int tick = 0; tick < 60 * 90; tick++) {
+
+            autopilot.Update(vessel, step);
+            Integrator.StepAttitude(vessel, step);
+
+        }
+
+        Near("a prograde hold converges from a full reversal", Vector3d.Angle(vessel.Nose, prograde), 0.0, 0.01);
+        Near("and settles rather than oscillating", vessel.AngularVelocity.Length, 0.0, 1e-3);
+
+        autopilot.ManualCommand = Vector3d.UnitX;
+        autopilot.Update(vessel, step);
+
+        Expect("pilot input drops the hold", autopilot.Hold == AttitudeHold.Off, $"hold is {autopilot.Hold}");
+        Near("and commands full torque", vessel.ControlTorque.X, Meridian.ControlTorque, 1e-9);
+
+        autopilot.ManualCommand = Vector3d.Zero;
+
+        vessel.AngularVelocity = new Vector3d(0.0, 0.2, -0.15);
+        autopilot.Hold = AttitudeHold.Stability;
+
+        for (int tick = 0; tick < 60 * 60; tick++) {
+
+            autopilot.Update(vessel, step);
+            Integrator.StepAttitude(vessel, step);
+
+        }
+
+        Near("a stability hold kills the rotation", vessel.AngularVelocity.Length, 0.0, 1e-3);
 
     }
 

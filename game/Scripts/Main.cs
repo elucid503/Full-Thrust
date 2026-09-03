@@ -11,8 +11,13 @@ public sealed partial class Main : Node3D {
 
     private const float EarthshineEnergy = 0.26f;
 
+    // The vessel is the only shadow caster, so the cascade only has to cover the chase arm and a little slack.
+    private const float ShadowSlack = 45.0f;
+
     private Flight _flight;
     private Planet _planet;
+    private VesselView _vessel;
+    private Telemetry _telemetry;
     private OrbitCamera _camera;
 
     private DirectionalLight3D _sun;
@@ -23,6 +28,8 @@ public sealed partial class Main : Node3D {
 
         _flight = GetNode<Flight>("Flight");
         _planet = GetNode<Planet>("Planet");
+        _vessel = GetNode<VesselView>("Vessel");
+        _telemetry = GetNode<Telemetry>("Telemetry");
         _camera = GetNode<OrbitCamera>("CameraRig");
 
         _sun = GetNode<DirectionalLight3D>("Sun");
@@ -33,7 +40,15 @@ public sealed partial class Main : Node3D {
 
         _sun.LightEnergy = 1.0f;
         _sun.LightColor = new Color(1.0f, 0.973f, 0.941f);
-        _sun.ShadowEnabled = false;
+
+        // Godot's frustum culler goes degenerate over a planet-sized scene, so the cascade is kept to the vessel.
+        _sun.ShadowEnabled = true;
+        _sun.DirectionalShadowMode = DirectionalLight3D.ShadowMode.Orthogonal;
+        _sun.DirectionalShadowBlendSplits = false;
+        _sun.DirectionalShadowFadeStart = 1.0f;
+        _sun.ShadowBias = 0.06f;
+        _sun.ShadowNormalBias = 1.6f;
+        _sun.ShadowBlur = 1.2f;
 
         _earthshine.LightColor = new Color(0.62f, 0.72f, 0.88f);
         _earthshine.ShadowEnabled = false;
@@ -41,6 +56,8 @@ public sealed partial class Main : Node3D {
         _environment.Environment = BuildEnvironment();
 
         _planet.Build(_flight.Body, SunDirection);
+        _vessel.Build(_flight.Vessel);
+
         Vector3 nadir = -Frames.Direction(_flight.Vessel.Position.Normalized);
         Vector3 prograde = Frames.Direction(_flight.Vessel.Velocity.Normalized);
 
@@ -67,6 +84,12 @@ public sealed partial class Main : Node3D {
         _earthshine.LookAtFromPosition(Vector3.Zero, up, Mathf.Abs(up.Y) > 0.99f ? Vector3.Right : Vector3.Up);
         _earthshine.LightEnergy = EarthshineEnergy * Mathf.Max(up.Dot(SunDirection), 0.0f);
 
+        _sun.DirectionalShadowMaxDistance = _camera.Distance + ShadowSlack;
+
+        _vessel.Sync(Frames.Point(_flight.Vessel.Position), Frames.Rotation(_flight.Vessel.Orientation), _flight.Vessel.Throttle);
+
+        _telemetry.Sync(_flight);
+
         _camera.Sync(Frames.Point(_flight.Vessel.Position));
 
     }
@@ -80,11 +103,16 @@ public sealed partial class Main : Node3D {
         return new Godot.Environment {
 
             BackgroundMode = Godot.Environment.BGMode.Sky,
-            Sky = new Sky { SkyMaterial = starfield, RadianceSize = Sky.RadianceSizeEnum.Size128, ProcessMode = Sky.ProcessModeEnum.Realtime },
+            Sky = new Sky { SkyMaterial = starfield, RadianceSize = Sky.RadianceSizeEnum.Size256, ProcessMode = Sky.ProcessModeEnum.Realtime },
 
             AmbientLightSource = Godot.Environment.AmbientSource.Color,
             AmbientLightColor = new Color(0.44f, 0.52f, 0.64f),
             AmbientLightEnergy = 0.03f,
+
+            // Ambient colour gives a metal nothing to mirror, so anything approaching fully metallic
+            // renders black. The sky's radiance is a reflection source that costs the night side
+            // none of the diffuse energy that raising ambient would.
+            ReflectedLightSource = Godot.Environment.ReflectionSource.Sky,
 
             TonemapMode = Godot.Environment.ToneMapper.Aces,
             TonemapWhite = 6.0f,
