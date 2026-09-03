@@ -199,17 +199,13 @@ public sealed partial class VesselView : Node3D {
     /// same stations the mass properties were integrated from.</summary>
     private void Shell(string name, float low, float high, float radius, float datum, bool twoSided = false) {
 
-        string path = "res://Assets/Vessel/" + name + ".glb";
+        Node3D shell = LoadModel(name);
 
-        if (!ResourceLoader.Exists(path)) {
+        if (shell == null) {
 
             return;
 
         }
-
-        Node3D shell = GD.Load<PackedScene>(path).Instantiate<Node3D>();
-
-        shell.Name = name;
 
         shell.Scale = new Vector3(radius, high - low, radius);
         shell.Position = new Vector3(0.0f, (low + high) * 0.5f - datum, 0.0f);
@@ -306,15 +302,13 @@ public sealed partial class VesselView : Node3D {
     /// <summary>Loads a generated part, squares up its axes and rescales it to a known size about its centre.</summary>
     private static Node3D Part(string name, float size, Basis fix) {
 
-        string path = "res://Assets/Vessel/" + name + ".glb";
+        Node3D source = LoadModel(name);
 
-        if (!ResourceLoader.Exists(path)) {
+        if (source == null) {
 
             return null;
 
         }
-
-        Node3D source = GD.Load<PackedScene>(path).Instantiate<Node3D>();
 
         source.Basis = fix;
 
@@ -337,6 +331,34 @@ public sealed partial class VesselView : Node3D {
         holder.AddChild(source);
 
         return holder;
+
+    }
+
+    private static Node3D LoadModel(string name) {
+
+        string path = "res://Assets/Vessel/" + name + ".glb";
+
+        if (!ResourceLoader.Exists(path)) {
+
+            return null;
+
+        }
+
+        PackedScene packed = GD.Load<PackedScene>(path);
+
+        if (packed == null) {
+
+            GD.PushError($"failed to load {path}");
+
+            return null;
+
+        }
+
+        Node3D model = packed.Instantiate<Node3D>();
+
+        model.Name = name;
+
+        return model;
 
     }
 
