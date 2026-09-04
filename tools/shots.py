@@ -21,10 +21,10 @@ OUT = ".artifacts/m4"
 
 # The quadtree only subdivides towards the eye, so a jump has to be given frames to page in before
 # the shot is worth taking. This is how many state polls it takes to stop growing.
-SETTLE = 90
+SETTLE = 24
 
 # The bridge answers on the main thread, so polling it hard is polling the frame rate away.
-POLL = 0.12
+POLL = 0.75
 
 
 # Depression is measured off the local horizon and bearing off local north, so a view frames the
@@ -88,7 +88,7 @@ def settle(rounds=SETTLE):
 
         steady = steady + 1 if state["patches"] == last else 0
 
-        if steady >= 8 and state["fps"] > 20:
+        if steady >= 3 and state.get("terrainPendingJobs", 0) == 0 and state["fps"] > 20:
             return state
 
         last = state["patches"]

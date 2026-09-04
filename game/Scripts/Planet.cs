@@ -4,17 +4,17 @@ using Godot;
 
 namespace FullThrust.Game;
 
-/// <summary>Terra: the quadtree surface, the cloud deck marched over it, and the scattering shell
+/// <summary>Terra: the quadtree surface, the optical weather deck over it, and the scattering shell
 /// over both. Reads the body; holds no sim state.</summary>
 public sealed partial class Planet : Node3D {
 
-    // The deck the volume is marched between. Under a fifth-scale sky a seven-kilometre top is
-    // where cumulus actually stops, and the base is where a coastal deck sits on a summer morning.
-    private const float CloudBase = 1200.0f;
-    private const float CloudTop = 7000.0f;
+    // Bounds of the deck sampled by its optical altitude surfaces. A seven-kilometre top is where
+    // cumulus actually stops, and the base is where a coastal deck sits on a summer morning.
+    private const float CloudBase = 900.0f;
+    private const float CloudTop = 3800.0f;
 
-    // The shell the march is fired from has to enclose the deck at every angle, so it stands off
-    // the top by more than the sagitta of its own tessellation.
+    // The carrier shell has to enclose the deck at every angle, so it stands off the top by more
+    // than the sagitta of its own tessellation.
     private const float CloudStandoff = 1600.0f;
 
     private const int CloudSegments = 192;
@@ -24,7 +24,7 @@ public sealed partial class Planet : Node3D {
     private const int AtmosphereRings = 48;
 
     // Where the shadow is taken from, which is the middle of the deck rather than either edge.
-    private const float ShadowDeck = 3400.0f;
+    private const float ShadowDeck = 1900.0f;
 
     // The deck turns fractionally faster than the ground, so cloud shadows creep rather than lock.
     private const double CloudRotationRatio = 1.02;
@@ -40,12 +40,17 @@ public sealed partial class Planet : Node3D {
 
     private ShaderMaterial[] _faces;
     private ShaderMaterial _clouds;
+    private Texture3D _cloudShape;
+    private Texture3D _cloudDetail;
     private ShaderMaterial _atmosphere;
 
     // The shells sit on the planet's centre; the quadtree places every patch on its own absolute
     // transform, so this node stays at the origin and nothing under it is offset twice.
     private MeshInstance3D _deck;
     private MeshInstance3D _air;
+
+    public int WorkerFailures => _ground?.WorkerFailures ?? 0;
+    public int PendingJobs => _ground?.PendingJobs ?? 0;
 
     public int PatchCount => _ground?.PatchCount ?? 0;
     public int DeepestLevel => _ground?.DeepestLevel ?? 0;
@@ -62,6 +67,9 @@ public sealed partial class Planet : Node3D {
 
         Texture2D cloud = GD.Load<Texture2D>("res://Assets/Planet/clouds.jpg");
 
+        _cloudShape = Volume(128, 0.035f, 4);
+        _cloudDetail = Billow(64, 0.075f, 3);
+
         BuildFaces(radius, cloud, sunDirection);
 
         _ground = new Ground { Name = "Surface" };
@@ -77,15 +85,16 @@ public sealed partial class Planet : Node3D {
         _atmosphere.SetShaderParameter("sun_direction", sunDirection);
         _atmosphere.SetShaderParameter("rayleigh_height", (float)body.Atmosphere.ScaleHeight);
 
-        // The air composites over the ground and the clouds stand in front of the air: from the pad
-        // that is a blue sky with cloud on it, and from orbit it is cloud inside a lit limb.
+        // Clouds are integrated first and the air composites over them. The cloud shader already
+        // carries its own extinction; this final pass is what gives a distant cloud the same aerial
+        // perspective as the ground under it and keeps the orbital deck inside the blue limb.
         _atmosphere.RenderPriority = 1;
 
         _clouds = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Clouds.gdshader") };
 
         _clouds.SetShaderParameter("cloud_map", cloud);
-        _clouds.SetShaderParameter("shape_noise", Volume(128, 0.035f, 4));
-        _clouds.SetShaderParameter("detail_noise", Billow(64, 0.075f, 3));
+        _clouds.SetShaderParameter("shape_noise", _cloudShape);
+        _clouds.SetShaderParameter("detail_noise", _cloudDetail);
 
         _clouds.SetShaderParameter("sun_direction", sunDirection);
         _clouds.SetShaderParameter("planet_radius", radius);
@@ -128,6 +137,10 @@ public sealed partial class Planet : Node3D {
             material.SetShaderParameter("climate_map", GD.Load<Texture2D>($"res://Assets/Planet/climate_{face}.png"));
             material.SetShaderParameter("night_map", GD.Load<Texture2D>($"res://Assets/Planet/night_{face}.jpg"));
             material.SetShaderParameter("cloud_map", cloud);
+            material.SetShaderParameter("shape_noise", _cloudShape);
+            material.SetShaderParameter("detail_noise", _cloudDetail);
+            material.SetShaderParameter("base_radius", radius + CloudBase);
+            material.SetShaderParameter("top_radius", radius + CloudTop);
 
             material.SetShaderParameter("rock_colour", rockColour);
             material.SetShaderParameter("rock_normal", rockNormal);
@@ -207,12 +220,14 @@ public sealed partial class Planet : Node3D {
 
             face.SetShaderParameter("planet_centre", centre);
             face.SetShaderParameter("cloud_spin", deck);
+            face.SetShaderParameter("drift", (float)(time * CloudDrift));
 
         }
 
         _clouds.SetShaderParameter("planet_centre", centre);
         _clouds.SetShaderParameter("cloud_spin", deck);
         _clouds.SetShaderParameter("drift", (float)(time * CloudDrift));
+        _clouds.SetShaderParameter("frame_jitter", (float)(Engine.GetProcessFrames() % 16) / 16.0f);
 
         _atmosphere.SetShaderParameter("planet_centre", centre);
 
@@ -298,6 +313,7 @@ public sealed partial class Planet : Node3D {
 
             Name = name,
             Mesh = mesh,
+            Layers = 2,
 
             MaterialOverride = material,
 

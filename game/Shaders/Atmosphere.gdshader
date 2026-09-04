@@ -18,19 +18,23 @@ uniform float atmosphere_radius = 1334200.0;
 uniform float rayleigh_height = 5600.0;
 uniform float mie_height = 1200.0;
 
-uniform vec3 rayleigh_coefficients = vec3(9.3e-6, 2.17e-5, 5.30e-5);
-uniform float mie_coefficient = 2.1e-5;
+uniform vec3 rayleigh_coefficients = vec3(5.8e-6, 1.35e-5, 3.31e-5);
+uniform float mie_coefficient = 7.0e-6;
 uniform float mie_direction : hint_range(0.0, 0.99) = 0.76;
 
-uniform float sun_intensity = 8.0;
+uniform vec3 ozone_coefficients = vec3(0.650e-6, 1.881e-6, 0.085e-6);
+uniform float ozone_height = 22000.0;
+uniform float ozone_half_width = 15000.0;
+
+uniform float sun_intensity = 3.4;
 
 // Single scattering alone leaves a daytime sky too dark and too directional: most of what reaches
 // the eye from overhead has bounced more than once. An isotropic term on the Rayleigh phase is the
 // cheapest honest shape for that - it grows with the same optical depth and has no direction.
 uniform float multiscatter : hint_range(0.0, 0.2) = 0.035;
 
-const int view_samples = 24;
-const int light_samples = 6;
+const int view_samples = 20;
+const int light_samples = 4;
 
 // Returns the near and far ray parameters of a sphere hit, or a reversed pair when the ray misses.
 vec2 sphere_span(vec3 origin, vec3 direction, float radius) {
@@ -52,11 +56,13 @@ vec2 sphere_span(vec3 origin, vec3 direction, float radius) {
 
 }
 
-vec2 densities(vec3 position) {
+vec3 densities(vec3 position) {
 
-    float height = length(position) - planet_radius;
+    float height = max(length(position) - planet_radius, 0.0);
 
-    return vec2(exp(-height / rayleigh_height), exp(-height / mie_height));
+    float ozone = max(1.0 - abs(height - ozone_height) / ozone_half_width, 0.0);
+
+    return vec3(exp(-height / rayleigh_height), exp(-height / mie_height), ozone);
 
 }
 
@@ -112,7 +118,7 @@ void fragment() {
     vec3 rayleigh_total = vec3(0.0);
     vec3 mie_total = vec3(0.0);
 
-    vec2 view_optical_depth = vec2(0.0);
+    vec3 view_optical_depth = vec3(0.0);
 
     float span = far - near;
 
@@ -125,7 +131,7 @@ void fragment() {
 
         vec3 position = origin + ray * (near + span * (low + high) * 0.5);
 
-        vec2 density = densities(position) * step_length;
+        vec3 density = densities(position) * step_length;
 
         view_optical_depth += density;
 
@@ -140,17 +146,22 @@ void fragment() {
 
         }
 
-        float light_step = sunward.y / float(light_samples);
+        float light_length = sunward.y;
 
-        vec2 light_optical_depth = vec2(0.0);
+        vec3 light_optical_depth = vec3(0.0);
 
         for (int sample = 0; sample < light_samples; sample++) {
 
-            light_optical_depth += densities(position + sun_direction * (light_step * (float(sample) + 0.5))) * light_step;
+            float low_light = pow(float(sample) / float(light_samples), 2.0);
+            float high_light = pow(float(sample + 1) / float(light_samples), 2.0);
+            light_optical_depth += densities(position + sun_direction * (light_length * (low_light + high_light) * 0.5))
+                * light_length * (high_light - low_light);
 
         }
 
-        vec3 attenuation = exp(-(rayleigh_coefficients * (view_optical_depth.x + light_optical_depth.x) + mie_coefficient * 1.1 * (view_optical_depth.y + light_optical_depth.y)));
+        vec3 attenuation = exp(-(rayleigh_coefficients * (view_optical_depth.x - density.x * 0.5 + light_optical_depth.x)
+            + vec3(mie_coefficient * 1.1 * (view_optical_depth.y - density.y * 0.5 + light_optical_depth.y))
+            + ozone_coefficients * (view_optical_depth.z - density.z * 0.5 + light_optical_depth.z)));
 
         rayleigh_total += density.x * attenuation;
         mie_total += density.y * attenuation;
@@ -166,7 +177,9 @@ void fragment() {
 
     vec3 inscatter = sun_intensity * (rayleigh_total * rayleigh_coefficients * rayleigh_phase + mie_total * mie_coefficient * mie_phase);
 
-    vec3 transmittance = exp(-(rayleigh_coefficients * view_optical_depth.x + mie_coefficient * 1.1 * view_optical_depth.y));
+    vec3 transmittance = exp(-(rayleigh_coefficients * view_optical_depth.x
+        + vec3(mie_coefficient * 1.1 * view_optical_depth.y)
+        + ozone_coefficients * view_optical_depth.z));
 
     ALBEDO = texture(screen_texture, SCREEN_UV).rgb * transmittance + inscatter;
     ALPHA = 1.0;

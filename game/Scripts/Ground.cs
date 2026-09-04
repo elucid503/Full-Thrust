@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 
 using FullThrust.Sim;
@@ -29,11 +30,14 @@ public sealed partial class Ground : Node3D {
     // every metre. Past that the detail spectrum has nothing left to say.
     private const int MaxLevel = 16;
 
-    private const int BuildsPerFrame = 6;
+    // Mesh upload and render-server adoption happen on the main thread. Two completions per frame
+    // keep a fast camera move from turning a burst of finished worker jobs into a visible hitch;
+    // the workers continue building at full concurrency behind that pacing gate.
+    private const int BuildsPerFrame = 2;
 
     // In flight at once. Held under the core count so the workers building patches cannot take
     // every thread the frame itself needs.
-    private static readonly int PendingLimit = Math.Max(4, System.Environment.ProcessorCount - 2);
+    private static readonly int PendingLimit = Math.Clamp(System.Environment.ProcessorCount - 2, 2, 6);
 
     // Skirts, not stitching. Neighbouring patches meet at different levels wherever the tree steps,
     // and a wall dropped from every border vertex covers the gap for a hundred lines less code.
@@ -45,7 +49,7 @@ public sealed partial class Ground : Node3D {
 
     // Deepest sea the depth channel resolves, metres. Square-rooted into eight bits, which leaves
     // a tenth of a metre at the shoreline, where the shading of it actually matters.
-    private const double SoundingLimit = 8000.0;
+    private const double SoundingLimit = 1600.0;
 
     /// <summary>Face basis: outward normal, then the axes the (s, t) span runs along. Right crossed
     /// into up is the normal on every one, so a patch is wound the same way whichever face it is on.
@@ -70,6 +74,7 @@ public sealed partial class Ground : Node3D {
         public Vector2[] Detail;
         public Color[] Depths;
         public int[] Indices;
+        public float[] ParentOffsets;
 
         public Vector3d Anchor;
 
@@ -93,12 +98,15 @@ public sealed partial class Ground : Node3D {
 
         /// <summary>Arc the patch spans on the ground, metres.</summary>
         public double Edge;
+        public double ActivatedAt = -1.0;
+        public float Coarseness;
 
         public Patch[] Children;
 
         public MeshInstance3D Instance;
 
         public Task<Surface> Job;
+        public CancellationTokenSource Cancellation;
 
         public bool Built => Instance != null;
 
@@ -139,8 +147,10 @@ public sealed partial class Ground : Node3D {
 
     private ShaderMaterial[] _materials;
 
-    private int _pending;
+    private readonly List<Task<Surface>> _jobs = new();
     private int _adopted;
+    public int WorkerFailures { get; private set; }
+    public int PendingJobs => _jobs.Count;
 
     /// <summary>Patches standing in the scene, and how far the tree has gone down. Both are read
     /// straight out by the debug bridge, which is where the tuning is done from.</summary>
@@ -207,7 +217,26 @@ public sealed partial class Ground : Node3D {
 
         Vector3d local = _body.ToBodyFixed(eye, time);
 
-        _pending = 0;
+        for (int index = _jobs.Count - 1; index >= 0; index--) {
+
+            Task<Surface> job = _jobs[index];
+
+            if (!job.IsCompleted) {
+
+                continue;
+
+            }
+
+            if (job.IsFaulted) {
+
+                WorkerFailures++;
+                GD.PushError($"terrain patch build failed: {job.Exception.GetBaseException()}");
+
+            }
+
+            _jobs.RemoveAt(index);
+
+        }
         _adopted = 0;
 
         PatchCount = 0;
@@ -262,7 +291,7 @@ public sealed partial class Ground : Node3D {
 
             Request(patch);
 
-            if (_pending >= PendingLimit) {
+            if (_jobs.Count >= PendingLimit) {
 
                 return;
 
@@ -279,6 +308,7 @@ public sealed partial class Ground : Node3D {
             foreach (Patch child in patch.Children) {
 
                 Request(child);
+                Hide(child);
 
             }
 
@@ -290,6 +320,8 @@ public sealed partial class Ground : Node3D {
 
         foreach (Patch child in patch.Children) {
 
+            child.ActivatedAt = child.ActivatedAt < 0.0 ? Time.GetTicksMsec() * 0.001 : child.ActivatedAt;
+            child.Coarseness = (float)Math.Clamp((reach / patch.Edge - SplitFactor) / (MergeFactor - SplitFactor), 0.0, 1.0);
             Visit(child, eye);
 
         }
@@ -335,9 +367,9 @@ public sealed partial class Ground : Node3D {
         // would stay a hole in the ground for the rest of the flight.
         if (patch.Job != null && patch.Job.IsCompleted && !patch.Job.IsCompletedSuccessfully) {
 
-            GD.PushError($"terrain patch build failed: {patch.Job.Exception?.GetBaseException().Message}");
-
             patch.Job = null;
+            patch.Cancellation.Dispose();
+            patch.Cancellation = null;
 
         }
 
@@ -355,15 +387,11 @@ public sealed partial class Ground : Node3D {
 
         }
 
-        if (patch.Job != null || _pending >= PendingLimit) {
-
-            _pending++;
+        if (patch.Job != null || _jobs.Count >= PendingLimit) {
 
             return;
 
         }
-
-        _pending++;
 
         int face = patch.Face;
 
@@ -371,24 +399,13 @@ public sealed partial class Ground : Node3D {
         double t = patch.T;
         double span = patch.Span;
 
-        // Caught here rather than left on the task: a scene reload can tear a build down under a
-        // worker, and an exception that escapes one takes the process with it.
-        patch.Job = Task.Run(() => {
-
-            try {
-
-                return Tessellate(face, s, t, span);
-
-            }
-            catch (Exception failure) {
-
-                GD.PushError($"terrain patch build failed: {failure.Message}");
-
-                return null;
-
-            }
-
-        });
+        // Workers capture immutable data, never a Godot node that a scene reload can dispose.
+        Terrain terrain = _terrain;
+        double radius = _radius;
+        patch.Cancellation = new CancellationTokenSource();
+        CancellationToken cancellation = patch.Cancellation.Token;
+        patch.Job = Task.Run(() => Tessellate(terrain, radius, face, s, t, span, cancellation), cancellation);
+        _jobs.Add(patch.Job);
 
     }
 
@@ -397,6 +414,8 @@ public sealed partial class Ground : Node3D {
         Surface surface = patch.Job.Result;
 
         patch.Job = null;
+        patch.Cancellation.Dispose();
+        patch.Cancellation = null;
 
         if (surface == null) {
 
@@ -439,6 +458,9 @@ public sealed partial class Ground : Node3D {
 
             child.Instance?.QueueFree();
             child.Instance = null;
+            child.Cancellation?.Cancel();
+            child.Cancellation?.Dispose();
+            child.Cancellation = null;
             child.Job = null;
 
         }
@@ -460,10 +482,12 @@ public sealed partial class Ground : Node3D {
         arrays[(int)Mesh.ArrayType.TexUV] = surface.Coordinates;
         arrays[(int)Mesh.ArrayType.TexUV2] = surface.Detail;
         arrays[(int)Mesh.ArrayType.Index] = surface.Indices;
+        arrays[(int)Mesh.ArrayType.Custom0] = surface.ParentOffsets;
 
         ArrayMesh mesh = new ArrayMesh();
 
-        mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+        Mesh.ArrayFormat format = (Mesh.ArrayFormat)((ulong)Mesh.ArrayCustomFormat.RgbaFloat << (int)Mesh.ArrayFormat.FormatCustom0Shift);
+        mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays, flags: format);
 
         return new MeshInstance3D {
 
@@ -488,6 +512,8 @@ public sealed partial class Ground : Node3D {
             // Differenced against the floating origin in double and only then cut to float, so a
             // patch a million metres from the planet's centre still holds still under the camera.
             patch.Instance.Transform = new Transform3D(turn, Frames.Point(_body.ToInertial(patch.Anchor, time)));
+            float arrival = patch.ActivatedAt < 0.0 ? 0.0f : (float)Math.Clamp(1.0 - (Time.GetTicksMsec() * 0.001 - patch.ActivatedAt) / 0.3, 0.0, 1.0);
+            patch.Instance.SetInstanceShaderParameter("lod_morph", Math.Max(arrival, patch.Coarseness));
 
         }
 
@@ -512,7 +538,7 @@ public sealed partial class Ground : Node3D {
     [ThreadStatic] private static Vector3d[] _points;
     [ThreadStatic] private static double[] _sounding;
 
-    private Surface Tessellate(int face, double s, double t, double span) {
+    private static Surface Tessellate(Terrain terrain, double radius, int face, double s, double t, double span, CancellationToken cancellation) {
 
         int side = Grid + 3;
 
@@ -524,6 +550,8 @@ public sealed partial class Ground : Node3D {
 
         for (int row = 0; row < side; row++) {
 
+            cancellation.ThrowIfCancellationRequested();
+
             double v = t + span * (row - 1) / Grid;
 
             for (int column = 0; column < side; column++) {
@@ -532,7 +560,7 @@ public sealed partial class Ground : Node3D {
 
                 Vector3d direction = Direction(face, u, v);
 
-                double elevation = _terrain.Elevation(direction);
+                double elevation = terrain.Elevation(direction);
 
                 // Clamped at the datum: below sea level the mesh is the water's own surface, which
                 // is what a vehicle touches and what the shader shades as sea. The depth is kept,
@@ -544,20 +572,20 @@ public sealed partial class Ground : Node3D {
 
                 int index = row * side + column;
 
-                points[index] = direction * (_radius + standing);
+                points[index] = direction * (radius + standing);
                 sounding[index] = Math.Max(-elevation, 0.0);
 
             }
 
         }
 
-        Vector3d anchor = Direction(face, s + span * 0.5, t + span * 0.5) * (_radius + (lowest + highest) * 0.5);
+        Vector3d anchor = Direction(face, s + span * 0.5, t + span * 0.5) * (radius + (lowest + highest) * 0.5);
 
-        return Weave(s, t, span, points, sounding, anchor);
+        return Weave(radius, s, t, span, points, sounding, anchor);
 
     }
 
-    private Surface Weave(double s, double t, double span, Vector3d[] points, double[] sounding, Vector3d anchor) {
+    private static Surface Weave(double radius, double s, double t, double span, Vector3d[] points, double[] sounding, Vector3d anchor) {
 
         int side = Grid + 3;
         int line = Grid + 1;
@@ -572,16 +600,17 @@ public sealed partial class Ground : Node3D {
         Vector2[] coordinates = new Vector2[count];
         Vector2[] detail = new Vector2[count];
         Color[] depths = new Color[count];
+        float[] parentOffsets = new float[count * 4];
 
         // The detail lattice is metres from an origin each patch picks for itself, because a
         // face-wide coordinate interpolated in single precision steps visibly once a patch is a few
         // metres across. The origin is snapped to a power of two no smaller than the patch, and the
         // shader only ever tiles on powers of two under that, so the origin always lands on a whole
         // number of tiles and the join between two patches cannot be seen.
-        double period = Math.Pow(2.0, Math.Ceiling(Math.Log2(span * Mathf.Pi * 0.25 * _radius)));
+        double period = Math.Max(4096.0, Math.Pow(2.0, Math.Ceiling(Math.Log2(span * Math.PI * 0.25 * radius))));
 
-        double offsetS = Math.Floor(Arc(s + span * 0.5) / period) * period;
-        double offsetT = Math.Floor(-Arc(t + span * 0.5) / period) * period;
+        double offsetS = Math.Floor(radius * Math.Atan(s + span * 0.5) / period) * period;
+        double offsetT = Math.Floor(-radius * Math.Atan(t + span * 0.5) / period) * period;
 
         double bound = 0.0;
 
@@ -611,6 +640,30 @@ public sealed partial class Ground : Node3D {
                 vertices[index] = Frames.Direction(offset);
                 normals[index] = Frames.Direction(normal);
 
+                int parentColumn = column / 2 * 2;
+                int parentRow = row / 2 * 2;
+                int parentSample = (parentRow + 1) * side + parentColumn + 1;
+                Vector3d parent = points[parentSample];
+
+                if (column % 2 != 0 && row % 2 != 0) {
+
+                    parent = (points[parentSample + 2] + points[parentSample + side * 2]) * 0.5;
+
+                } else if (column % 2 != 0) {
+
+                    parent = (parent + points[parentSample + 2]) * 0.5;
+
+                } else if (row % 2 != 0) {
+
+                    parent = (parent + points[parentSample + side * 2]) * 0.5;
+
+                }
+
+                Vector3 parentOffset = Frames.Direction(parent - point);
+                parentOffsets[index * 4] = parentOffset.X;
+                parentOffsets[index * 4 + 1] = parentOffset.Y;
+                parentOffsets[index * 4 + 2] = parentOffset.Z;
+
                 Vector3 axis = Frames.Direction(tangent);
 
                 tangents[index * 4 + 0] = axis.X;
@@ -623,7 +676,7 @@ public sealed partial class Ground : Node3D {
 
                 coordinates[index] = Coordinate(u, v);
 
-                detail[index] = new Vector2((float)(Arc(u) - offsetS), (float)(-Arc(v) - offsetT));
+                detail[index] = new Vector2((float)(radius * Math.Atan(u) - offsetS), (float)(-radius * Math.Atan(v) - offsetT));
 
                 depths[index] = new Color((float)Math.Sqrt(Math.Min(sounding[sample] / SoundingLimit, 1.0)), 0.0f, 0.0f, 1.0f);
 
@@ -655,7 +708,7 @@ public sealed partial class Ground : Node3D {
 
         }
 
-        double depth = span * Mathf.Pi * 0.25 * _radius / Grid * SkirtQuads;
+        double depth = span * Math.PI * 0.25 * radius / Grid * SkirtQuads;
 
         Surface surface = new Surface {
 
@@ -666,6 +719,7 @@ public sealed partial class Ground : Node3D {
             Detail = detail,
             Depths = depths,
             Indices = indices,
+            ParentOffsets = parentOffsets,
 
             Anchor = anchor,
 
@@ -728,6 +782,7 @@ public sealed partial class Ground : Node3D {
             surface.Depths[wall] = surface.Depths[source];
 
             Array.Copy(surface.Tangents, source * 4, surface.Tangents, wall * 4, 4);
+            Array.Copy(surface.ParentOffsets, source * 4, surface.ParentOffsets, wall * 4, 4);
 
         }
 
@@ -752,6 +807,24 @@ public sealed partial class Ground : Node3D {
     // Arc from the middle of the face along one axis. The detail lattice is laid out on this rather
     // than on the face coordinate, so a metre of ground stays a metre of lattice wherever it sits
     // and the pattern does not stretch towards the corners of the cube.
-    private double Arc(double axis) => _radius * Math.Atan(axis);
+    public override void _ExitTree() {
+
+        foreach (Patch root in _roots ?? Array.Empty<Patch>()) {
+
+            Prune(root);
+            root.Cancellation?.Cancel();
+            root.Cancellation?.Dispose();
+
+        }
+
+        // Observe late faults without retaining the disposed scene or invoking engine APIs.
+        foreach (Task<Surface> job in _jobs) {
+
+            _ = job.ContinueWith(completed => { _ = completed.Exception; },
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+
+        }
+
+    }
 
 }

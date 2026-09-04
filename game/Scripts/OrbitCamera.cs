@@ -27,6 +27,13 @@ public sealed partial class OrbitCamera : Node3D {
 
     public float NearPlane => _camera.Near;
     public float FarPlane => _camera.Far;
+    public float DebugYawRate { get; set; }
+
+    public override void _Process(double delta) {
+
+        Yaw += DebugYawRate * (float)delta;
+
+    }
 
     public override void _Ready() {
 

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 using FullThrust.Sim;
@@ -31,6 +32,8 @@ public sealed partial class Main : Node3D {
     private DirectionalLight3D _earthshine;
     private ReflectionProbe _earthlight;
     private WorldEnvironment _environment;
+
+    private ShaderMaterial _starfield;
 
     private readonly Dictionary<Vessel, VesselView> _debris = new Dictionary<Vessel, VesselView>();
 
@@ -78,6 +81,17 @@ public sealed partial class Main : Node3D {
         _earthlight.Intensity = 1.0f;
 
         _environment.Environment = BuildEnvironment();
+        _environment.CameraAttributes = new CameraAttributesPractical {
+
+            ExposureMultiplier = 1.0f,
+
+            AutoExposureEnabled = true,
+            AutoExposureMinSensitivity = 160.0f,
+            AutoExposureMaxSensitivity = 800.0f,
+            AutoExposureScale = 0.30f,
+            AutoExposureSpeed = 1.2f,
+
+        };
 
         _planet.Build(_flight.Body, SunDirection);
         _complex.Build(_flight.Body, _flight.Site);
@@ -184,6 +198,8 @@ public sealed partial class Main : Node3D {
 
         Vector3d eye = Frames.Origin + Frames.Sim(viewpoint);
 
+        SyncSky(eye);
+
         _planet.Sync(_flight.Time, eye);
         _complex.Sync(_flight.Time, eye);
 
@@ -215,39 +231,65 @@ public sealed partial class Main : Node3D {
 
     }
 
-    private static Godot.Environment BuildEnvironment() {
+    private void SyncSky(Vector3d eye) {
 
-        ShaderMaterial starfield = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Sky.gdshader") };
+        double altitude = Math.Max(eye.Length - _flight.Body.Radius, 0.0);
 
-        starfield.SetShaderParameter("star_map", GD.Load<Texture2D>("res://Assets/Sky/stars.png"));
+        Vector3 up = Frames.Direction(eye.Normalized);
+
+        float air = 1.0f - SmoothRange(0.0f, (float)_flight.Body.AtmosphereTop, (float)altitude);
+        float day = SmoothRange(-0.16f, 0.06f, up.Dot(SunDirection));
+
+        float lowerAtmosphere = 1.0f - SmoothRange((float)_flight.Body.AtmosphereTop * 0.75f,
+            (float)_flight.Body.AtmosphereTop, (float)altitude);
+        float starVisibility = (1.0f - day) * (1.0f - lowerAtmosphere * day);
+
+        _starfield.SetShaderParameter("planet_up", up);
+        _starfield.SetShaderParameter("sun_direction", SunDirection);
+        _starfield.SetShaderParameter("atmosphere_amount", air);
+        _starfield.SetShaderParameter("daylight", day);
+        _starfield.SetShaderParameter("star_visibility", starVisibility * starVisibility);
+
+    }
+
+    private static float SmoothRange(float low, float high, float value) {
+
+        float weight = Mathf.Clamp((value - low) / (high - low), 0.0f, 1.0f);
+
+        return weight * weight * (3.0f - 2.0f * weight);
+
+    }
+
+    private Godot.Environment BuildEnvironment() {
+
+        _starfield = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Sky.gdshader") };
+
+        _starfield.SetShaderParameter("star_map", GD.Load<Texture2D>("res://Assets/Sky/stars.png"));
 
         return new Godot.Environment {
 
             BackgroundMode = Godot.Environment.BGMode.Sky,
-            Sky = new Sky { SkyMaterial = starfield, RadianceSize = Sky.RadianceSizeEnum.Size256, ProcessMode = Sky.ProcessModeEnum.Realtime },
+            Sky = new Sky { SkyMaterial = _starfield, RadianceSize = Sky.RadianceSizeEnum.Size256, ProcessMode = Sky.ProcessModeEnum.Realtime },
 
             AmbientLightSource = Godot.Environment.AmbientSource.Color,
             AmbientLightColor = new Color(0.44f, 0.52f, 0.64f),
-            AmbientLightEnergy = 0.03f,
+            AmbientLightEnergy = 0.045f,
 
             // Ambient colour gives a metal nothing to mirror, so anything approaching fully metallic
             // renders black. The sky's radiance is a reflection source that costs the night side
             // none of the diffuse energy that raising ambient would.
             ReflectedLightSource = Godot.Environment.ReflectionSource.Sky,
 
-            TonemapMode = Godot.Environment.ToneMapper.Aces,
-            TonemapWhite = 6.0f,
-
-            // Sunlit ground has an albedo near a third, and at unit exposure a third of the way up
-            // an ACES curve with six stops of headroom is a dark photograph. The headroom is there
-            // for the plume, not for the daylight.
-            TonemapExposure = 1.55f,
+            TonemapMode = Godot.Environment.ToneMapper.Agx,
+            TonemapAgxWhite = 8.0f,
+            TonemapAgxContrast = 1.08f,
+            TonemapExposure = 1.0f,
 
             GlowEnabled = true,
-            GlowIntensity = 0.55f,
-            GlowStrength = 1.0f,
-            GlowBloom = 0.05f,
-            GlowHdrThreshold = 1.1f,
+            GlowIntensity = 0.32f,
+            GlowStrength = 0.85f,
+            GlowBloom = 0.0f,
+            GlowHdrThreshold = 1.8f,
             GlowBlendMode = Godot.Environment.GlowBlendModeEnum.Screen,
 
         };

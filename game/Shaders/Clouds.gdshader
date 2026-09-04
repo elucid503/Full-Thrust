@@ -1,205 +1,57 @@
 shader_type spatial;
 render_mode unshaded, blend_premul_alpha, depth_draw_never, depth_test_disabled, cull_front;
 
-// A raymarched deck between two shells. Where the cloud is comes from the measured MODIS cover, so
-// the weather is the planet's own and the shadows the ground samples land under the cloud casting
-// them; what the cloud looks like from a kilometre away is noise, because no map resolves that.
-
-uniform sampler2D cloud_map : filter_linear_mipmap;
-uniform sampler3D shape_noise : filter_linear, repeat_enable;
-uniform sampler3D detail_noise : filter_linear, repeat_enable;
-
 uniform sampler2D depth_buffer : hint_depth_texture, filter_nearest;
-
-uniform vec3 planet_centre = vec3(0.0, 0.0, 0.0);
+uniform vec3 planet_centre = vec3(0.0);
 uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
-
-uniform vec3 sun_colour : source_color = vec3(1.0, 0.972, 0.94);
-uniform vec3 sky_colour : source_color = vec3(0.40, 0.52, 0.72);
-
 uniform float planet_radius = 1274200.0;
-uniform float base_radius = 1275400.0;
-uniform float top_radius = 1281200.0;
+uniform float extinction = 0.0017;
+uniform float sun_power = 1.5;
+uniform float ambient_gain = 0.18;
+uniform float frame_jitter = 0.0;
 
-uniform float cloud_spin = 0.0;
+vec2 sphere_span(vec3 origin, vec3 ray, float radius) {
 
-uniform float coverage_floor : hint_range(0.0, 1.0) = 0.20;
-uniform float coverage_ceiling : hint_range(0.0, 1.0) = 0.66;
-
-// Metres per tile of each volume, inverted. The shape tile is wide enough that its repeat is broken
-// up by the cover map long before the eye finds it.
-// Metres per tile of the shape volume, inverted. A hundred kilometres: cloud masses on a weather
-// map are tens of kilometres across, and a tile an order of magnitude under that reads from orbit
-// as static rather than as cloud. The same volume is read again a dozen times tighter, because at
-// that width alone one cloud spans no variation at all and comes out as a slab of erosion.
-uniform float shape_scale = 0.0000092;
-uniform float shape_ratio = 13.0;
-uniform float shape_mix : hint_range(0.0, 1.0) = 0.42;
-uniform float detail_scale = 0.0012;
-uniform float detail_erosion : hint_range(0.0, 1.0) = 0.46;
-
-// The same volume read far wider: a weather field a hundred kilometres across that decides how much
-// of the map's cover actually builds and how tall it gets. Without it every cloud on the planet is
-// the same cloud, which is exactly how the first deck read.
-// How far out the frayed edges are still worth resolving.
-uniform float erosion_near = 24000.0;
-uniform float erosion_far = 120000.0;
-
-uniform float weather_scale = 0.16;
-uniform float weather_depth : hint_range(0.0, 1.0) = 0.65;
-
-// Extinction per metre through solid cloud. A three-kilometre tower at this coefficient comes out
-// near optical depth twenty, which is what a real cumulus stops.
-uniform float density_scale = 0.0078;
-
-uniform float light_reach = 1700.0;
-
-uniform float sun_power = 7.2;
-
-uniform float forward_scatter : hint_range(0.0, 0.99) = 0.62;
-uniform float back_scatter : hint_range(-0.99, 0.0) = -0.18;
-
-uniform float powder : hint_range(0.0, 1.0) = 0.55;
-// Held low on purpose: the sky fills a cloud's shaded side, but filling it as much as the sun
-// lights its top leaves a flat white card with no form in it at all.
-uniform float ambient_gain : hint_range(0.0, 2.0) = 0.36;
-
-uniform float drift = 0.0;
-
-const int view_steps = 48;
-const int light_steps = 5;
-
-// Returns the near and far ray parameters of a sphere hit, or a reversed pair where the ray misses.
-vec2 sphere_span(vec3 origin, vec3 direction, float radius) {
-
-    float half_b = dot(origin, direction);
-    float c = dot(origin, origin) - radius * radius;
-
-    float discriminant = half_b * half_b - c;
-
-    if (discriminant < 0.0) {
-
-        return vec2(1.0, -1.0);
-
-    }
-
-    float root = sqrt(discriminant);
-
-    return vec2(-half_b - root, -half_b + root);
+    float b = dot(origin, ray);
+    float h = b * b - dot(origin, origin) + radius * radius;
+    if (h < 0.0) { return vec2(1.0, -1.0); }
+    return vec2(-b - sqrt(h), -b + sqrt(h));
 
 }
 
-vec3 unspin(vec3 direction) {
+#include "res://Shaders/CloudField.gdshaderinc"
 
-    float sine = sin(-cloud_spin);
-    float cosine = cos(-cloud_spin);
+float phase(float mu, float g) {
 
-    return vec3(direction.x * cosine + direction.z * sine, direction.y, -direction.x * sine + direction.z * cosine);
-
-}
-
-vec2 equirect(vec3 direction) {
-
-    vec3 deck = unspin(direction);
-
-    return vec2(atan(-deck.z, deck.x) / TAU + 0.5, 0.5 - asin(clamp(deck.y, -1.0, 1.0)) / PI);
+    return (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * mu, 0.01), 1.5);
 
 }
 
-float remap(float value, float low, float high) {
+vec3 illumination(vec3 p, vec3 ray, float density, float footprint) {
 
-    return clamp((value - low) / max(high - low, 1e-5), 0.0, 1.0);
-
-}
-
-float density_at(vec3 position, float erosion) {
-
-    float radius = length(position);
-
-    float level = (radius - base_radius) / (top_radius - base_radius);
-
-    if (level <= 0.0 || level >= 1.0) {
-
-        return 0.0;
-
-    }
-
-    float cover = smoothstep(coverage_floor, coverage_ceiling, texture(cloud_map, equirect(position / radius)).r);
-
-    if (cover <= 0.0) {
-
-        return 0.0;
-
-    }
-
-    vec3 wind = vec3(drift, 0.0, drift * 0.4);
-
-    float weather = texture(shape_noise, position * (shape_scale * weather_scale) + wind * 0.25).r;
-
-    // Under a weak weather field the map's cover thins to a sheet; under a strong one it builds.
-    cover *= mix(1.0 - weather_depth, 1.0 + weather_depth * 0.45, weather);
-
-    if (cover <= 0.0) {
-
-        return 0.0;
-
-    }
-
-    // Flat bottomed and feathered on top. How far up it is allowed to build is the weather's to
-    // decide, which is the difference between a stratus sheet and a stack of cumulus standing on it.
-    float ceiling = 0.16 + weather * 0.62 + cover * 0.24;
-
-    float profile = smoothstep(0.0, 0.10 + weather * 0.10, level) * (1.0 - smoothstep(ceiling, ceiling + 0.30, level));
-
-    float wide = texture(shape_noise, position * shape_scale + wind).r;
-    float close = texture(shape_noise, position * (shape_scale * shape_ratio) + wind * 2.3).r;
-
-    float shape = mix(wide, close, shape_mix);
-
-    float density = remap(shape, 1.0 - cover * profile, 1.0);
-
-    if (density <= 0.0) {
-
-        return 0.0;
-
-    }
-
-    if (erosion <= 0.001) {
-
-        return density * density_scale;
-
-    }
-
-    // Erosion is strongest at the top of the deck, where a real cloud frays and the base does not.
-    float wisp = texture(detail_noise, position * detail_scale + wind * 3.0).r;
-
-    return remap(density, wisp * erosion * (0.25 + 0.75 * level), 1.0) * density_scale;
-
-}
-
-float towards_sun(vec3 position, float erosion) {
-
-    float step_length = light_reach / float(light_steps);
-
+    vec3 up = normalize(p);
+    float solar = dot(up, sun_direction);
+    float day = smoothstep(-0.09, 0.08, solar);
     float optical = 0.0;
+    float stride = 250.0;
+    float distance = 0.0;
+    for (int i = 0; i < 3; i++) {
 
-    for (int index = 0; index < light_steps; index++) {
-
-        vec3 at = position + sun_direction * (step_length * (float(index) + 0.5));
-
-        optical += density_at(at, erosion) * step_length;
+        optical += density_at(p + sun_direction * (distance + stride * 0.5), max(footprint, stride)) * stride;
+        distance += stride;
+        stride *= 2.8;
 
     }
-
-    return optical;
-
-}
-
-float henyey(float cosine, float g) {
-
-    float gg = g * g;
-
-    return (1.0 - gg) / (4.0 * PI * pow(1.0 + gg - 2.0 * g * cosine, 1.5));
+    optical *= extinction;
+    float mu = dot(ray, sun_direction);
+    float scattering = 0.72 * phase(mu, 0.55) + 0.28 * phase(mu, -0.2);
+    float transmission = exp(-optical);
+    float multiple = 0.32 * exp(-optical * 0.23);
+    vec3 sunlight = mix(vec3(1.0, 0.38, 0.13), vec3(1.0, 0.96, 0.9), smoothstep(-0.04, 0.12, solar));
+    float height = clamp((length(p) - base_radius) / (top_radius - base_radius), 0.0, 1.0);
+    vec3 ambient = vec3(0.43, 0.58, 0.83) * ambient_gain * mix(0.4, 1.0, height) * exp(-density * 0.5);
+    return (sunlight * sun_power * (transmission * scattering * 0.24 + multiple) + ambient) * day
+        + vec3(0.0007, 0.001, 0.0018);
 
 }
 
@@ -207,131 +59,70 @@ void fragment() {
 
     vec3 camera = INV_VIEW_MATRIX[3].xyz;
     vec3 ray = normalize((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz - camera);
-
     vec3 origin = camera - planet_centre;
+    vec2 outer = sphere_span(origin, ray, top_radius);
+    float start = max(outer.x, 0.0);
+    float finish = outer.y;
+    vec2 inner = sphere_span(origin, ray, base_radius);
+    if (length(origin) < base_radius) {
 
-    float height = length(origin);
+        start = max(start, inner.y);
 
-    vec2 top = sphere_span(origin, ray, top_radius);
-    vec2 base = sphere_span(origin, ray, base_radius);
+    } else if (inner.x > 0.0 && inner.y > inner.x) {
 
-    if (top.y <= max(top.x, 0.0)) {
-
-        discard;
-
-    }
-
-    float near;
-    float far;
-
-    if (height > top_radius) {
-
-        near = top.x;
-        far = base.y > base.x ? base.x : top.y;
+        finish = min(finish, inner.x);
 
     }
-    else if (height > base_radius) {
-
-        near = 0.0;
-        far = base.y > base.x && base.x > 0.0 ? base.x : top.y;
-
-    }
-    else {
-
-        near = base.y;
-        far = top.y;
-
-    }
-
-    near = max(near, 0.0);
-
-    // Anything already drawn - the ground, the vehicle - ends the march where it stands.
-    float depth = texture(depth_buffer, SCREEN_UV).x;
-
+    vec2 ground = sphere_span(origin, ray, planet_radius);
+    if (ground.x > 0.0 && ground.y > ground.x) { finish = min(finish, ground.x); }
+    float depth = texture(depth_buffer, SCREEN_UV).r;
     if (depth > 0.0) {
 
         vec4 view = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, depth, 1.0);
-
-        far = min(far, length(view.xyz / view.w));
-
-    }
-
-    if (far <= near) {
-
-        discard;
+        finish = min(finish, length(view.xyz / view.w));
 
     }
+    if (finish <= start || outer.y <= outer.x) { discard; }
 
-    float step_length = (far - near) / float(view_steps);
+    // Stratification decorrelates grazing rays; temporal AA integrates the sub-step samples.
+    float jitter = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))) + frame_jitter);
+    float step_length = (finish - start) / 48.0;
+    float transmission = 1.0;
+    vec3 radiance = vec3(0.0);
+    float weighted_distance = 0.0;
+    for (int i = 0; i < 48; i++) {
 
-    // A step of jitter off the pixel's own coordinates. Without it the march bands the deck into
-    // shells wherever the step lands on the same surface across a run of pixels.
-    float offset = fract(sin(dot(SCREEN_UV, vec2(12.9898, 78.233))) * 43758.5453);
+        float distance = start + (float(i) + jitter) * step_length;
+        vec3 p = origin + ray * distance;
+        float density = density_at(p, step_length);
+        if (density > 0.001) {
 
-    float cosine = dot(ray, sun_direction);
-
-    // Two lobes: a strong forward one that lights the rim of a cloud between the eye and the sun,
-    // and a weak backward one that keeps the far side from going flat.
-    float phase = mix(henyey(cosine, forward_scatter), henyey(cosine, back_scatter), 0.32);
-
-    float transmittance = 1.0;
-
-    vec3 scattered = vec3(0.0);
-
-    for (int index = 0; index < view_steps; index++) {
-
-        float travelled = near + step_length * (float(index) + offset);
-
-        vec3 position = origin + ray * travelled;
-
-        // A cloud two hundred kilometres off is a shape, not a texture: eroding it there only
-        // shatters it into single pixels, which is what a marched deck reads as from orbit.
-        float erosion = detail_erosion * (1.0 - smoothstep(erosion_near, erosion_far, travelled));
-
-        float density = density_at(position, erosion);
-
-        if (density <= 0.0) {
-
-            continue;
-
-        }
-
-        float optical = towards_sun(position, erosion);
-
-        // The powder term is what gives a cloud a dark core against a bright edge; without it a
-        // thick cloud lit from behind reads as a flat grey card.
-        float energy = exp(-optical) * mix(1.0, (1.0 - exp(-optical * 2.0)) * 2.0, powder);
-
-        float elevation = dot(position / length(position), sun_direction);
-
-        float lit = smoothstep(-0.12, 0.03, elevation);
-
-        // The sky a cloud sits under is only bright while there is a sun over the horizon to light
-        // it. Without this the ambient term carries straight through the terminator and the night
-        // side of the deck glows blue.
-        float dusk = smoothstep(-0.30, 0.08, elevation);
-
-        float level = clamp((length(position) - base_radius) / (top_radius - base_radius), 0.0, 1.0);
-
-        vec3 light = sun_colour * (sun_power * energy * phase * lit)
-            + sky_colour * ambient_gain * (0.35 + 0.65 * level) * dusk;
-
-        float extinction = density * step_length;
-        float remaining = exp(-extinction);
-
-        scattered += transmittance * light * (1.0 - remaining);
-
-        transmittance *= remaining;
-
-        if (transmittance < 0.015) {
-
-            break;
+            float opacity = 1.0 - exp(-density * extinction * step_length);
+            float weight = transmission * opacity;
+            radiance += illumination(p, ray, density, step_length) * weight;
+            weighted_distance += distance * weight;
+            transmission *= 1.0 - opacity;
+            if (transmission < 0.015) { break; }
 
         }
 
     }
+    float alpha = 1.0 - transmission;
+    if (alpha < 0.001) { discard; }
 
-    ALBEDO = scattered;
-    ALPHA = 1.0 - transmittance;
+    // Clouds composite after the air pass, with air only between the eye and their optical centroid.
+    float distance = weighted_distance / alpha;
+    float air_depth = 0.0;
+    for (int i = 0; i < 4; i++) {
+
+        float height = max(length(origin + ray * distance * (float(i) + 0.5) / 4.0) - planet_radius, 0.0);
+        air_depth += exp(-height / 5600.0) * distance * 0.25;
+
+    }
+    vec3 air_transmission = exp(-vec3(5.8e-6, 1.35e-5, 3.31e-5) * air_depth);
+    float day = smoothstep(-0.12, 0.08, dot(normalize(origin + ray * distance), sun_direction));
+    vec3 haze = vec3(0.12, 0.24, 0.43) * day;
+    ALBEDO = radiance * air_transmission + haze * (1.0 - air_transmission) * alpha;
+    ALPHA = alpha;
 
 }

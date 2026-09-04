@@ -31,6 +31,10 @@ public sealed partial class DebugBridge : Node {
     private Thread _thread;
 
     private volatile bool _running;
+    private readonly double[] _frameTimes = new double[600];
+    private int _frameCursor;
+    private int _frameCount;
+    private ulong _lastFrame;
 
     public override void _Ready() {
 
@@ -70,6 +74,18 @@ public sealed partial class DebugBridge : Node {
     }
 
     public override void _Process(double delta) {
+
+        ulong now = Time.GetTicksUsec();
+
+        if (_lastFrame != 0) {
+
+            _frameTimes[_frameCursor] = (now - _lastFrame) * 0.001;
+            _frameCursor = (_frameCursor + 1) % _frameTimes.Length;
+            _frameCount = Math.Min(_frameCount + 1, _frameTimes.Length);
+
+        }
+
+        _lastFrame = now;
 
         while (_pending.TryDequeue(out HttpListenerContext context)) {
 
@@ -562,6 +578,12 @@ public sealed partial class DebugBridge : Node {
 
         }
 
+        if (float.TryParse(query["rate"], out float rate)) {
+
+            camera.DebugYawRate = Mathf.Clamp(rate, -1.0f, 1.0f);
+
+        }
+
         return new Dictionary<string, object> {
 
             ["yaw"] = camera.Yaw,
@@ -581,10 +603,17 @@ public sealed partial class DebugBridge : Node {
     private Dictionary<string, object> Snapshot() {
 
         Vector2I window = DisplayServer.WindowGetSize();
+        double[] frameTimes = new double[_frameCount];
+        Array.Copy(_frameTimes, frameTimes, _frameCount);
+        Array.Sort(frameTimes);
 
         Dictionary<string, object> state = new Dictionary<string, object> {
 
             ["fps"] = Engine.GetFramesPerSecond(),
+            ["frameP95Ms"] = _frameCount > 0 ? frameTimes[(int)((_frameCount - 1) * 0.95)] : 0.0,
+            ["frameP99Ms"] = _frameCount > 0 ? frameTimes[(int)((_frameCount - 1) * 0.99)] : 0.0,
+            ["frameMaxMs"] = _frameCount > 0 ? frameTimes[^1] : 0.0,
+            ["frameSamples"] = _frameCount,
             ["renderCpuMs"] = RenderingServer.ViewportGetMeasuredRenderTimeCpu(GetViewport().GetViewportRid()),
             ["renderGpuMs"] = RenderingServer.ViewportGetMeasuredRenderTimeGpu(GetViewport().GetViewportRid()),
             ["frame"] = Engine.GetProcessFrames(),
@@ -617,6 +646,8 @@ public sealed partial class DebugBridge : Node {
             state["patches"] = Planet.Active?.PatchCount ?? 0;
             state["groundMs"] = Planet.Active?.GroundMilliseconds ?? 0.0;
             state["flightMs"] = (GetTree().CurrentScene as Main)?.FlightMilliseconds ?? 0.0;
+            state["terrainWorkerFailures"] = Planet.Active?.WorkerFailures ?? 0;
+            state["terrainPendingJobs"] = Planet.Active?.PendingJobs ?? 0;
             state["patchLevel"] = Planet.Active?.DeepestLevel ?? 0;
             state["speed"] = flight.Vessel.Velocity.Length;
             state["apoapsis"] = flight.Orbit.ApoapsisRadius - flight.Body.Radius;

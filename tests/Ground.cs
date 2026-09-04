@@ -1,4 +1,6 @@
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 
 using FullThrust.Sim;
 
@@ -61,10 +63,10 @@ public static partial class Program {
 
         }
 
-        Expect("himalaya stands up", terrain.Elevation(Site(28.0, 86.9)) > 4000.0, $"{terrain.Elevation(Site(28.0, 86.9)):F0} m");
-        Expect("mid atlantic is deep", terrain.Elevation(Site(30.0, -40.0)) < -2000.0, $"{terrain.Elevation(Site(30.0, -40.0)):F0} m");
-        Expect("amazon basin is low land", terrain.Elevation(Site(-3.0, -60.0)) is > 0.0 and < 600.0, $"{terrain.Elevation(Site(-3.0, -60.0)):F0} m");
-        Expect("antarctic plateau is high", terrain.Elevation(Site(-80.0, 90.0)) > 2000.0, $"{terrain.Elevation(Site(-80.0, 90.0)):F0} m");
+        Expect("himalaya stands up", terrain.Elevation(Site(28.0, 86.9)) > 800.0, $"{terrain.Elevation(Site(28.0, 86.9)):F0} m");
+        Expect("mid atlantic is deep", terrain.Elevation(Site(30.0, -40.0)) < -400.0, $"{terrain.Elevation(Site(30.0, -40.0)):F0} m");
+        Expect("amazon basin is low land", terrain.Elevation(Site(-3.0, -60.0)) is > 0.0 and < 120.0, $"{terrain.Elevation(Site(-3.0, -60.0)):F0} m");
+        Expect("antarctic plateau is high", terrain.Elevation(Site(-80.0, 90.0)) > 400.0, $"{terrain.Elevation(Site(-80.0, 90.0)):F0} m");
 
         // The 60 arc-second survey has the Cape at sea level; the imagery resolves it and the grid
         // is pulled onto that, which is the whole reason the correction exists.
@@ -78,9 +80,55 @@ public static partial class Program {
 
         double rolled = terrain.Elevation(Site(-3.0, -60.0)) - terrain.Elevation(Site(-3.0, -60.02));
 
-        Expect("flat ground still rolls", Math.Abs(rolled) is > 0.01 and < 120.0, $"{rolled:F2} m over 2.2 km");
+        Expect("flat ground still rolls", Math.Abs(rolled) is > 0.01 and < 24.0, $"{rolled:F2} m over 440 m");
 
+        GroundConcurrency(terrain);
         GroundContact(terrain);
+
+    }
+
+    private static void GroundConcurrency(Terrain terrain) {
+
+        Section("terrain workers");
+
+        double[] expected = new double[256];
+
+        for (int index = 0; index < expected.Length; index++) {
+
+            expected[index] = terrain.Elevation(Site(-85.0 + index * 0.66, -179.0 + index * 1.4));
+
+        }
+
+        int mismatches = 0;
+
+        Parallel.For(0, 4096, index => {
+
+            int sample = index % expected.Length;
+            double actual = terrain.Elevation(Site(-85.0 + sample * 0.66, -179.0 + sample * 1.4));
+
+            if (actual != expected[sample]) {
+
+                Interlocked.Increment(ref mismatches);
+
+            }
+
+        });
+
+        Expect("parallel samples match physics exactly", mismatches == 0, $"{mismatches} mismatches");
+
+        var snapshot = terrain.Plateaus;
+
+        Parallel.For(0, 32, index => terrain.Add(new Terrain.Plateau {
+
+            Centre = Site(0.0, index),
+            Height = 1.0,
+            InnerRadius = 0.0,
+            OuterRadius = 0.0,
+
+        }));
+
+        Expect("published plateau snapshots remain immutable", snapshot.Count == 0, $"snapshot grew to {snapshot.Count}");
+        Expect("concurrent commissioning loses no plateaus", terrain.Plateaus.Count == 32, $"{terrain.Plateaus.Count} published");
 
     }
 

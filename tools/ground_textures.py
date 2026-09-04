@@ -45,12 +45,7 @@ SOIL = "Ground037"
 CONCRETE = "Concrete016"
 ASPHALT = "Asphalt014"
 
-WAVE_SIZE = 512
-
-# Longest swell the wave normal carries, in cells of its own tile. Everything under it is octaves.
-WAVE_SCALE = 6
-WAVE_OCTAVES = 5
-WAVE_RELIEF = 2.4
+WAVE_SIZE = 1024
 
 
 def download(asset):
@@ -130,53 +125,28 @@ def build_surface(asset, name):
     print(f"  {asset} -> {name}")
 
 
-def tileable_noise(size, cells, octaves):
-    """Value noise on a lattice that divides the tile, so every octave wraps exactly."""
-
-    field = np.zeros((size, size), dtype=np.float32)
-
-    amplitude = 1.0
-    total = 0.0
+def build_wave():
+    """Periodic directional ocean slopes, with no resampled value-noise lattice."""
 
     generator = np.random.default_rng(20260904)
+    frequency = np.fft.fftfreq(WAVE_SIZE) * WAVE_SIZE
+    kx, ky = np.meshgrid(frequency, frequency)
+    k2 = kx * kx + ky * ky
+    k = np.sqrt(np.maximum(k2, 1.0))
+    alignment = (kx * 0.88 + ky * 0.475) / k
+    spectrum = np.exp(-16.0 / np.maximum(k2, 1.0)) / np.maximum(k2 * k2, 1.0)
+    spectrum *= (0.12 + 0.88 * alignment ** 2) * np.exp(-k2 / 18000.0)
+    spectrum[0, 0] = 0.0
 
-    for octave in range(octaves):
-
-        step = cells * (2 ** octave)
-
-        lattice = generator.random((step, step), dtype=np.float32)
-
-        # Wrapping the lattice before the resize is what makes the result tile: the interpolation
-        # that lands on the last cell reads the first one back rather than clamping to the edge.
-        wrapped = np.concatenate([lattice, lattice[:, :1]], axis=1)
-        wrapped = np.concatenate([wrapped, wrapped[:1, :]], axis=0)
-
-        grown = np.asarray(Image.fromarray(wrapped, "F").resize((size + 1, size + 1), Image.BICUBIC), dtype=np.float32)
-
-        field += grown[:size, :size] * amplitude
-
-        total += amplitude
-        amplitude *= 0.55
-
-    return field / total
-
-
-def build_wave():
-
-    height = tileable_noise(WAVE_SIZE, WAVE_SCALE, WAVE_OCTAVES) * WAVE_RELIEF
-
-    east = np.roll(height, -1, axis=1) - np.roll(height, 1, axis=1)
-    north = np.roll(height, -1, axis=0) - np.roll(height, 1, axis=0)
-
-    normal = np.stack([-east, north, np.full_like(height, 2.0 / WAVE_SIZE * 40.0)], axis=-1)
+    modes = np.fft.fft2(generator.standard_normal((WAVE_SIZE, WAVE_SIZE))) * np.sqrt(spectrum)
+    east = np.fft.ifft2(1j * kx * modes).real
+    north = np.fft.ifft2(1j * ky * modes).real
+    scale = 0.38 / np.sqrt(np.mean(east ** 2 + north ** 2))
+    normal = np.stack([-east * scale, north * scale, np.ones_like(east)], axis=-1)
     normal /= np.linalg.norm(normal, axis=-1, keepdims=True)
-
     packed = np.clip((normal * 0.5 + 0.5) * 255.0, 0, 255).astype(np.uint8)
-
     path = os.path.join(OUT, "wave_normal.png")
-
-    Image.fromarray(packed, "RGB").save(path, optimize=True)
-
+    Image.fromarray(packed).save(path, optimize=True)
     print(f"  {path}")
 
 
@@ -200,6 +170,10 @@ def main():
         build_material(SOIL, "soil")
 
         print("building wave normal")
+
+        build_wave()
+
+    if "wave" in wanted:
 
         build_wave()
 

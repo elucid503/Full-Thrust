@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Threading;
 
 namespace FullThrust.Sim;
 
@@ -9,6 +10,11 @@ namespace FullThrust.Sim;
 /// contact by calling this, so a pad cannot hover over the terrain it is bolted to and a vehicle
 /// cannot sink into a hillside that is drawn somewhere else.</summary>
 public sealed class Terrain {
+
+    // Terra is one fifth Earth scale. Scaling the survey vertically as well as wrapping it onto a
+    // fifth-scale sphere preserves real-world slopes instead of making every landform five times
+    // steeper than the geography it came from.
+    public const double ElevationScale = 0.2;
 
     /// <summary>A level circle worked into the ground, so a launch complex stands on flat ground
     /// whatever the survey says was there.</summary>
@@ -30,7 +36,7 @@ public sealed class Terrain {
     // fifteen metres, which is under the closest the mesh ever samples. There is no point starting
     // any longer than this: the measured grid already carries everything above a kilometre, and
     // every octave above that is one the renderer pays for on every vertex it builds.
-    private const double DetailWavelength = 30_000.0;
+    private const double DetailWavelength = 6_000.0;
     private const int DetailOctaves = 12;
 
     // Ridges are a shape, not a texture. Below a hundred metres the rolling sum and the detail
@@ -41,8 +47,8 @@ public sealed class Terrain {
     // nothing like ground. Real relief sits near 0.58 and keeps a metre of bump at fifteen metres.
     private const double DetailGain = 0.58;
 
-    private const double RollingAmplitude = 34.0;
-    private const double RidgeAmplitude = 620.0;
+    private const double RollingAmplitude = 6.8;
+    private const double RidgeAmplitude = 124.0;
 
     // Slope, in metres per metre off the measured grid, over which ground goes from flat to broken.
     // A 741 m post smooths real relief badly, so the survey reads far flatter than the ground is and
@@ -62,7 +68,7 @@ public sealed class Terrain {
 
     private readonly double _radius;
 
-    private readonly List<Plateau> _plateaus = new List<Plateau>();
+    private Plateau[] _plateaus = Array.Empty<Plateau>();
 
     private Terrain(ushort[] counts, int width, int height, double step, double floor, double radius) {
 
@@ -81,9 +87,25 @@ public sealed class Terrain {
 
     public double Ceiling => _floor + 65535.0 * _step + RidgeAmplitude + RollingAmplitude;
 
-    public IReadOnlyList<Plateau> Plateaus => _plateaus;
+    public IReadOnlyList<Plateau> Plateaus => Array.AsReadOnly(Volatile.Read(ref _plateaus));
 
-    public void Add(Plateau plateau) => _plateaus.Add(plateau);
+    public void Add(Plateau plateau) {
+
+        ArgumentNullException.ThrowIfNull(plateau);
+
+        Plateau[] previous;
+        Plateau[] updated;
+
+        do {
+
+            previous = Volatile.Read(ref _plateaus);
+            updated = new Plateau[previous.Length + 1];
+            Array.Copy(previous, updated, previous.Length);
+            updated[^1] = plateau;
+
+        } while (Interlocked.CompareExchange(ref _plateaus, updated, previous) != previous);
+
+    }
 
     /// <summary>Reads the packed grid written by tools/planet_maps.py.</summary>
     public static Terrain Load(Stream stream, double radius) {
@@ -101,8 +123,8 @@ public sealed class Terrain {
         int width = (int)BitConverter.ToUInt32(header, 8);
         int height = (int)BitConverter.ToUInt32(header, 12);
 
-        double step = BitConverter.ToDouble(header, 16);
-        double floor = BitConverter.ToDouble(header, 24);
+        double step = BitConverter.ToDouble(header, 16) * ElevationScale;
+        double floor = BitConverter.ToDouble(header, 24) * ElevationScale;
 
         byte[] planes = new byte[width * height * 2];
 
@@ -168,7 +190,7 @@ public sealed class Terrain {
 
         double measured = Sample(u, v);
 
-        double natural = measured + Detail(unit, Ruggedness(u, v, latitude, measured));
+        double natural = PreserveCoast(measured, measured + Detail(unit, Ruggedness(u, v, latitude, measured)));
 
         return Level(unit, natural);
 
@@ -192,7 +214,7 @@ public sealed class Terrain {
 
         double measured = Sample(u, v);
 
-        return measured + Detail(unit, Ruggedness(u, v, latitude, measured));
+        return PreserveCoast(measured, measured + Detail(unit, Ruggedness(u, v, latitude, measured)));
 
     }
 
@@ -200,7 +222,7 @@ public sealed class Terrain {
 
         double height = natural;
 
-        foreach (Plateau plateau in _plateaus) {
+        foreach (Plateau plateau in Volatile.Read(ref _plateaus)) {
 
             double angle = Math.Acos(Math.Clamp(Vector3d.Dot(unit, plateau.Centre), -1.0, 1.0));
 
@@ -288,6 +310,12 @@ public sealed class Terrain {
     }
 
     private double Count(int x, int y) => _counts[y * _width + x];
+
+    // Detail may roughen either side of a shoreline, but it cannot turn a surveyed land texel into
+    // sea or raise surveyed seabed through the datum.
+    private static double PreserveCoast(double measured, double detailed) => measured >= 0.0
+        ? Math.Max(detailed, 0.01)
+        : Math.Min(detailed, -0.01);
 
     private static double Square(double value) => value * value;
 
