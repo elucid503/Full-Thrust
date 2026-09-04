@@ -101,6 +101,7 @@ public sealed partial class MapHud : CanvasLayer {
             MapPath.Kind.Ascending => "ASCENDING NODE",
             MapPath.Kind.Descending => "DESCENDING NODE",
 
+            MapPath.Kind.Entry => "ENTRY INTERFACE",
             MapPath.Kind.Impact => "IMPACT",
 
             _ => "VESSEL",

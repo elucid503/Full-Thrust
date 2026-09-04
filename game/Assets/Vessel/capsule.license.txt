@@ -1,0 +1,7 @@
+NASA 3D Resources - "Orion Capsule", 3D Printing collection.
+
+    github.com/nasa/NASA-3D-Resources - "These assets are free and without copyright."
+
+Built from "Orion Capsule (no fbc).stl" with "Orion Capsule (plug).stl" welded in as the forward
+bay cover, converted by tools/stl_to_glb.py. No attribution is required; it is recorded here so the
+asset's provenance travels with it.

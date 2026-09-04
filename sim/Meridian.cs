@@ -2,7 +2,8 @@ using System.Collections.Generic;
 
 namespace FullThrust.Sim;
 
-/// <summary>A 2.4m kerolox upper stage; one mould line for mesh and mass.</summary>
+/// <summary>A 2.4 m kerolox service stage; one mould line for mesh and mass. It carries the
+/// capsule that stacks on top of it as far as the entry interface and is then let go.</summary>
 public static class Meridian {
 
     public const double BodyRadius = 1.20;
@@ -10,41 +11,33 @@ public static class Meridian {
     public const double SkirtTop = 0.95;
     public const double TankTop = 7.70;
 
-    // The nosecone is seated straight on the tank's forward flange; there is no adapter between them.
-    public const double NoseBase = 7.90;
+    // The payload adapter is seated straight on the tank's forward flange.
+    public const double AdapterBase = 7.90;
 
-    // The ogive the nose is cut from. Its own length, before the tip is rounded off.
-    public const double NoseLength = 3.60;
+    /// <summary>Where the payload's own datum sits. The adapter stands past it and closes over the
+    /// shield below the capsule's shoulder, which is what keeps the stack's mould line unbroken.</summary>
+    public const double PayloadDatum = 8.30;
 
-    public const double TipRadius = 0.16;
+    public const double StageTop = 8.62;
 
-    // Radius of the generating arc of a tangent ogive: the one value that makes it meet the body wall
-    // without a crease. Any other radius leaves a visible kink at the nose base.
-    public const double OgiveRadius = (BodyRadius * BodyRadius + NoseLength * NoseLength) / (2.0 * BodyRadius);
+    public const double DryMass = 2400.0;
 
-    // Centre of the sphere the tip is rounded to, and the height where the ogive hands over to it.
-    // Both fall out of requiring the two arcs to share a tangent, which is what keeps the join invisible.
-    private static readonly double TipCentre = Math.Sqrt(
-        (OgiveRadius - TipRadius) * (OgiveRadius - TipRadius) -
-        (OgiveRadius - BodyRadius) * (OgiveRadius - BodyRadius));
+    // The engine is a fifth of the dry mass concentrated on the deck. Modelled where it sits rather
+    // than smeared over the shell, because a stage's centre of mass is mostly a question of it.
+    public const double EngineMass = 520.0;
 
-    private static readonly double TipHandover = TipCentre * OgiveRadius / (OgiveRadius - TipRadius);
+    public const double ShellMass = DryMass - EngineMass;
 
-    public static readonly double NoseHeight = TipCentre + TipRadius;
+    public const double MixtureRatio = 2.56;
 
-    public static readonly double OverallLength = NoseBase + NoseHeight;
-
-    private const int OgiveStations = 16;
-    private const int TipStations = 6;
+    // Bare aluminium-lithium: the tank wall is the skin, and it does not survive an entry.
+    public const double HeatLimit = 900.0;
+    public const double HeatCapacity = 1400.0;
 
     // Proud rings. Each is a step rather than a ramp, so the lathe reads a hard edge off it instead
     // of smoothing the whole thing into a bulge.
     private const double BandRadius = BodyRadius + 0.025;
     private const double WeldRadius = BodyRadius + 0.012;
-
-    public const double DryMass = 2400.0;
-
-    public const double MixtureRatio = 2.56;
 
     // Kerosene at ambient and oxygen at its boiling point. Everything the tank knows about density
     // comes from these two, so the mould line and the readouts cannot end up disagreeing about it.
@@ -72,7 +65,8 @@ public static class Meridian {
     public static readonly double PropellantDensity =
         (1.0 + MixtureRatio) / (1.0 / Fuel.Density + MixtureRatio / Oxidiser.Density);
 
-    // Four RCS quads on the forward tank, sized so the stage slews a right angle in about twenty seconds.
+    // Four RCS quads on the forward tank, sized so the loaded stack slews a right angle in about
+    // fifteen seconds.
     public const double ControlTorque = 7000.0;
 
     // Where the hardware that is not on the mould line sits. The lathe, the part list and the
@@ -82,6 +76,7 @@ public static class Meridian {
     public const double RcsHeight = 6.90;
     public const double RcsHalfHeight = 0.30;
     public const double RcsPortRadius = 0.18;
+    public const double RcsPocketDepth = 0.26;
 
     public const double EngineDeck = 0.36;
     public const double EngineLength = 2.55;
@@ -107,7 +102,7 @@ public static class Meridian {
 
     public static Hull BuildHull() {
 
-        List<Hull.Station> stations = new List<Hull.Station> {
+        Hull.Station[] stations = {
 
             new Hull.Station(0.00, BodyRadius),
             new Hull.Station(0.55, BodyRadius),
@@ -128,34 +123,21 @@ public static class Meridian {
             new Hull.Station(TankTop, BodyRadius),
             new Hull.Station(7.73, BandRadius),
             new Hull.Station(7.87, BandRadius),
-            new Hull.Station(NoseBase, BodyRadius),
+            new Hull.Station(AdapterBase, BodyRadius),
+
+            // The separation joint, where the bolts that hold the capsule down actually are.
+            // Stepped, not ramped: without the two stations at the body radius either side, the
+            // lathe reads the whole adapter as one long taper up to the band.
+            new Hull.Station(8.38, BodyRadius),
+            new Hull.Station(8.40, BandRadius),
+            new Hull.Station(8.50, BandRadius),
+            new Hull.Station(8.52, BodyRadius),
+
+            new Hull.Station(StageTop, BodyRadius),
 
         };
 
-        // Stations bunch towards the tip, where the profile turns hardest and evenly spaced ones
-        // would flatten it into a cone.
-        for (int index = 1; index <= OgiveStations; index++) {
-
-            double fraction = (double)index / OgiveStations;
-            double rise = TipHandover * (1.0 - (1.0 - fraction) * (1.0 - fraction));
-
-            double radius = Math.Sqrt(OgiveRadius * OgiveRadius - rise * rise) - (OgiveRadius - BodyRadius);
-
-            stations.Add(new Hull.Station(NoseBase + rise, radius));
-
-        }
-
-        double handover = Math.Atan2(TipRadius * (OgiveRadius - BodyRadius) / (OgiveRadius - TipRadius), TipHandover - TipCentre);
-
-        for (int index = 1; index <= TipStations; index++) {
-
-            double angle = handover * (1.0 - (double)index / TipStations);
-
-            stations.Add(new Hull.Station(NoseBase + TipCentre + TipRadius * Math.Cos(angle), TipRadius * Math.Sin(angle)));
-
-        }
-
-        return new Hull(stations.ToArray(), SkirtTop, TankTop);
+        return new Hull(stations, SkirtTop, TankTop);
 
     }
 
@@ -268,18 +250,20 @@ public static class Meridian {
                 Count = RcsPorts,
                 RingRadius = BodyRadius - RcsPortRadius,
 
+                Depth = RcsPocketDepth,
+
                 Profile = BuildQuad(),
 
             },
 
             new Part {
 
-                Name = "Nose Fairing",
+                Name = "Payload Adapter",
 
                 Kind = PartKind.Structure,
 
                 Bottom = TankTop,
-                Top = OverallLength,
+                Top = StageTop,
 
             },
 
@@ -287,45 +271,51 @@ public static class Meridian {
 
     }
 
-    public static Vessel Build() {
+    public static Stage BuildStage() {
 
         Hull hull = BuildHull();
 
         double capacity = hull.TankVolume * PropellantDensity;
 
-        Vessel vessel = new Vessel {
+        Stage stage = new Stage {
 
             Name = "Meridian",
 
             Hull = hull,
             Parts = BuildParts(),
 
-            DryMass = DryMass,
+            ShellMass = ShellMass,
+
+            // A sixty centimetre powerhead on the deck: a solid of that size about its own centre.
+            Ballast = new MassProperties(EngineMass, EngineDeck - 0.21, new Vector3d(75.0, 75.0, 60.0)),
+
             PropellantMass = capacity,
             PropellantCapacity = capacity,
 
             ThrustNewtons = ThrustNewtons,
             SpecificImpulse = SpecificImpulse,
 
-            RcsPropellantMass = RcsPropellantMass,
-            RcsPropellantCapacity = RcsPropellantMass,
-
-            RcsThrustNewtons = RcsThrustNewtons,
-            RcsSpecificImpulse = RcsSpecificImpulse,
-
-            ControlTorqueLimit = ControlTorque,
-
             MixtureRatio = MixtureRatio,
 
             Fuel = Fuel,
             Oxidiser = Oxidiser,
 
+            RcsThrustNewtons = RcsThrustNewtons,
+            RcsSpecificImpulse = RcsSpecificImpulse,
+
+            ControlTorque = ControlTorque,
+
+            RcsPropellantMass = RcsPropellantMass,
+            RcsPropellantCapacity = RcsPropellantMass,
+
+            HeatLimit = HeatLimit,
+            HeatCapacity = HeatCapacity,
+
         };
 
-        vessel.CommissionEngines();
-        vessel.RecomputeMassProperties();
+        stage.CommissionEngines();
 
-        return vessel;
+        return stage;
 
     }
 

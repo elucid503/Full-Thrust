@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 using FullThrust.Sim;
 
@@ -6,7 +7,8 @@ using Godot;
 
 namespace FullThrust.Game;
 
-/// <summary>Advances the vessel; coasts on the analytic conic, integrates only under thrust.</summary>
+/// <summary>Advances the vehicle and everything shed from it; coasts on the analytic conic, and
+/// integrates whenever thrust or air makes that conic a lie.</summary>
 public sealed partial class Flight : Node {
 
     // The surface maps are 8192 x 4096 - 977 m a texel - so at 70 km one texel covered twenty screen
@@ -22,9 +24,25 @@ public sealed partial class Flight : Node {
     // Warp is stepped down so that whatever factor is running still leaves this long before ignition.
     private const double WarpMargin = 12.0;
 
+    // Past this a spent stage is a dot on a conic, and it is far enough out that the floating
+    // origin no longer holds it steady anyway.
+    public const double DebrisRange = 60_000.0;
+
     public static readonly double[] WarpFactors = { 1.0, 2.0, 5.0, 10.0, 50.0, 100.0, 1000.0 };
 
     public static Flight Active { get; private set; }
+
+    /// <summary>One body being propagated: what it is, the conic it is coasting on, and how much
+    /// real time the integrator still owes it.</summary>
+    public sealed class Tracked {
+
+        public Vessel Vessel { get; init; }
+
+        public Orbit Rails { get; set; }
+
+        internal double Debt;
+
+    }
 
     public CelestialBody Body { get; private set; }
     public Vessel Vessel { get; private set; }
@@ -42,15 +60,22 @@ public sealed partial class Flight : Node {
 
     public double Warp => WarpFactors[WarpStep];
 
-    private Orbit _rails;
-    private double _integrationDebt;
+    /// <summary>Raised with the stage that has just come away, so the views can follow it out.</summary>
+    public event Action<Vessel> Staged;
+
+    /// <summary>Raised with a tracked body that has stopped existing, so its view goes with it.</summary>
+    public event Action<Vessel> Scrubbed;
+
+    private readonly List<Tracked> _debris = new List<Tracked>();
+
+    private Tracked _own;
 
     public override void _Ready() {
 
         Active = this;
 
         Body = BodyCatalog.Home;
-        Vessel = Meridian.Build();
+        Vessel = Stack.Build();
 
         Autopilot = new Autopilot();
 
@@ -77,7 +102,53 @@ public sealed partial class Flight : Node {
 
     }
 
+    /// <summary>Spent stages still being tracked, in the order they came off.</summary>
+    public IReadOnlyList<Tracked> Debris => _debris;
+
+    /// <summary>What ended the flight, or Flying while it has not.</summary>
+    public VesselFate Fate => Vessel.Fate;
+
+    public bool Ended => !Vessel.Intact;
+
+    public double AtmosphereTop => Body.AtmosphereTop;
+
+    public bool InAtmosphere => Body.AirDensityAt(Vessel.Position) > 0.0;
+
+    /// <summary>True while anything being tracked is in air. Warp propagates conics, and a conic is
+    /// not what a body in air is flying, so the ladder is held at one until the sky is empty.</summary>
+    public bool AirborneTraffic {
+
+        get {
+
+            if (InAtmosphere) {
+
+                return true;
+
+            }
+
+            foreach (Tracked debris in _debris) {
+
+                if (Body.AirDensityAt(debris.Vessel.Position) > 0.0) {
+
+                    return true;
+
+                }
+
+            }
+
+            return false;
+
+        }
+
+    }
+
     public void Advance(double delta) {
+
+        if (Ended) {
+
+            return;
+
+        }
 
         ReadControls(delta);
 
@@ -89,57 +160,164 @@ public sealed partial class Flight : Node {
 
         Time += step;
 
-        if (Vessel.IsAccelerating) {
+        Fly(_own, delta, step);
 
-            _integrationDebt += step;
+        Sweep(delta, step);
 
-            while (_integrationDebt >= IntegrationStep) {
-
-                Autopilot.Update(Vessel, IntegrationStep);
-
-                Integrator.Step(Vessel, Body, IntegrationStep);
-
-                _integrationDebt -= IntegrationStep;
-
-            }
-
-            Rerail();
-
-        }
-        else {
-
-            _integrationDebt = 0.0;
-
-            (Vector3d position, Vector3d velocity) = _rails.StateAt(Time);
-
-            Vessel.Position = position;
-            Vessel.Velocity = velocity;
-
-            // Warped time is not simulated time; the vessel is held rigid rather than spun by a step it never took.
-            if (WarpStep == 0) {
-
-                Autopilot.Update(Vessel, delta);
-
-                Integrator.StepAttitude(Vessel, delta);
-
-            }
-            else {
-
-                Vessel.AngularVelocity = Vector3d.Zero;
-                Vessel.ControlTorque = Vector3d.Zero;
-
-            }
-
-        }
+        Judge(Vessel);
 
         Frames.Rebase(Vessel.Position);
 
     }
 
-    public Orbit Orbit => _rails;
+    /// <summary>One body forward by one frame: integrated where a force acts on it, propagated on
+    /// its own conic where none does.</summary>
+    private void Fly(Tracked track, double delta, double step) {
+
+        Vessel vessel = track.Vessel;
+
+        bool flown = !vessel.IsDebris;
+
+        if (vessel.IsAccelerating || Body.AirDensityAt(vessel.Position) > 0.0) {
+
+            // Both thrust and air hold the ladder at one, so the integrator only ever advances real
+            // time and the debt never has to carry a warped step.
+            track.Debt += step;
+
+            while (track.Debt >= IntegrationStep) {
+
+                if (flown) {
+
+                    Autopilot.Update(vessel, IntegrationStep);
+
+                }
+
+                Integrator.Step(vessel, Body, IntegrationStep);
+
+                track.Debt -= IntegrationStep;
+
+            }
+
+            track.Rails = vessel.OrbitAround(Body, Time);
+
+            return;
+
+        }
+
+        track.Debt = 0.0;
+
+        (Vector3d position, Vector3d velocity) = track.Rails.StateAt(Time);
+
+        vessel.Position = position;
+        vessel.Velocity = velocity;
+
+        // Nothing is flying through anything out here, so last frame's loads must not be left
+        // standing on the vessel for the attitude step or the readouts to find.
+        vessel.Aero = default;
+
+        if (WarpStep == 0) {
+
+            if (flown) {
+
+                Autopilot.Update(vessel, delta);
+
+            }
+
+            Integrator.StepAttitude(vessel, delta);
+            Integrator.StepThermal(vessel, delta);
+
+            return;
+
+        }
+
+        // Warped time is not simulated time; the vessel is held rigid rather than spun by a step it never took.
+        vessel.AngularVelocity = Vector3d.Zero;
+        vessel.ControlTorque = Vector3d.Zero;
+
+    }
+
+    private void Sweep(double delta, double step) {
+
+        for (int index = _debris.Count - 1; index >= 0; index--) {
+
+            Tracked debris = _debris[index];
+
+            Fly(debris, delta, step);
+
+            Judge(debris.Vessel);
+
+            if (debris.Vessel.Intact) {
+
+                continue;
+
+            }
+
+            _debris.RemoveAt(index);
+
+            Scrubbed?.Invoke(debris.Vessel);
+
+        }
+
+    }
+
+    /// <summary>Whether a body is still flying, or has run out of sky or out of shield.</summary>
+    private void Judge(Vessel vessel) {
+
+        if (!vessel.Intact) {
+
+            return;
+
+        }
+
+        if (Body.AltitudeOf(vessel.Position) <= 0.0) {
+
+            vessel.Fate = VesselFate.Impacted;
+
+            return;
+
+        }
+
+        if (vessel.SkinTemperature > vessel.SkinLimit) {
+
+            vessel.Fate = VesselFate.BurnedUp;
+
+        }
+
+    }
+
+    public Orbit Orbit => _own.Rails;
 
     /// <summary>The conic the planned node would leave the vessel on, or null when nothing is planned.</summary>
-    public Orbit PlannedOrbit => Node != null && !Node.IsEmpty ? Node.Result(_rails) : null;
+    public Orbit PlannedOrbit => Node != null && !Node.IsEmpty ? Node.Result(_own.Rails) : null;
+
+    /// <summary>Lets the bottom stage go. It flies as a body of its own from the moment the bolts
+    /// fire; nothing about it is faked out afterwards.</summary>
+    public bool Separate() {
+
+        if (Ended || !Vessel.CanSeparate) {
+
+            return false;
+
+        }
+
+        Vessel spent = Vessel.Separate();
+
+        _debris.Add(new Tracked { Vessel = spent, Rails = spent.OrbitAround(Body, Time) });
+
+        Rerail();
+
+        Staged?.Invoke(spent);
+
+        return true;
+
+    }
+
+    /// <summary>Starts the flight over. The one way back from a vehicle that has been lost.</summary>
+    public void Restart() {
+
+        GetTree().ReloadCurrentScene();
+
+    }
 
     /// <summary>Places a node at a true anomaly on the current orbit, keeping any impulse already dialled in.</summary>
     public void PlaceNode(double trueAnomaly) {
@@ -158,7 +336,7 @@ public sealed partial class Flight : Node {
 
         }
 
-        double ahead = _rails.TimeToTrueAnomaly(Time, trueAnomaly);
+        double ahead = _own.Rails.TimeToTrueAnomaly(Time, trueAnomaly);
 
         if (double.IsNaN(ahead)) {
 
@@ -223,7 +401,7 @@ public sealed partial class Flight : Node {
 
         }
 
-        Autopilot.ManeuverDirection = Node.WorldDeltaV(_rails);
+        Autopilot.ManeuverDirection = Node.WorldDeltaV(_own.Rails);
 
     }
 
@@ -268,12 +446,12 @@ public sealed partial class Flight : Node {
 
     public double Altitude => Body.AltitudeOf(Vessel.Position);
 
-    /// <summary>Steps the warp factor, refusing to leave 1x while the engine is lit.</summary>
+    /// <summary>Steps the warp factor, refusing to leave 1x under thrust or with anything in air.</summary>
     public bool SetWarpStep(int step) {
 
         step = Math.Clamp(step, 0, WarpFactors.Length - 1);
 
-        if (step > 0 && Vessel.IsAccelerating) {
+        if (step > 0 && (Vessel.IsAccelerating || AirborneTraffic)) {
 
             return false;
 
@@ -288,6 +466,18 @@ public sealed partial class Flight : Node {
     public override void _UnhandledKeyInput(InputEvent @event) {
 
         if (@event is not InputEventKey key || !key.Pressed || key.Echo) {
+
+            return;
+
+        }
+
+        if (Ended) {
+
+            if (key.Keycode == Key.Enter || key.Keycode == Key.KpEnter) {
+
+                Restart();
+
+            }
 
             return;
 
@@ -322,6 +512,8 @@ public sealed partial class Flight : Node {
 
             case Key.M: MapView.Active?.Toggle(); break;
 
+            case Key.Space: Separate(); break;
+
             case Key.Tab: ToggleWarpToNode(); break;
             case Key.Delete: ClearNode(); break;
 
@@ -349,7 +541,7 @@ public sealed partial class Flight : Node {
 
         }
 
-        if (Vessel.IsAccelerating) {
+        if (Vessel.IsAccelerating || AirborneTraffic) {
 
             WarpStep = 0;
 
@@ -381,7 +573,9 @@ public sealed partial class Flight : Node {
 
     private void Rerail() {
 
-        _rails = Vessel.OrbitAround(Body, Time);
+        _own ??= new Tracked { Vessel = Vessel };
+
+        _own.Rails = Vessel.OrbitAround(Body, Time);
 
     }
 

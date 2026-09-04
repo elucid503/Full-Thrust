@@ -13,6 +13,7 @@ public sealed partial class Hud : CanvasLayer {
     private Flight _flight;
 
     private TrajectoryPanel _trajectory;
+    private EntryPanel _entry;
     private CraftPanel _craft;
     private Navball _navball;
     private PropellantGauge _gauge;
@@ -21,12 +22,14 @@ public sealed partial class Hud : CanvasLayer {
 
     private Popover _popover;
     private AttitudeMenu _menu;
+    private LossPanel _loss;
 
     public void Build(Flight flight) {
 
         _flight = flight;
 
         _trajectory = Attach(new TrajectoryPanel());
+        _entry = Attach(new EntryPanel());
         _craft = Attach(new CraftPanel());
         _navball = Attach(new Navball());
         _gauge = Attach(new PropellantGauge());
@@ -37,18 +40,35 @@ public sealed partial class Hud : CanvasLayer {
         _popover = Attach(new Popover());
         _menu = Attach(new AttitudeMenu());
 
-        _craft.Build(flight.Vessel, _popover);
+        // Except this, which is raised over them in turn: there is nothing left to interact with.
+        _loss = Attach(new LossPanel());
+
+        _craft.Build(flight, _popover);
         _gauge.Build(flight.Vessel, _popover);
         _engines.Build(flight.Vessel);
+        _loss.Build(flight);
 
         _modes.Bind(flight, _menu);
+
+        // Staging changes what the vehicle is, so the panels that were laid out for the old one are
+        // laid out again rather than left describing a stage that is no longer aboard.
+        flight.Staged += _ => Restack();
+
+    }
+
+    private void Restack() {
+
+        _engines.Build(_flight.Vessel);
+        _gauge.Build(_flight.Vessel, _popover);
+
+        _popover.Dismiss();
 
     }
 
     public void Sync() {
 
-        // The map is its own mode with its own instruments still to come. Nothing here reads on it,
-        // and the ball alone would cost a raster a frame for a panel nobody is looking at.
+        // The map is its own mode with its own instruments. Nothing here reads on it, and the ball
+        // alone would cost a raster a frame for a panel nobody is looking at.
         if (MapView.Active != null && MapView.Active.Open) {
 
             if (Visible) {
@@ -66,9 +86,12 @@ public sealed partial class Hud : CanvasLayer {
 
         Visible = true;
 
+        _loss.Sync();
+
         Place();
 
         _trajectory.Sync(_flight);
+        _entry.Sync(_flight);
         _craft.Sync();
         _navball.Sync(_flight);
         _gauge.Sync();
@@ -84,6 +107,8 @@ public sealed partial class Hud : CanvasLayer {
         Vector2 screen = GetViewport().GetVisibleRect().Size;
 
         _trajectory.Position = new Vector2(Margin, Margin);
+
+        _entry.Position = _trajectory.Position + new Vector2(0.0f, _trajectory.Foot + Gap);
 
         _craft.Position = new Vector2(screen.X - Margin - _craft.Size.X, Margin);
 

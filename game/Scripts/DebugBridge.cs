@@ -194,7 +194,7 @@ public sealed partial class DebugBridge : Node {
 
         if (planet == null || string.IsNullOrEmpty(target)) {
 
-            return new Dictionary<string, object> { ["error"] = "usage: /tune?target=surface|clouds|atmosphere|plume&<uniform>=<value>" };
+            return new Dictionary<string, object> { ["error"] = "usage: /tune?target=surface|clouds|atmosphere|vessel&<uniform>=<value>" };
 
         }
 
@@ -208,7 +208,9 @@ public sealed partial class DebugBridge : Node {
 
             }
 
-            bool ok = target == "plume"
+            // The vessel owns both of its volumes - the plume and the entry sheath - and a
+            // uniform belongs to whichever of them declares it, so one target reaches both.
+            bool ok = target == "plume" || target == "entry" || target == "vessel"
                 ? VesselView.Active != null && VesselView.Active.Tune(key, query[key])
                 : planet.Tune(target, key, query[key]);
 
@@ -251,6 +253,18 @@ public sealed partial class DebugBridge : Node {
         if (bool.TryParse(query["rcs"], out bool rcs)) {
 
             flight.Vessel.RcsEnabled = rcs;
+
+        }
+
+        if (query["stage"] != null) {
+
+            flight.Separate();
+
+        }
+
+        if (query["restart"] != null) {
+
+            flight.Restart();
 
         }
 
@@ -304,6 +318,9 @@ public sealed partial class DebugBridge : Node {
             ["map"] = MapView.Active?.Open ?? false,
 
             ["nodeDeltaV"] = flight.Node?.DeltaV ?? 0.0,
+
+            ["stages"] = flight.Vessel.StageCount,
+            ["debris"] = flight.Debris.Count,
 
         };
 
@@ -469,6 +486,51 @@ public sealed partial class DebugBridge : Node {
 
             state["fuelMass"] = flight.Vessel.FuelMass;
             state["oxidiserMass"] = flight.Vessel.OxidiserMass;
+
+            state["stackDeltaV"] = flight.Vessel.StackDeltaV;
+
+            state["stages"] = flight.Vessel.StageCount;
+            state["stage"] = flight.Vessel.Active.Name;
+            state["canSeparate"] = flight.Vessel.CanSeparate;
+
+            state["fate"] = flight.Fate.ToString();
+
+            state["centreOfMass"] = flight.Vessel.CentreOfMassZ;
+
+            AeroForces air = flight.Vessel.Aero;
+
+            state["inAtmosphere"] = air.InAir;
+            state["density"] = air.Density;
+            state["airSpeed"] = air.AirSpeed;
+            state["mach"] = air.Mach;
+            state["dynamicPressure"] = air.DynamicPressure;
+            state["angleOfAttack"] = air.AngleOfAttack;
+            state["centreOfPressure"] = air.CentreOfPressure;
+            state["heatFlux"] = air.HeatFlux;
+            state["load"] = air.Force.Length / flight.Vessel.Mass / flight.Body.SurfaceGravity;
+
+            state["skinTemperature"] = flight.Vessel.SkinTemperature;
+            state["skinLimit"] = flight.Vessel.SkinLimit;
+
+            state["atmosphereTop"] = flight.Body.AtmosphereTop;
+
+            List<Dictionary<string, object>> tracked = new List<Dictionary<string, object>>();
+
+            foreach (Flight.Tracked debris in flight.Debris) {
+
+                tracked.Add(new Dictionary<string, object> {
+
+                    ["name"] = debris.Vessel.Name,
+                    ["altitude"] = flight.Body.AltitudeOf(debris.Vessel.Position),
+                    ["range"] = (debris.Vessel.Position - flight.Vessel.Position).Length,
+                    ["skinTemperature"] = debris.Vessel.SkinTemperature,
+                    ["skinLimit"] = debris.Vessel.SkinLimit,
+
+                });
+
+            }
+
+            state["debris"] = tracked;
 
             state["rcsEnabled"] = flight.Vessel.RcsEnabled;
             state["rcsPropellant"] = flight.Vessel.RcsPropellantMass;

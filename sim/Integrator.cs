@@ -4,8 +4,14 @@ public static class Integrator {
 
     public static void Step(Vessel vessel, CelestialBody body, double dt) {
 
+        // Aerodynamic loads are read once for the step, the way thrust already is. Over a step this
+        // short the air the vehicle is in changes by parts in ten thousand, and RK4 is here for
+        // gravity, which does not.
+        vessel.Aero = Aerodynamics.Compute(vessel, body);
+
         StepAttitude(vessel, dt);
         StepTranslation(vessel, body, dt);
+        StepThermal(vessel, dt);
 
     }
 
@@ -16,7 +22,7 @@ public static class Integrator {
 
         Vector3d inertia = vessel.Inertia;
         Vector3d rate = vessel.AngularVelocity;
-        Vector3d torque = vessel.ControlTorque;
+        Vector3d torque = vessel.ControlTorque + vessel.Aero.Torque;
 
         Vector3d angularAcceleration = new Vector3d(
 
@@ -29,6 +35,14 @@ public static class Integrator {
         vessel.AngularVelocity = rate + angularAcceleration * dt;
 
         vessel.Orientation = QuaternionD.Integrate(vessel.Orientation, vessel.AngularVelocity, dt);
+
+    }
+
+    /// <summary>Advances the leading skin's temperature under whatever flux the air is putting on
+    /// it. Runs in vacuum too, where the flux is nothing and the skin radiates itself cool.</summary>
+    public static void StepThermal(Vessel vessel, double dt) {
+
+        vessel.SkinTemperature = Thermal.Step(vessel.SkinTemperature, vessel.Aero.HeatFlux, vessel.Leading.HeatCapacity, dt);
 
     }
 
@@ -63,7 +77,7 @@ public static class Integrator {
         double thrust = vessel.CurrentThrust;
         double flow = vessel.CurrentMassFlow;
 
-        Vector3d push = vessel.Nose * thrust + vessel.RcsForce;
+        Vector3d push = vessel.Nose * thrust + vessel.RcsForce + vessel.Aero.Force;
 
         double mu = body.Mu;
 
@@ -97,15 +111,7 @@ public static class Integrator {
     // The quads are the whole attitude authority, so holding an attitude costs propellant like any other burn.
     private static void SpendRcs(Vessel vessel, double dt) {
 
-        double duty = vessel.RcsDuty;
-
-        if (duty <= 0.0) {
-
-            return;
-
-        }
-
-        vessel.RcsPropellantMass = Math.Max(0.0, vessel.RcsPropellantMass - duty * vessel.RcsMassFlowRate * dt);
+        vessel.SpendReactionControl(vessel.RcsDuty, dt);
 
     }
 

@@ -7,6 +7,7 @@ public enum PartKind {
     Tank,
     Engine,
     Thruster,
+    Shield,
 
 }
 
@@ -25,6 +26,9 @@ public sealed class Part {
 
     /// <summary>Radius of the ring the copies sit on; zero when the part is on the axis.</summary>
     public double RingRadius { get; init; }
+
+    /// <summary>How deep the part is let into the mould line. Zero means it stands on the surface.</summary>
+    public double Depth { get; init; }
 
     /// <summary>The part's own outline: half-widths along the nose axis, on the same datum as Bottom
     /// and Top. Null means the part is a run of the mould line and the hull profile is its outline.</summary>

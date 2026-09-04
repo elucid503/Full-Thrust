@@ -25,10 +25,17 @@ public static class Program {
         RigidBodyRotation();
         HullMassProperties();
         MeridianStage();
+        AegisCapsule();
         AttitudeHolds();
         OrbitGeometry();
         ManeuverNodes();
         ReactionControl();
+        AtmosphereColumn();
+        AeroGeometry();
+        AeroForcesAndMoments();
+        SkinHeating();
+        Staging();
+        Reentry();
 
         Console.WriteLine();
         Console.WriteLine($"{_checks - _failures}/{_checks} checks passed");
@@ -278,20 +285,10 @@ public static class Program {
 
         Section("propellant and delta-v");
 
-        Vessel vessel = new Vessel {
-
-            Name = "test",
+        Vessel vessel = new Vessel("test", new[] { Cylinder("test", 2000.0, 8000.0, 200000.0, 320.0) }) {
 
             Position = new Vector3d(1344200.0, 0.0, 0.0),
             Velocity = new Vector3d(0.0, 3442.2, 0.0),
-
-            DryMass = 2000.0,
-            PropellantMass = 8000.0,
-
-            ThrustNewtons = 200000.0,
-            SpecificImpulse = 320.0,
-
-            Inertia = new Vector3d(5000.0, 5000.0, 2000.0),
 
         };
 
@@ -370,15 +367,23 @@ public static class Program {
 
         Section("meridian stage");
 
-        Vessel vessel = Meridian.Build();
+        Vessel vessel = Stack.Build();
 
-        Near("hull length", vessel.Hull.Length, Meridian.OverallLength, 1e-12);
-        Near("tank capacity", vessel.PropellantCapacity, vessel.Hull.TankVolume * Meridian.PropellantDensity, 1e-9);
+        Stage meridian = vessel.Active;
+        Stage capsule = vessel.Forward;
 
-        Near("nose closes to a point", vessel.Hull.RadiusAt(Meridian.OverallLength), 0.0, 1e-9);
-        Near("nose meets the body wall tangentially", vessel.Hull.RadiusAt(Meridian.NoseBase + 0.01), Meridian.BodyRadius, 1e-3);
-        Expect("centre of mass lies inside the hull", vessel.CentreOfMassZ > 0.0 && vessel.CentreOfMassZ < Meridian.OverallLength, $"centre {vessel.CentreOfMassZ:F3} m");
-        Expect("stage is slender", vessel.Inertia.X > vessel.Inertia.Z * 4.0, $"transverse {vessel.Inertia.X:F0}, axial {vessel.Inertia.Z:F0}");
+        Near("stack length", vessel.Length, Meridian.PayloadDatum + Aegis.Height, 1e-9);
+        Near("tank capacity", vessel.PropellantCapacity, meridian.Hull.TankVolume * Meridian.PropellantDensity, 1e-9);
+
+        Near("the stack closes to a point", vessel.RadiusAt(vessel.Tip), 0.0, 1e-9);
+        Near("the adapter carries the tank's diameter", vessel.RadiusAt(Meridian.AdapterBase + 0.05), Meridian.BodyRadius, 1e-6);
+        Near("the adapter closes over the shield", vessel.RadiusAt(Meridian.PayloadDatum + 0.05), Meridian.BodyRadius, 1e-6);
+
+        Expect("centre of mass lies inside the stack", vessel.CentreOfMassZ > 0.0 && vessel.CentreOfMassZ < vessel.Tip, $"centre {vessel.CentreOfMassZ:F3} m");
+        Expect("the stack is slender", vessel.Inertia.X > vessel.Inertia.Z * 4.0, $"transverse {vessel.Inertia.X:F0}, axial {vessel.Inertia.Z:F0}");
+
+        Near("dry mass is the two stages", vessel.DryMass, Meridian.DryMass + Aegis.DryMass, 1e-9);
+        Near("attitude authority is both clusters", vessel.ControlTorqueLimit, Meridian.ControlTorque + Aegis.ControlTorque, 1e-9);
 
         double loadedCentre = vessel.CentreOfMassZ;
 
@@ -386,7 +391,48 @@ public static class Program {
         vessel.RecomputeMassProperties();
 
         Expect("burning off propellant moves the centre of mass forward", vessel.CentreOfMassZ > loadedCentre, $"{loadedCentre:F3} m to {vessel.CentreOfMassZ:F3} m");
-        Near("empty stage inertia is the structure alone", vessel.Inertia.Z, vessel.Hull.Structure(Meridian.DryMass).Inertia.Z, 1e-6);
+
+        Near("an empty stage is its shell, its engine and its bottle", meridian.Mass, Meridian.DryMass + Meridian.RcsPropellantMass, 1e-9);
+        Near("the capsule carries no bulk propellant", capsule.PropellantMass, 0.0, 1e-12);
+
+    }
+
+    private static void AegisCapsule() {
+
+        Section("aegis capsule");
+
+        Hull hull = Aegis.BuildHull(0.0);
+
+        Near("the shield starts on the axis", hull.RadiusAt(0.0), 0.0, 1e-12);
+        Near("the capsule closes to a point", hull.RadiusAt(Aegis.Height), 0.0, 1e-9);
+
+        double widest = 0.0;
+        double last = double.NegativeInfinity;
+
+        bool rising = true;
+
+        foreach (Hull.Station station in hull.Stations) {
+
+            rising &= station.Z > last;
+            last = station.Z;
+
+            widest = Math.Max(widest, station.Radius);
+
+        }
+
+        Expect("stations run forward", rising, "a station fell back");
+        Near("the shoulder is the widest point", widest, Aegis.BaseRadius + 0.001, 0.03);
+
+        // Tangency, checked the way it shows: a crease is a step in the slope, so the slope either
+        // side of every join has to agree.
+        foreach (double join in new[] { Aegis.WallBase, Aegis.DomeSeat }) {
+
+            double before = (Aegis.RadiusAt(join) - Aegis.RadiusAt(join - 0.002)) / 0.002;
+            double after = (Aegis.RadiusAt(join + 0.002) - Aegis.RadiusAt(join)) / 0.002;
+
+            Near($"the profile has no crease at {join:F3} m", after, before, 0.02);
+
+        }
 
     }
 
@@ -441,20 +487,44 @@ public static class Program {
 
     private static Vessel Coaster(Vector3d position, Vector3d velocity) {
 
-        return new Vessel {
-
-            Name = "coaster",
+        Vessel vessel = new Vessel("coaster", new[] { Cylinder("coaster", 1000.0, 0.0, 0.0, 300.0) }) {
 
             Position = position,
             Velocity = velocity,
 
-            DryMass = 1000.0,
-            PropellantMass = 0.0,
+        };
 
-            ThrustNewtons = 0.0,
-            SpecificImpulse = 300.0,
+        vessel.Inertia = new Vector3d(1000.0, 1000.0, 400.0);
 
-            Inertia = new Vector3d(1000.0, 1000.0, 400.0),
+        return vessel;
+
+    }
+
+    /// <summary>A plain cylindrical stage, so a test can dial mass and thrust without authoring a
+    /// mould line for every case.</summary>
+    private static Stage Cylinder(string name, double dryMass, double propellant, double thrust, double impulse, double torque = 0.0) {
+
+        Hull hull = new Hull(new[] { new Hull.Station(0.0, 1.0), new Hull.Station(4.0, 1.0) }, 0.4, 3.6);
+
+        return new Stage {
+
+            Name = name,
+
+            Hull = hull,
+
+            ShellMass = dryMass,
+
+            PropellantMass = propellant,
+            PropellantCapacity = Math.Max(propellant, 1.0),
+
+            ThrustNewtons = thrust,
+            SpecificImpulse = impulse,
+
+            ControlTorque = torque,
+
+            RcsThrustNewtons = torque > 0.0 ? 1000.0 : 0.0,
+            RcsPropellantMass = torque > 0.0 ? 100.0 : 0.0,
+            RcsPropellantCapacity = torque > 0.0 ? 100.0 : 0.0,
 
         };
 
@@ -504,7 +574,7 @@ public static class Program {
 
         Section("attitude holds");
 
-        Vessel vessel = Meridian.Build();
+        Vessel vessel = Stack.Build();
 
         double radius = Home.Radius + 200000.0;
         double speed = Home.CircularVelocityAt(200000.0);
@@ -541,7 +611,7 @@ public static class Program {
         autopilot.Update(vessel, step);
 
         Expect("pilot input drops the hold", autopilot.Hold == AttitudeHold.Off, $"hold is {autopilot.Hold}");
-        Near("and commands full torque", vessel.ControlTorque.X, Meridian.ControlTorque, 1e-9);
+        Near("and commands full torque", vessel.ControlTorque.X, Meridian.ControlTorque + Aegis.ControlTorque, 1e-9);
 
         autopilot.ManualCommand = Vector3d.Zero;
 
@@ -641,7 +711,7 @@ public static class Program {
         Expect("a normal burn tilts the plane", tilted.Inclination > 0.1, $"inclination {tilted.Inclination:F4} rad");
         Near("and holds the speed", tilted.SpeedAt(radius), Math.Sqrt(circular * circular + 400.0 * 400.0), 1e-6);
 
-        Vessel vessel = Meridian.Build();
+        Vessel vessel = Stack.Build();
 
         double burn = new Maneuver { Prograde = 500.0 }.BurnSeconds(vessel);
 
@@ -656,7 +726,7 @@ public static class Program {
         Near("ignition is half a burn before the node", centred.IgnitionTime(vessel), 1000.0 - burn * 0.5, 1e-9);
 
         // Flying the impulse as a real burn should land close to the conic the node predicted.
-        Vessel flown = Meridian.Build();
+        Vessel flown = Stack.Build();
 
         (flown.Position, flown.Velocity) = orbit.StateAt(centred.IgnitionTime(flown));
 
@@ -685,7 +755,7 @@ public static class Program {
 
         Section("reaction control");
 
-        Vessel vessel = Meridian.Build();
+        Vessel vessel = Stack.Build();
 
         Near("the split rejoins the tank", vessel.FuelMass + vessel.OxidiserMass, vessel.PropellantMass, 1e-9);
         Near("oxidiser leads at the mixture ratio", vessel.OxidiserMass / vessel.FuelMass, vessel.MixtureRatio, 1e-12);
@@ -703,7 +773,7 @@ public static class Program {
         vessel.RcsEnabled = true;
         autopilot.Update(vessel, 1.0 / 60.0);
 
-        Near("an enabled cluster raises full torque", vessel.ControlTorque.X, Meridian.ControlTorque, 1e-9);
+        Near("an enabled cluster raises full torque", vessel.ControlTorque.X, Meridian.ControlTorque + Aegis.ControlTorque, 1e-9);
 
         double duty = vessel.RcsDuty;
         double before = vessel.RcsPropellantMass;
@@ -725,14 +795,18 @@ public static class Program {
         vessel.Orientation = QuaternionD.Identity;
 
         Close("translation pushes along the commanded body axis", vessel.RcsForce.Normalized, Vector3d.UnitZ, 1e-12);
-        Near("at a third of the cluster rating", vessel.RcsForce.Length, Meridian.RcsThrustNewtons / 3.0, 1e-9);
+        Near("at a third of the cluster rating", vessel.RcsForce.Length, (Meridian.RcsThrustNewtons + Aegis.RcsThrustNewtons) / 3.0, 1e-9);
 
-        vessel.RcsPropellantMass = 0.0;
+        foreach (Stage stage in vessel.Stages) {
+
+            stage.RcsPropellantMass = 0.0;
+
+        }
 
         Near("a dry cluster pushes nothing", vessel.RcsForce.Length, 0.0, 1e-12);
         Expect("and is not accelerating", !vessel.IsAccelerating, "reported acceleration");
 
-        Vessel drained = Meridian.Build();
+        Vessel drained = Stack.Build();
 
         drained.TranslationCommand = Vector3d.UnitZ;
 
@@ -747,6 +821,349 @@ public static class Program {
         }
 
         Expect("the bottle outlasts a long trim", seconds > 200.0, $"dry after {seconds:F0} s");
+
+    }
+
+    private static void AtmosphereColumn() {
+
+        Section("atmosphere column");
+
+        Atmosphere air = Home.Atmosphere;
+
+        Near("sea level density", air.DensityAt(0.0), 1.225, 1e-12);
+        Near("sea level temperature", air.TemperatureAt(0.0), 288.0, 1e-12);
+        Near("sea level pressure", air.PressureAt(0.0), 1.225 * 287.05 * 288.0, 1e-6);
+        Near("sea level speed of sound", air.SpeedOfSoundAt(0.0), 340.3, 0.5);
+
+        // The column is exponential in shape but shifted to meet zero at the top, so one scale
+        // height down from the datum is an e-fold to within the shift itself.
+        Near("one scale height is an e-fold", air.DensityAt(air.ScaleHeight) / air.DensityAt(0.0), 1.0 / Math.E, 1e-3);
+
+        Near("the air ends at the top", air.DensityAt(air.Top), 0.0, 0.0);
+        Near("and beyond it", air.DensityAt(air.Top * 2.0), 0.0, 0.0);
+
+        Expect("there is still air just under the top", air.DensityAt(air.Top - 1.0) > 0.0, "the column ended early");
+
+        double last = double.MaxValue;
+        bool falling = true;
+
+        for (double altitude = 0.0; altitude <= air.Top; altitude += 250.0) {
+
+            falling &= air.DensityAt(altitude) < last;
+
+            last = air.DensityAt(altitude);
+
+        }
+
+        Expect("density falls all the way up", falling, "the column rose somewhere");
+
+        Near("the tropopause holds its temperature", air.TemperatureAt(air.Top), air.TemperatureAt(air.TropopauseAltitude), 1e-12);
+
+        Near("air at the equator turns with the ground", Home.AirVelocityAt(new Vector3d(Home.Radius, 0.0, 0.0)).Length, Math.PI * 2.0 * Home.Radius / Home.RotationPeriodSeconds, 1e-9);
+        Near("and stands still over the pole", Home.AirVelocityAt(new Vector3d(0.0, 0.0, Home.Radius)).Length, 0.0, 1e-12);
+
+    }
+
+    private static void AeroGeometry() {
+
+        Section("aerodynamic geometry");
+
+        AeroProfile cylinder = AeroProfile.Build(0.0, 6.0, z => 2.0);
+
+        Near("cylinder reference area", cylinder.ReferenceArea, Math.PI * 4.0, 1e-9);
+        Near("cylinder planform area", cylinder.PlanformArea, 4.0 * 6.0, 1e-9);
+        Near("cylinder planform centre", cylinder.PlanformCentre, 3.0, 1e-9);
+        Near("cylinder volume", cylinder.Volume, Math.PI * 4.0 * 6.0, 1e-6);
+
+        // A cone's potential centre of pressure is two thirds of the way back from its point, which
+        // is the one number slender-body theory is always checked against.
+        AeroProfile cone = AeroProfile.Build(0.0, 3.0, z => (3.0 - z) / 3.0);
+
+        Near("cone potential centre", cone.PotentialCentre, 1.0, 1e-3);
+        Near("cone planform centre", cone.PlanformCentre, 1.0, 1e-3);
+
+        AeroProfile domed = AeroProfile.Build(0.0, 4.0, z => z < 1.0 ? Math.Sqrt(Math.Max(1.0 - (z - 1.0) * (z - 1.0), 0.0)) : 1.0);
+
+        Near("a spherical end reports its own radius", domed.BaseCurvature, 1.0, 0.02);
+        Expect("a flat end falls back to its own width", cylinder.BaseCurvature < 4.0, $"{cylinder.BaseCurvature:F3} m");
+
+        Near("a hemisphere leans fully with the flow", domed.BaseTilt, 1.0, 1e-6);
+        Expect("a flat face barely leans at all", cylinder.BaseTilt < 0.5, $"tilt {cylinder.BaseTilt:F3}");
+
+    }
+
+    private static void AeroForcesAndMoments() {
+
+        Section("aerodynamic forces and moments");
+
+        Vessel capsule = Capsule();
+
+        // Over the pole the air is not turning, so the air-relative speed is the speed and every
+        // figure below can be checked against a closed form.
+        double altitude = 30000.0;
+
+        Vector3d position = new Vector3d(0.0, 0.0, Home.Radius + altitude);
+        Vector3d velocity = new Vector3d(3000.0, 0.0, 0.0);
+
+        AeroForces trimmed = Trimmed(capsule, position, velocity);
+
+        double density = Home.Atmosphere.DensityAt(altitude);
+        double pressure = 0.5 * density * 3000.0 * 3000.0;
+
+        Near("dynamic pressure", trimmed.DynamicPressure, pressure, 1e-6);
+        Near("mach number", trimmed.Mach, 3000.0 / Home.Atmosphere.SpeedOfSoundAt(altitude), 1e-9);
+        Near("shield first is a straight reversal", trimmed.AngleOfAttack, Math.PI, 1e-9);
+
+        Near("drag on the trimmed capsule", trimmed.Force.Length, pressure * capsule.Profile.ReferenceArea * 1.62, 1.0);
+        Close("and it opposes the flow exactly", trimmed.Force.Normalized, -velocity.Normalized, 1e-9);
+        Near("a trimmed capsule is raising no moment", trimmed.Torque.Length, 0.0, 1e-6);
+
+        Near("stagnation heating follows Sutton and Graves", trimmed.HeatFlux, Aerodynamics.SuttonGraves * Math.Sqrt(density / capsule.Profile.BaseCurvature) * Math.Pow(3000.0, 3.0), 1e-6);
+
+        Near("drag goes as the square of speed", Trimmed(capsule, position, velocity * 2.0).Force.Length / trimmed.Force.Length, 4.0, 0.02);
+
+        Vector3d axis = Vector3d.UnitY;
+
+        Expect("shield first is restoring", Vector3d.Dot(Tilted(capsule, position, velocity, axis, 0.17, false), axis) < 0.0, "the moment ran with the upset");
+        Expect("dome first is not", Vector3d.Dot(Tilted(capsule, position, velocity, axis, 0.17, true), axis) > 0.0, "the moment held it nose on");
+
+        // Above the air there is nothing to fly through, however fast the vessel is going.
+        capsule.Position = new Vector3d(0.0, 0.0, Home.Radius + Home.AtmosphereTop + 1000.0);
+
+        Expect("vacuum raises no load at all", !Aerodynamics.Compute(capsule, Home).InAir, "reported air above the atmosphere");
+
+    }
+
+    /// <summary>The capsule on its own, which is what actually flies an entry.</summary>
+    private static Vessel Capsule() {
+
+        Vessel stack = Stack.Build();
+
+        stack.Separate();
+
+        return stack;
+
+    }
+
+    private static AeroForces Trimmed(Vessel vessel, Vector3d position, Vector3d velocity) {
+
+        vessel.Position = position;
+        vessel.Velocity = velocity;
+
+        vessel.AngularVelocity = Vector3d.Zero;
+        vessel.Orientation = QuaternionD.LookAlong(-velocity.Normalized, position);
+
+        return Aerodynamics.Compute(vessel, Home);
+
+    }
+
+    /// <summary>The moment raised when the capsule is knocked off its trim, in world axes.</summary>
+    private static Vector3d Tilted(Vessel vessel, Vector3d position, Vector3d velocity, Vector3d axis, double angle, bool reversed) {
+
+        Vector3d aim = reversed ? velocity.Normalized : -velocity.Normalized;
+
+        vessel.Position = position;
+        vessel.Velocity = velocity;
+
+        vessel.AngularVelocity = Vector3d.Zero;
+        vessel.Orientation = QuaternionD.LookAlong(QuaternionD.FromAxisAngle(axis, angle).Rotate(aim), position);
+
+        return vessel.Orientation.Rotate(Aerodynamics.Compute(vessel, Home).Torque);
+
+    }
+
+    private static void SkinHeating() {
+
+        Section("skin heating");
+
+        double flux = 100_000.0;
+
+        double settled = Thermal.Equilibrium(flux);
+
+        Near("equilibrium radiates what it takes in", Thermal.Emissivity * Thermal.StefanBoltzmann * Math.Pow(settled, 4.0), flux + Thermal.Emissivity * Thermal.StefanBoltzmann * Math.Pow(Thermal.AmbientTemperature, 4.0), 1e-6);
+
+        double temperature = Thermal.AmbientTemperature;
+
+        for (int step = 0; step < 60 * 400; step++) {
+
+            temperature = Thermal.Step(temperature, flux, 4200.0, 1.0 / 60.0);
+
+        }
+
+        Near("a soaked skin settles on it", temperature, settled, 1.0);
+        Expect("and never runs past it", temperature <= settled + 1e-9, $"{temperature:F3} K over {settled:F3} K");
+
+        // A step far longer than the skin's own time constant has to land on equilibrium rather
+        // than ring about it, or a single long step would throw the temperature to nonsense.
+        Near("one enormous step lands on it too", Thermal.Step(Thermal.AmbientTemperature, flux, 4200.0, 10_000.0), settled, 1e-9);
+
+        double cooling = Thermal.Step(1500.0, 0.0, 4200.0, 60.0);
+
+        Expect("a hot skin radiates itself cool in vacuum", cooling < 1400.0, $"{cooling:F0} K after a minute");
+        Expect("and never below the sky it is radiating into", cooling >= Thermal.AmbientTemperature, $"{cooling:F3} K");
+
+    }
+
+    private static void Staging() {
+
+        Section("staging");
+
+        Vessel stack = Stack.Build();
+
+        stack.Position = new Vector3d(1574200.0, 0.0, 0.0);
+        stack.Velocity = new Vector3d(0.0, 3181.0, 0.0);
+        stack.Orientation = QuaternionD.LookAlong(stack.Velocity, stack.Position);
+
+        stack.Throttle = 1.0;
+
+        double mass = stack.Mass;
+        int stages = stack.StageCount;
+
+        Vector3d momentum = stack.Velocity * mass;
+        Vector3d centre = stack.Position * mass;
+
+        Expect("a stack of two can separate", stack.CanSeparate, "reported it could not");
+
+        Vessel spent = stack.Separate();
+
+        Expect("separation hands back the stage that came off", spent != null && spent.Name == "Meridian", "nothing came off");
+        Expect("and it is debris", spent.IsDebris, "reported it was still crewed");
+        Expect("the stack is one stage shorter", stack.StageCount == stages - 1, $"{stack.StageCount} stages");
+        Expect("and the capsule is now the live stage", stack.Active.Name == "Aegis", stack.Active.Name);
+        Expect("a single stage cannot separate again", !stack.CanSeparate && stack.Separate() == null, "it came apart twice");
+
+        Near("mass is conserved", stack.Mass + spent.Mass, mass, 1e-9);
+        Close("momentum is conserved", stack.Velocity * stack.Mass + spent.Velocity * spent.Mass, momentum, 1e-6);
+        Close("and the pair's centre of mass has not moved", stack.Position * stack.Mass + spent.Position * spent.Mass, centre, 1e-6);
+
+        Near("the springs push them apart at the rated speed", (stack.Velocity - spent.Velocity).Length, 0.7, 1e-9);
+        Expect("the capsule leaves forward", Vector3d.Dot(stack.Velocity - spent.Velocity, stack.Nose) > 0.0, "it went backwards");
+
+        Near("the lever is cut with the bolts", stack.Throttle, 0.0, 1e-12);
+
+        Expect("the two are now apart in space", (stack.Position - spent.Position).Length > 3.0, $"{(stack.Position - spent.Position).Length:F2} m apart");
+
+        // Each piece carries its own everything: neither can reach into the other any more.
+        Near("the capsule keeps its own thrusters", stack.ControlTorqueLimit, Aegis.ControlTorque, 1e-9);
+        Near("and the spent stage keeps its own", spent.ControlTorqueLimit, Meridian.ControlTorque, 1e-9);
+
+        Near("the capsule's mass properties are its own", stack.CentreOfMassZ, stack.Forward.Properties.CentreZ, 1e-9);
+        Expect("and it has an aerodynamic profile of its own", stack.Profile.Length < 3.0, $"{stack.Profile.Length:F2} m");
+
+    }
+
+    private static void Reentry() {
+
+        Section("reentry");
+
+        Vessel capsule = Entering(true);
+        Vessel stage = Entering(false);
+
+        Fall(capsule, out double capsulePeak, out double capsuleG, out double capsuleSeconds);
+        Fall(stage, out double stagePeak, out _, out _);
+
+        Expect("the capsule reaches the ground", capsule.Fate == VesselFate.Impacted, $"fate {capsule.Fate}");
+        Expect("and takes a few minutes to do it", capsuleSeconds > 120.0 && capsuleSeconds < 2400.0, $"{capsuleSeconds:F0} s");
+
+        Expect("its shield survives the entry", capsulePeak < Aegis.HeatLimit, $"{capsulePeak:F0} K of {Aegis.HeatLimit:F0} K");
+        Expect("but it is hot enough to glow", capsulePeak > 800.0, $"peak {capsulePeak:F0} K");
+
+        Expect("the load is survivable", capsuleG < 8.0, $"{capsuleG:F1} g");
+        Expect("and is felt at all", capsuleG > 2.0, $"{capsuleG:F1} g");
+
+        Expect("a bare stage burns up instead", stagePeak > Meridian.HeatLimit, $"{stagePeak:F0} K of {Meridian.HeatLimit:F0} K");
+
+        Expect("the capsule ends up flying shield first", Math.Abs(capsule.Aero.AngleOfAttack - Math.PI) < 0.9, $"{capsule.Aero.AngleOfAttack * 180.0 / Math.PI:F0} degrees");
+
+        // A pass that grazes the air is a pass that costs energy, which is what makes a low orbit
+        // decay at all rather than lasting for ever.
+        Vessel grazing = Entering(true);
+
+        grazing.Position = new Vector3d(Home.Radius + 40000.0, 0.0, 0.0);
+        grazing.Velocity = new Vector3d(0.0, Home.CircularVelocityAt(40000.0), 0.0);
+        grazing.Orientation = QuaternionD.LookAlong(-grazing.Velocity.Normalized, grazing.Position);
+
+        double before = grazing.OrbitAround(Home, 0.0).SemiMajorAxis;
+
+        for (int step = 0; step < 60 * 60; step++) {
+
+            Integrator.Step(grazing, Home, 1.0 / 60.0);
+
+        }
+
+        double after = grazing.OrbitAround(Home, 0.0).SemiMajorAxis;
+
+        Expect("skimming the atmosphere pulls the orbit down", after < before - 100.0, $"{before:F0} m to {after:F0} m");
+
+    }
+
+    /// <summary>A vehicle on a transfer from three hundred kilometres down to twenty, released
+    /// pointing the way it would actually be let go.</summary>
+    private static Vessel Entering(bool capsule) {
+
+        Vessel stack = Stack.Build();
+
+        double apoapsis = Home.Radius + 300000.0;
+        double periapsis = Home.Radius + 20000.0;
+
+        double axis = (apoapsis + periapsis) * 0.5;
+
+        stack.Position = new Vector3d(apoapsis, 0.0, 0.0);
+        stack.Velocity = new Vector3d(0.0, Math.Sqrt(Home.Mu * (2.0 / apoapsis - 1.0 / axis)), 0.0);
+
+        Vessel spent = stack.Separate();
+
+        Vessel flying = capsule ? stack : spent;
+
+        flying.Orientation = QuaternionD.LookAlong(-flying.Velocity.Normalized, flying.Position);
+        flying.RcsEnabled = false;
+
+        return flying;
+
+    }
+
+    /// <summary>Coasts the vessel down to the air on its conic, then flies the entry.</summary>
+    private static void Fall(Vessel vessel, out double peakTemperature, out double peakLoad, out double seconds) {
+
+        double step = 1.0 / 60.0;
+
+        peakTemperature = 0.0;
+        peakLoad = 0.0;
+        seconds = 0.0;
+
+        double time = 0.0;
+
+        while (time < 6000.0) {
+
+            double altitude = Home.AltitudeOf(vessel.Position);
+
+            if (altitude <= 0.0) {
+
+                vessel.Fate = VesselFate.Impacted;
+
+                return;
+
+            }
+
+            if (altitude > Home.AtmosphereTop) {
+
+                (vessel.Position, vessel.Velocity) = vessel.OrbitAround(Home, time).StateAt(time + 5.0);
+
+                time += 5.0;
+
+                continue;
+
+            }
+
+            Integrator.Step(vessel, Home, step);
+
+            time += step;
+            seconds += step;
+
+            peakTemperature = Math.Max(peakTemperature, vessel.SkinTemperature);
+            peakLoad = Math.Max(peakLoad, vessel.Aero.Force.Length / vessel.Mass / Home.SurfaceGravity);
+
+        }
 
     }
 

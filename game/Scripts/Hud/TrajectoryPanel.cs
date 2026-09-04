@@ -34,7 +34,17 @@ public sealed partial class TrajectoryPanel : Control {
     // What the window covers when the orbit has no period to size it from.
     private const double OpenWindow = 2400.0;
 
+    // The shortest a window is ever sized to. On the last seconds of a descent the graph would
+    // otherwise be redrawn to a span too short to read anything off.
+    private const double Shortest = 20.0;
+
     public static readonly Vector2 Extent = new Vector2(PanelWidth, PanelHeight + ChipStrip);
+
+    /// <summary>Where the panel actually ends. The chip strip under the box is reserved space, not
+    /// drawn space, so a panel below this one sits under the box until there is a chip to clear.</summary>
+    public float Foot => PanelHeight + (Chipped ? ChipStrip : 0.0f);
+
+    private bool Chipped => _flight != null && (_flight.WarpStep > 0 || (_flight.Node != null && !_flight.Node.IsEmpty));
 
     private readonly Vector2[] _curve = new Vector2[Samples + 1];
 
@@ -91,7 +101,22 @@ public sealed partial class TrajectoryPanel : Control {
 
         double radius = _flight.Body.Radius;
 
+        // A conic that ends in the ground ends the graph with it. Run out to the full period
+        // instead and the whole descent is a spike in the corner of a box of flat ground.
         double window = orbit.IsClosed ? orbit.Period : OpenWindow;
+
+        if (MapPath.Crossing(orbit, radius, out double fall)) {
+
+            double ahead = orbit.TimeToTrueAnomaly(_flight.Time, fall);
+
+            if (!double.IsNaN(ahead)) {
+
+                window = Math.Min(window, Math.Max(ahead, Shortest) / (1.0 - Behind));
+
+            }
+
+        }
+
         double start = _flight.Time - window * Behind;
 
         _now = (int)Math.Round(Samples * Behind);
@@ -132,6 +157,7 @@ public sealed partial class TrajectoryPanel : Control {
 
         DrawLine(new Vector2(ReadoutWidth + 0.5f, Border), new Vector2(ReadoutWidth + 0.5f, PanelHeight - Border), HudTheme.Edge, 1.0f);
 
+        DrawAir();
         DrawCurve();
         DrawChips();
 
@@ -146,6 +172,26 @@ public sealed partial class TrajectoryPanel : Control {
         counter.Dress(font, size, colour, HorizontalAlignment.Center);
 
         return counter;
+
+    }
+
+    /// <summary>The air, as the band of the graph it actually occupies. A trace that dips into it
+    /// is a trace that is about to stop being a conic, and that is worth seeing before it happens.</summary>
+    private void DrawAir() {
+
+        double top = _flight.Body.AtmosphereTop;
+
+        if (top <= 0.0 || top >= _high) {
+
+            return;
+
+        }
+
+        float y = Height(top);
+
+        DrawRect(new Rect2(_graph.Position.X, y, _graph.Size.X, _graph.End.Y - y), HudTheme.Well);
+
+        DrawLine(new Vector2(_graph.Position.X, y), new Vector2(_graph.End.X, y), HudTheme.Edge, 1.0f);
 
     }
 

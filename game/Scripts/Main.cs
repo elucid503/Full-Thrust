@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 using FullThrust.Sim;
 
 using Godot;
@@ -28,6 +30,8 @@ public sealed partial class Main : Node3D {
     private DirectionalLight3D _earthshine;
     private ReflectionProbe _earthlight;
     private WorldEnvironment _environment;
+
+    private readonly Dictionary<Vessel, VesselView> _debris = new Dictionary<Vessel, VesselView>();
 
     public override void _Ready() {
 
@@ -76,6 +80,9 @@ public sealed partial class Main : Node3D {
         _vessel.Build(_flight.Vessel);
         _hud.Build(_flight);
 
+        _flight.Staged += Release;
+        _flight.Scrubbed += Scrub;
+
         Vector3 nadir = -Frames.Direction(_flight.Vessel.Position.Normalized);
         Vector3 prograde = Frames.Direction(_flight.Vessel.Velocity.Normalized);
 
@@ -88,6 +95,36 @@ public sealed partial class Main : Node3D {
     public override void _Process(double delta) {
 
         Step(delta);
+
+    }
+
+    /// <summary>A stage that has just come away takes its own geometry with it, so what flies off is
+    /// exactly what was bolted on.</summary>
+    private void Release(Vessel debris) {
+
+        VesselView view = _vessel.Hand(debris);
+
+        if (view == null) {
+
+            return;
+
+        }
+
+        AddChild(view);
+
+        _debris[debris] = view;
+
+    }
+
+    private void Scrub(Vessel debris) {
+
+        if (!_debris.Remove(debris, out VesselView view)) {
+
+            return;
+
+        }
+
+        view.QueueFree();
 
     }
 
@@ -106,7 +143,11 @@ public sealed partial class Main : Node3D {
 
         Vector3 focus = Frames.Point(_flight.Vessel.Position);
 
-        _vessel.Sync(focus, Frames.Rotation(_flight.Vessel.Orientation), _flight.Vessel.ThrustSetting);
+        _vessel.Visible = _flight.Vessel.Intact;
+
+        _vessel.Sync(focus, Frames.Rotation(_flight.Vessel.Orientation));
+
+        SyncDebris(focus);
 
         _earthlight.Position = focus;
 
@@ -115,6 +156,28 @@ public sealed partial class Main : Node3D {
         _map.Sync(delta);
 
         _hud.Sync();
+
+    }
+
+    // A spent stage far enough out is a dot the floating origin can no longer hold steady, so it is
+    // left to the map rather than drawn as a jittering speck.
+    private void SyncDebris(Vector3 focus) {
+
+        foreach (KeyValuePair<Vessel, VesselView> entry in _debris) {
+
+            Vector3 at = Frames.Point(entry.Key.Position);
+
+            bool near = at.DistanceSquaredTo(focus) < Flight.DebrisRange * Flight.DebrisRange;
+
+            entry.Value.Visible = near;
+
+            if (near) {
+
+                entry.Value.Sync(at, Frames.Rotation(entry.Key.Orientation));
+
+            }
+
+        }
 
     }
 

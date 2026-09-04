@@ -35,7 +35,7 @@ public sealed partial class MapPath : Control {
     // proposal rather than as a second orbit the vessel is somehow already on.
     private const int Dash = 3;
 
-    public enum Kind { Apoapsis, Periapsis, Ascending, Descending, Impact, Vessel }
+    public enum Kind { Apoapsis, Periapsis, Ascending, Descending, Entry, Impact, Vessel }
 
     /// <summary>A named point on a conic. Instances live as long as the map does, so a popover keyed
     /// on one stays keyed on it while its figures go on changing underneath.</summary>
@@ -61,6 +61,7 @@ public sealed partial class MapPath : Control {
         new Mark { Kind = Kind.Periapsis },
         new Mark { Kind = Kind.Ascending },
         new Mark { Kind = Kind.Descending },
+        new Mark { Kind = Kind.Entry },
         new Mark { Kind = Kind.Impact },
         new Mark { Kind = Kind.Vessel },
 
@@ -161,6 +162,8 @@ public sealed partial class MapPath : Control {
 
         }
 
+        Traffic();
+
         Update(orbit);
 
         foreach (Mark mark in _marks) {
@@ -176,6 +179,30 @@ public sealed partial class MapPath : Control {
     // A conic that ends in the ground is the one thing on the map that is not a matter of taste,
     // so it is the one thing on the map allowed a hue.
     private Color Ink(Orbit orbit) => orbit.PeriapsisRadius < _flight.Body.Radius ? HudTheme.Caution : HudTheme.Ink;
+
+    /// <summary>Everything else still up there. A spent stage is a body with a conic of its own, so
+    /// it gets one - drawn thin, unlabelled and unpickable, because the plan is not about it.</summary>
+    private void Traffic() {
+
+        foreach (Flight.Tracked tracked in _flight.Debris) {
+
+            Span(tracked.Rails, out double start, out double span);
+
+            Trace(tracked.Rails, start, span, 1.0, HudTheme.Dim * Alpha(0.34f), false, false);
+
+            Vector3 world = Frames.Point(tracked.Vessel.Position);
+
+            if (_map.Camera.IsPositionBehind(world)) {
+
+                continue;
+
+            }
+
+            DrawCircle(_map.Camera.UnprojectPosition(world), 2.0f, HudTheme.Dim * Alpha(Behind(world) ? 0.4f : 0.85f));
+
+        }
+
+    }
 
     private void Span(Orbit orbit, out double start, out double span) {
 
@@ -221,9 +248,13 @@ public sealed partial class MapPath : Control {
 
             Vector3 world = Frames.Point(orbit.PositionAtTrueAnomaly(anomaly));
 
+            // A conic carries on under the ground, and the stretch of it that does is not a path
+            // anything flies: drawn, it runs to the centre of the planet. It is cut, not faded.
+            bool flown = orbit.RadiusAtTrueAnomaly(anomaly) >= _flight.Body.Radius;
+
             // Unprojecting a point at or behind the camera plane is a divide by zero in Godot, so
             // the frustum test comes first and the projection only happens for points that pass it.
-            bool front = !_map.Camera.IsPositionBehind(world);
+            bool front = flown && !_map.Camera.IsPositionBehind(world);
 
             Vector2 screen = front ? _map.Camera.UnprojectPosition(world) : Vector2.Zero;
 
@@ -305,7 +336,7 @@ public sealed partial class MapPath : Control {
 
         Pip(planned, 0.0, Kind.Periapsis, ink);
 
-        if (Impact(planned, _flight.Body.Radius, out double anomaly)) {
+        if (Crossing(planned, _flight.Body.Radius, out double anomaly)) {
 
             Pip(planned, anomaly, Kind.Impact, HudTheme.Caution * Alpha(0.75f));
 
@@ -340,7 +371,13 @@ public sealed partial class MapPath : Control {
         Seat(Kind.Ascending, orbit, orbit.AscendingNodeTrueAnomaly, orbit.Inclination > Equatorial);
         Seat(Kind.Descending, orbit, orbit.DescendingNodeTrueAnomaly, orbit.Inclination > Equatorial);
 
-        bool falls = Impact(orbit, radius, out double fall);
+        // Suppressed once the vessel is already in the air: the next crossing is then a pass it
+        // is very unlikely to live to make, and marking it says the opposite.
+        bool entering = Crossing(orbit, radius + _flight.Body.AtmosphereTop, out double entry) && !_flight.InAtmosphere;
+
+        Seat(Kind.Entry, orbit, entry, entering);
+
+        bool falls = Crossing(orbit, radius, out double fall);
 
         Seat(Kind.Impact, orbit, fall, falls);
 
@@ -380,8 +417,9 @@ public sealed partial class MapPath : Control {
 
         // An apsis and a crossing are points on the conic, not places on the planet. One the body is
         // standing in front of puts a label over a hemisphere the vessel is nowhere near, so it goes
-        // rather than dimming. The vessel and an impact stay: those two must never be lost track of.
-        if (mark.Hidden && kind != Kind.Vessel && kind != Kind.Impact) {
+        // rather than dimming. The vessel, the entry and an impact stay: a pilot must never lose
+        // track of where the vehicle is or of where it stops being able to choose.
+        if (mark.Hidden && kind != Kind.Vessel && kind != Kind.Impact && kind != Kind.Entry) {
 
             mark.Live = false;
 
@@ -439,6 +477,8 @@ public sealed partial class MapPath : Control {
             Kind.Ascending => "AN",
             Kind.Descending => "DN",
 
+            Kind.Entry => $"ENTRY {Hud.Clock(mark.Seconds)}",
+
             Kind.Impact => $"IMPACT {Hud.Clock(mark.Seconds)}",
 
             _ => string.Empty,
@@ -474,6 +514,14 @@ public sealed partial class MapPath : Control {
             case Kind.Descending:
 
                 Triangle(at, 1.0f, ink);
+
+                break;
+
+            case Kind.Entry:
+
+                // A threshold, drawn as one: the conic crosses a line rather than arriving anywhere.
+                DrawLine(at + new Vector2(-Glyph * 1.3f, 0.0f), at + new Vector2(Glyph * 1.3f, 0.0f), ink, 2.0f, true);
+                DrawLine(at + new Vector2(0.0f, 0.0f), at + new Vector2(0.0f, Glyph), ink, 1.4f, true);
 
                 break;
 
@@ -696,8 +744,9 @@ public sealed partial class MapPath : Control {
 
     }
 
-    /// <summary>Where the conic meets the ground on its way down, if it does.</summary>
-    public static bool Impact(Orbit orbit, double radius, out double anomaly) {
+    /// <summary>Where the conic falls through a given radius on its way down, if it does. The
+    /// ground and the top of the air are the same question asked of two different radii.</summary>
+    public static bool Crossing(Orbit orbit, double radius, out double anomaly) {
 
         anomaly = 0.0;
 

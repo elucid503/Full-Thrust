@@ -88,7 +88,15 @@ public sealed partial class EnginePanel : Control {
 
     public void Sync() {
 
-        QueueRedraw();
+        // A stage with no engines under it has no cluster to draw, and an empty box is not a
+        // reading. The panel is up only while there is something on it.
+        Visible = _vessel.EngineCount > 0;
+
+        if (Visible) {
+
+            QueueRedraw();
+
+        }
 
     }
 

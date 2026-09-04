@@ -51,7 +51,14 @@ public sealed partial class PropellantGauge : Control {
 
     public void Sync() {
 
-        QueueRedraw();
+        // A stage with no bulk tank has no gauge; the bars go rather than standing empty.
+        Visible = _vessel.PropellantCapacity > 0.0;
+
+        if (Visible) {
+
+            QueueRedraw();
+
+        }
 
     }
 

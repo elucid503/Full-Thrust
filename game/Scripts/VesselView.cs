@@ -7,7 +7,9 @@ using Godot;
 
 namespace FullThrust.Game;
 
-/// <summary>The flight vehicle: a lathed hull off its own mould line, the engine, and the plume.</summary>
+/// <summary>A flying body, drawn a stage at a time. Every stage is lathed off its own mould line
+/// and hung in the stack's own coordinates, so when one comes off its geometry is handed to a view
+/// of its own without a single vertex being rebuilt.</summary>
 public sealed partial class VesselView : Node3D {
 
     private const int RadialSegments = 96;
@@ -23,25 +25,23 @@ public sealed partial class VesselView : Node3D {
     // Conical thrust structure: it carries the engine and is also what closes the tail, so nothing
     // behind it is ever drawn.
     private const float MountRadius = 0.40f;
-    private const float MountDeck = 0.42f;
 
-    // The engine hangs below the mount deck with its powerhead just inside the skirt.
-    private const float EngineDeck = (float)Meridian.EngineDeck;
-    private const float EngineLength = (float)Meridian.EngineLength;
+    // Clearance between the deck the engine hangs off and the top of the engine itself.
+    private const float DeckClearance = 0.06f;
 
-    // Flush RCS: the ports are holes cut clean through the tank wall, and the only hardware that
-    // shows is the pair of nozzles recessed at the bottom of each one.
-    private const int RcsPorts = Meridian.RcsPorts;
+    // How far a bulkhead sits inside an open end that has no engine behind it to place one.
+    private const float BulkheadInset = 0.30f;
+
     private const int RcsHalfSteps = 3;
-    private const float RcsHeight = (float)Meridian.RcsHeight;
-    private const float RcsHalfHeight = (float)Meridian.RcsHalfHeight;
-    private const float RcsDepth = 0.26f;
     private const float RcsCant = 0.50f;
 
     // A canted bell reaches further up the pocket than its own length, and further in than its own
     // depth: the pocket is cut to clear both, and the pair sits close enough that neither mouth
     // cuts back out through the sill or the lintel.
     private const float RcsOffset = 0.085f;
+
+    // The port radius the nozzle mesh below is drawn at; anything else scales off it.
+    private const float NozzleGauge = 0.18f;
 
     // Where the mounting plate and the bell mouth sit on the nozzle's own axis. The plate lands flat
     // on the pocket floor; standing the nozzle on its throat instead buries half of it in the plate.
@@ -56,93 +56,322 @@ public sealed partial class VesselView : Node3D {
     private const int PlumeSegments = 72;
     private const int PlumeLightRing = 4;
 
+    private const int SheathStations = 48;
+    private const int SheathShells = 10;
+    private const int SheathSegments = 48;
+
+    // The shock stands off the nose by a fraction of the body's width, and the wake runs back
+    // several times it. Both are in units of the body radius the mesh is built at.
+    private const float SheathStandoff = 0.40f;
+    private const float SheathWake = 8.0f;
+    private const float SheathFlare = 1.25f;
+
+    // Where the skin starts to glow and where it is running white. Between them the emission and
+    // its colour both ramp, which is the whole of the heat readout the eye gets.
+    private const float GlowFloor = 700.0f;
+    private const float GlowCeiling = 1700.0f;
+
     public static VesselView Active { get; private set; }
+
+    /// <summary>One stage's geometry, and the handful of things about it that have to be driven
+    /// every frame. It travels intact from the stack's view to a view of its own.</summary>
+    private sealed class Piece {
+
+        public Stage Stage { get; init; }
+        public Node3D Node { get; init; }
+
+        public MeshInstance3D Plume { get; set; }
+        public ShaderMaterial PlumeMaterial { get; set; }
+
+        public readonly List<OmniLight3D> Lights = new List<OmniLight3D>();
+        public readonly List<StandardMaterial3D> Skins = new List<StandardMaterial3D>();
+
+    }
+
+    private readonly List<Piece> _pieces = new List<Piece>();
+
+    private Vessel _vessel;
 
     private Node3D _body;
 
-    private MeshInstance3D _plume;
-    private ShaderMaterial _plumeMaterial;
-    private readonly List<OmniLight3D> _plumeLights = new List<OmniLight3D>();
-
-    private float _bellRadius;
-    private float _bellPlane;
+    private MeshInstance3D _sheath;
+    private ShaderMaterial _sheathMaterial;
 
     private float _thrust;
+    private float _sheathHeat;
 
-    public void Build(Vessel vessel) {
+    public Vessel Vessel => _vessel;
 
-        Active = this;
+    /// <summary>Builds the whole stack. The primary view is the one the debug bridge tunes.</summary>
+    public void Build(Vessel vessel, bool primary = true) {
+
+        if (primary) {
+
+            Active = this;
+
+        }
+
+        _vessel = vessel;
 
         _body = new Node3D { Name = "Body" };
 
         AddChild(_body);
 
-        float datum = (float)vessel.CentreOfMassZ;
+        foreach (Stage stage in vessel.Stages) {
 
-        _body.AddChild(new MeshInstance3D {
+            Piece piece = BuildStage(stage);
 
-            Name = "Hull",
-            Mesh = BuildHullMesh(vessel.Hull, datum),
+            _body.AddChild(piece.Node);
 
-            CastShadow = GeometryInstance3D.ShadowCastingSetting.On,
+            _pieces.Add(piece);
 
-        });
+        }
 
-        AttachThrusters(datum);
-        AttachEngine(datum);
-        AttachPlume();
+        AttachSheath();
 
     }
 
-    public void Sync(Vector3 point, Quaternion orientation, double thrust) {
+    /// <summary>Hands one stage's geometry over to a view of its own, for the body that has just
+    /// separated. Nothing is rebuilt, so the piece that flies away is the piece that was there.</summary>
+    public VesselView Hand(Vessel debris) {
+
+        Piece piece = Find(debris.Active);
+
+        if (piece == null) {
+
+            return null;
+
+        }
+
+        _pieces.Remove(piece);
+
+        _body.RemoveChild(piece.Node);
+
+        VesselView view = new VesselView { Name = debris.Name };
+
+        view.Take(debris, piece);
+
+        return view;
+
+    }
+
+    private void Take(Vessel vessel, Piece piece) {
+
+        _vessel = vessel;
+
+        _body = new Node3D { Name = "Body" };
+
+        AddChild(_body);
+
+        _body.AddChild(piece.Node);
+
+        _pieces.Add(piece);
+
+        AttachSheath();
+
+    }
+
+    private Piece Find(Stage stage) {
+
+        foreach (Piece piece in _pieces) {
+
+            if (piece.Stage == stage) {
+
+                return piece;
+
+            }
+
+        }
+
+        return null;
+
+    }
+
+    public void Sync(Vector3 point, Quaternion orientation) {
 
         Position = point;
         Basis = new Basis(orientation);
 
-        _thrust = Mathf.Lerp(_thrust, (float)thrust, 0.35f);
+        // The mesh is built on the stack's own datum, so the offset that puts the centre of mass at
+        // the origin is a figure that changes as the tank empties rather than one baked in at build.
+        _body.Position = new Vector3(0.0f, -(float)_vessel.CentreOfMassZ, 0.0f);
+
+        SyncPlume();
+        SyncHeat();
+        SyncSheath();
+
+    }
+
+    private void SyncPlume() {
+
+        _thrust = Mathf.Lerp(_thrust, (float)_vessel.ThrustSetting, 0.35f);
 
         bool lit = _thrust > 0.002f;
 
-        _plume.Visible = lit;
+        foreach (Piece piece in _pieces) {
 
-        foreach (OmniLight3D light in _plumeLights) {
+            if (piece.Plume == null) {
 
-            light.Visible = lit;
+                continue;
+
+            }
+
+            bool burning = lit && piece.Stage == _vessel.Active;
+
+            piece.Plume.Visible = burning;
+
+            foreach (OmniLight3D light in piece.Lights) {
+
+                light.Visible = burning;
+
+            }
+
+            if (!burning) {
+
+                continue;
+
+            }
+
+            piece.PlumeMaterial.SetShaderParameter("throttle", _thrust);
+
+            // A throttled engine runs a shorter, narrower plume rather than a dimmer one of the same size.
+            piece.Plume.Scale = new Vector3(0.55f + 0.45f * _thrust, 0.35f + 0.65f * _thrust, 0.55f + 0.45f * _thrust);
+
+            foreach (OmniLight3D light in piece.Lights) {
+
+                light.LightEnergy = light.OmniRange * 0.13f * _thrust;
+
+            }
 
         }
 
-        if (!lit) {
+    }
+
+    // Only the stage taking the flow gets hot, and only its skin lights up. A stack's upper stage
+    // is in the wake of the one below it and stays the colour it was painted.
+    private void SyncHeat() {
+
+        Stage leading = _vessel.Leading;
+
+        float temperature = (float)_vessel.SkinTemperature;
+
+        float glow = Mathf.Clamp((temperature - GlowFloor) / (GlowCeiling - GlowFloor), 0.0f, 1.0f);
+
+        // Emission climbs faster than the temperature does, the way a hot surface actually brightens.
+        float energy = glow * glow * 7.0f;
+
+        Color ink = new Color(0.75f, 0.12f, 0.02f).Lerp(new Color(1.0f, 0.72f, 0.42f), glow);
+
+        foreach (Piece piece in _pieces) {
+
+            bool hot = piece.Stage == leading && energy > 0.001f;
+
+            foreach (StandardMaterial3D skin in piece.Skins) {
+
+                skin.EmissionEnabled = hot;
+
+                if (hot) {
+
+                    skin.Emission = ink;
+                    skin.EmissionEnergyMultiplier = energy;
+
+                }
+
+            }
+
+        }
+
+    }
+
+    private void SyncSheath() {
+
+        AeroForces air = _vessel.Aero;
+
+        // The sheath follows the heat rather than the air: it is the shock that is glowing, and a
+        // vehicle low and slow is deep in air with nothing to show for it.
+        float wanted = air.InAir ? Mathf.Clamp((float)(air.HeatFlux / 150_000.0), 0.0f, 1.3f) : 0.0f;
+
+        _sheathHeat = Mathf.Lerp(_sheathHeat, wanted, 0.12f);
+
+        bool burning = _sheathHeat > 0.01f;
+
+        _sheath.Visible = burning;
+
+        if (!burning) {
 
             return;
 
         }
 
-        _plumeMaterial.SetShaderParameter("throttle", _thrust);
+        Vector3d relative = _vessel.Velocity - Flight.Active.Body.AirVelocityAt(_vessel.Position);
 
-        // A throttled engine runs a shorter, narrower plume rather than a dimmer one of the same size.
-        _plume.Scale = new Vector3(0.55f + 0.45f * _thrust, 0.35f + 0.65f * _thrust, 0.55f + 0.45f * _thrust);
+        Vector3 flow = Frames.Direction(_vessel.Orientation.Conjugate.Rotate(relative).Normalized);
 
-        foreach (OmniLight3D light in _plumeLights) {
+        if (flow.LengthSquared() <= 0.0f) {
 
-            light.LightEnergy = light.OmniRange * 0.13f * _thrust;
+            return;
 
         }
 
+        // How far the leading end stands ahead of the centre of mass, which is where the shock has
+        // to sit. Along the axis it is exact, and off it the vehicle is a body of revolution anyway.
+        AeroProfile profile = _vessel.Profile;
+
+        float lead = (float)(air.AngleOfAttack > Math.PI * 0.5
+            ? _vessel.CentreOfMassZ - profile.Base
+            : profile.Tip - _vessel.CentreOfMassZ);
+
+        Vector3 side = flow.Cross(Mathf.Abs(flow.Y) > 0.95f ? Vector3.Right : Vector3.Up).Normalized();
+
+        _sheath.Basis = new Basis(side, flow, side.Cross(flow).Normalized()).Scaled(Vector3.One * (float)profile.MaxRadius * 1.04f);
+        _sheath.Position = flow * lead;
+
+        _sheathMaterial.SetShaderParameter("intensity", Mathf.Min(_sheathHeat, 1.0f));
+        _sheathMaterial.SetShaderParameter("heat", Mathf.Clamp(_sheathHeat * 0.8f, 0.0f, 1.0f));
+
     }
 
-    /// <summary>Live plume tuning from the debug bridge; scalars, or comma-separated colours.</summary>
+    /// <summary>Live shader tuning from the debug bridge; scalars, or comma-separated colours.</summary>
     public bool Tune(string parameter, string value) {
+
+        return Tune(_sheathMaterial, parameter, value) | Tune(PlumeMaterial(), parameter, value);
+
+    }
+
+    private ShaderMaterial PlumeMaterial() {
+
+        foreach (Piece piece in _pieces) {
+
+            if (piece.PlumeMaterial != null) {
+
+                return piece.PlumeMaterial;
+
+            }
+
+        }
+
+        return null;
+
+    }
+
+    private static bool Tune(ShaderMaterial material, string parameter, string value) {
+
+        if (material == null) {
+
+            return false;
+
+        }
 
         string[] parts = value.Split(',');
 
         if (parts.Length == 3) {
 
-            _plumeMaterial.SetShaderParameter(parameter, new Color(parts[0].ToFloat(), parts[1].ToFloat(), parts[2].ToFloat()));
+            material.SetShaderParameter(parameter, new Color(parts[0].ToFloat(), parts[1].ToFloat(), parts[2].ToFloat()));
 
         }
         else {
 
-            _plumeMaterial.SetShaderParameter(parameter, value.ToFloat());
+            material.SetShaderParameter(parameter, value.ToFloat());
 
         }
 
@@ -150,30 +379,191 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    private static float TileMetres => Mathf.Tau * (float)Meridian.BodyRadius / TilesAround;
-
-    private static float PortLow => RcsHeight - RcsHalfHeight;
-    private static float PortHigh => RcsHeight + RcsHalfHeight;
+    private static float TileMetres(Stage stage) => Mathf.Tau * (float)stage.Hull.MaxRadius / TilesAround;
 
     // Ports sit between the quadrant axes so none of them ever fires straight along a control axis
     // on its own; the window is a whole number of segments wide, so its edges land on the grid.
-    private static int PortCentre(int index) => RadialSegments / (RcsPorts * 2) + RadialSegments / RcsPorts * index;
+    private static int PortCentre(int count, int index) => RadialSegments / (count * 2) + RadialSegments / count * index;
 
-    private static bool InsidePort(int step, float low, float high) {
+    private Piece BuildStage(Stage stage) {
 
-        if (high <= PortLow || low >= PortHigh) {
+        Node3D node = new Node3D { Name = stage.Name };
 
-            return false;
+        Piece piece = new Piece { Stage = stage, Node = node };
+
+        // A stage with a model of its own is not lathed: the model is its outside, and the
+        // hardware on it came with it rather than being bolted on afterwards.
+        if (stage.Model != null) {
+
+            Clad(node, piece, stage);
+
+        }
+        else {
+
+            node.AddChild(new MeshInstance3D {
+
+                Name = "Hull",
+                Mesh = BuildHullMesh(stage, piece),
+
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.On,
+
+            });
+
+            foreach (Part part in stage.Parts) {
+
+                if (part.Kind == PartKind.Thruster) {
+
+                    AttachThrusters(node, stage, part);
+
+                }
+
+            }
 
         }
 
-        for (int index = 0; index < RcsPorts; index++) {
+        foreach (Part part in stage.Parts) {
 
-            int offset = step - PortCentre(index);
+            if (part.Kind == PartKind.Engine) {
 
-            if (offset >= -RcsHalfSteps && offset < RcsHalfSteps) {
+                AttachEngine(node, piece, part);
 
-                return true;
+            }
+
+        }
+
+        return piece;
+
+    }
+
+    /// <summary>Seats an imported model on the run its stage occupies and paints it. An import's
+    /// own materials are whatever its author last had in a viewport, so none of them are kept: the
+    /// shield and the backshell arrive as two surfaces and both are restated here.</summary>
+    private static void Clad(Node3D node, Piece piece, Stage stage) {
+
+        Node3D model = Fit(stage.Model, stage.Hull.Base, stage.Hull.Length);
+
+        if (model == null) {
+
+            return;
+
+        }
+
+        StandardMaterial3D[] coats = {
+
+            // A cured ablator: brown-grey and matte. Dark enough to read as a shield against the
+            // backshell, light enough that the whole base is not a hole in the picture - a
+            // near-black surface under one sun and a star sky renders as a silhouette.
+            Paint(new Color(0.285f, 0.245f, 0.212f), 0.0f, 0.88f),
+
+            // The backshell is thermal panel over structure: brighter than the shield and cooler
+            // than the tank's paint, so the capsule reads as its own vehicle either side of the
+            // joint. Kept low-metallic for the same reason the tank is.
+            Paint(new Color(0.74f, 0.755f, 0.78f), 0.14f, 0.42f),
+
+        };
+
+        // Ordered by where each surface actually sits on the model rather than by its index or its
+        // name: an importer is free to reorder primitives, to split them across nodes - and then
+        // every one of them is surface zero - and to drop the names they arrived with.
+        List<(MeshInstance3D Mesh, int Index, float Height)> surfaces = new List<(MeshInstance3D, int, float)>();
+
+        foreach (MeshInstance3D instance in Meshes(model)) {
+
+            instance.CastShadow = GeometryInstance3D.ShadowCastingSetting.On;
+
+            for (int index = 0; index < instance.Mesh.GetSurfaceCount(); index++) {
+
+                surfaces.Add((instance, index, Seat(instance.Mesh, index)));
+
+            }
+
+        }
+
+        surfaces.Sort((left, right) => left.Height.CompareTo(right.Height));
+
+        for (int order = 0; order < surfaces.Count; order++) {
+
+            StandardMaterial3D coat = coats[Math.Min(order, coats.Length - 1)];
+
+            surfaces[order].Mesh.SetSurfaceOverrideMaterial(surfaces[order].Index, coat);
+
+            piece.Skins.Add(coat);
+
+        }
+
+        node.AddChild(model);
+
+    }
+
+    /// <summary>Where a surface sits along the nose axis, as the mean of its own vertices.</summary>
+    private static float Seat(Mesh mesh, int index) {
+
+        Vector3[] points = mesh.SurfaceGetArrays(index)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+
+        if (points.Length == 0) {
+
+            return 0.0f;
+
+        }
+
+        float total = 0.0f;
+
+        foreach (Vector3 point in points) {
+
+            total += point.Y;
+
+        }
+
+        return total / points.Length;
+
+    }
+
+    private static IEnumerable<MeshInstance3D> Meshes(Node node) {
+
+        if (node is MeshInstance3D mesh) {
+
+            yield return mesh;
+
+        }
+
+        foreach (Node child in node.GetChildren()) {
+
+            foreach (MeshInstance3D nested in Meshes(child)) {
+
+                yield return nested;
+
+            }
+
+        }
+
+    }
+
+    /// <summary>Whether a station falls inside one of the windows cut for a recessed thruster.</summary>
+    private static bool InsidePort(Stage stage, int step, float low, float high) {
+
+        foreach (Part part in stage.Parts) {
+
+            if (part.Kind != PartKind.Thruster || part.Depth <= 0.0) {
+
+                continue;
+
+            }
+
+            if (high <= (float)part.Bottom || low >= (float)part.Top) {
+
+                continue;
+
+            }
+
+            for (int index = 0; index < part.Count; index++) {
+
+                int offset = step - PortCentre(part.Count, index);
+
+                if (offset >= -RcsHalfSteps && offset < RcsHalfSteps) {
+
+                    return true;
+
+                }
 
             }
 
@@ -183,57 +573,153 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    private static ArrayMesh BuildHullMesh(Hull hull, float datum) {
+    private ArrayMesh BuildHullMesh(Stage stage, Piece piece) {
 
         ArrayMesh mesh = new ArrayMesh();
 
-        SurfaceTool skin = new SurfaceTool();
+        Hull hull = stage.Hull;
 
-        skin.Begin(Mesh.PrimitiveType.Triangles);
+        Vector2[] profile = OuterProfile(stage);
 
-        Revolve(skin, OuterProfile(hull, datum), RadialSegments, true, (step, low, high) => InsidePort(step, low + datum, high + datum));
+        // A shield is a different material on the same mould line, so the skin is turned in two
+        // runs split at the part's own top rather than being painted after the fact.
+        Part shield = FindPart(stage, PartKind.Shield);
 
-        skin.GenerateTangents();
+        if (shield != null) {
 
-        Commit(mesh, skin, "Skin", HullMaterial(new Color(0.97f, 0.972f, 0.975f), 0.15f, 1.0f));
+            Skin(mesh, stage, Slice(profile, float.NegativeInfinity, (float)shield.Top), "Shield", ShieldMaterial(), piece);
+            Skin(mesh, stage, Slice(profile, (float)shield.Top, float.PositiveInfinity), "Skin", HullMaterial(new Color(0.97f, 0.972f, 0.975f), 0.15f, 1.0f), piece);
 
-        SurfaceTool core = new SurfaceTool();
+        }
+        else {
 
-        core.Begin(Mesh.PrimitiveType.Triangles);
+            Skin(mesh, stage, profile, "Skin", HullMaterial(new Color(0.97f, 0.972f, 0.975f), 0.15f, 1.0f), piece);
 
-        Revolve(core, InnerProfile(hull, datum), RadialSegments, false, null);
+        }
 
-        core.GenerateTangents();
+        Vector2[] core = InnerProfile(stage);
 
-        Commit(mesh, core, "Core", HullMaterial(new Color(0.27f, 0.27f, 0.278f), 0.40f, 1.0f));
+        if (core != null) {
+
+            SurfaceTool inner = new SurfaceTool();
+
+            inner.Begin(Mesh.PrimitiveType.Triangles);
+
+            Revolve(inner, core, RadialSegments, false, TileMetres(stage), null);
+
+            inner.GenerateTangents();
+
+            Commit(mesh, inner, "Core", HullMaterial(new Color(0.27f, 0.27f, 0.278f), 0.40f, 1.0f), piece);
+
+        }
 
         SurfaceTool ports = new SurfaceTool();
 
         ports.Begin(Mesh.PrimitiveType.Triangles);
 
-        for (int index = 0; index < RcsPorts; index++) {
+        bool cut = false;
 
-            Pocket(ports, PortCentre(index), hull, datum);
+        foreach (Part part in stage.Parts) {
+
+            if (part.Kind != PartKind.Thruster || part.Depth <= 0.0) {
+
+                continue;
+
+            }
+
+            for (int index = 0; index < part.Count; index++) {
+
+                Pocket(ports, PortCentre(part.Count, index), hull, part);
+
+            }
+
+            cut = true;
 
         }
 
-        Commit(mesh, ports, "Ports", Paint(new Color(0.46f, 0.462f, 0.47f), 0.05f, 0.72f));
+        if (cut) {
+
+            Commit(mesh, ports, "Ports", Paint(new Color(0.46f, 0.462f, 0.47f), 0.05f, 0.72f), piece);
+
+        }
 
         return mesh;
 
     }
 
-    private static void Commit(ArrayMesh mesh, SurfaceTool surface, string name, Material material) {
+    private void Skin(ArrayMesh mesh, Stage stage, Vector2[] profile, string name, StandardMaterial3D material, Piece piece) {
+
+        if (profile.Length < 2) {
+
+            return;
+
+        }
+
+        SurfaceTool surface = new SurfaceTool();
+
+        surface.Begin(Mesh.PrimitiveType.Triangles);
+
+        Revolve(surface, profile, RadialSegments, true, TileMetres(stage), (step, low, high) => InsidePort(stage, step, low, high));
+
+        surface.GenerateTangents();
+
+        Commit(mesh, surface, name, material, piece);
+
+    }
+
+    private static Part FindPart(Stage stage, PartKind kind) {
+
+        foreach (Part part in stage.Parts) {
+
+            if (part.Kind == kind) {
+
+                return part;
+
+            }
+
+        }
+
+        return null;
+
+    }
+
+    private static Vector2[] Slice(Vector2[] profile, float low, float high) {
+
+        List<Vector2> run = new List<Vector2>();
+
+        foreach (Vector2 point in profile) {
+
+            if (point.Y >= low - 1e-4f && point.Y <= high + 1e-4f) {
+
+                run.Add(point);
+
+            }
+
+        }
+
+        return run.ToArray();
+
+    }
+
+    private static void Commit(ArrayMesh mesh, SurfaceTool surface, string name, Material material, Piece piece) {
 
         surface.Commit(mesh);
 
         mesh.SurfaceSetName(mesh.GetSurfaceCount() - 1, name);
         mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, material);
 
+        if (material is StandardMaterial3D skin && piece != null) {
+
+            piece.Skins.Add(skin);
+
+        }
+
     }
 
     /// <summary>The mould line itself, with the port edges spliced in so the cutouts land on stations.</summary>
-    private static Vector2[] OuterProfile(Hull hull, float datum) {
+    private static Vector2[] OuterProfile(Stage stage) {
+
+        Hull hull = stage.Hull;
 
         List<float> heights = new List<float>();
 
@@ -243,8 +729,22 @@ public sealed partial class VesselView : Node3D {
 
         }
 
-        heights.Add(PortLow);
-        heights.Add(PortHigh);
+        foreach (Part part in stage.Parts) {
+
+            if (part.Kind == PartKind.Thruster && part.Depth > 0.0) {
+
+                heights.Add((float)part.Bottom);
+                heights.Add((float)part.Top);
+
+            }
+
+            if (part.Kind == PartKind.Shield) {
+
+                heights.Add((float)part.Top);
+
+            }
+
+        }
 
         heights.Sort();
 
@@ -252,13 +752,13 @@ public sealed partial class VesselView : Node3D {
 
         foreach (float height in heights) {
 
-            if (profile.Count > 0 && Mathf.Abs(profile[profile.Count - 1].Y + datum - height) < 1e-4f) {
+            if (profile.Count > 0 && Mathf.Abs(profile[profile.Count - 1].Y - height) < 1e-4f) {
 
                 continue;
 
             }
 
-            profile.Add(new Vector2((float)hull.RadiusAt(height), height - datum));
+            profile.Add(new Vector2((float)hull.RadiusAt(height), height));
 
         }
 
@@ -266,29 +766,62 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    /// <summary>Tail rim, skirt lining and thrust cone as one profile, so the tail closes in a single surface.</summary>
-    private static Vector2[] InnerProfile(Hull hull, float datum) {
+    /// <summary>Closes an open end: a rim, a wall standing inside the mould line, and the deck the
+    /// engine hangs off. A hull drawn as one surface has no wall at all - its open end reads as a
+    /// razor edge and the whole stage looks like foil.</summary>
+    private static Vector2[] InnerProfile(Stage stage) {
 
-        // A hull drawn as one surface has no wall: its open tail reads as a razor edge and the whole
-        // stage looks like foil. The interior shell stands off by the mould line's own wall thickness.
-        float lining = (float)(hull.RadiusAt(0.0) - hull.WallThickness);
+        Hull hull = stage.Hull;
 
-        return new[] {
+        float baseRadius = (float)hull.RadiusAt(hull.Base);
+        float tipRadius = (float)hull.RadiusAt(hull.Tip);
 
-            new Vector2((float)hull.RadiusAt(0.0), -datum),
-            new Vector2(lining, -datum),
+        List<Vector2> profile = new List<Vector2>();
 
-            new Vector2(lining, (float)Meridian.SkirtTop - datum),
+        if (baseRadius > 0.01f) {
 
-            new Vector2(MountRadius, MountDeck - datum),
-            new Vector2(0.0f, MountDeck - datum),
+            float lining = baseRadius - (float)hull.WallThickness;
 
-        };
+            Part engine = FindPart(stage, PartKind.Engine);
+
+            float deck = engine != null ? (float)engine.Top + DeckClearance : (float)hull.Base + BulkheadInset;
+            float run = engine != null ? (float)hull.TankBottom : deck;
+
+            profile.Add(new Vector2(baseRadius, (float)hull.Base));
+            profile.Add(new Vector2(lining, (float)hull.Base));
+            profile.Add(new Vector2(lining, run));
+
+            profile.Add(new Vector2(MountRadius, deck));
+            profile.Add(new Vector2(0.0f, deck));
+
+        }
+
+        if (tipRadius > 0.01f) {
+
+            // Drawn as a second run rather than a second surface: one sweep closes whichever ends
+            // are open, and a stage with neither gets no interior at all.
+            float lining = tipRadius - (float)hull.WallThickness;
+
+            float deck = (float)hull.Tip - BulkheadInset;
+
+            if (profile.Count > 0) {
+
+                profile.Add(new Vector2(0.0f, deck));
+
+            }
+
+            profile.Add(new Vector2(MountRadius, deck));
+            profile.Add(new Vector2(lining, (float)hull.Tip));
+            profile.Add(new Vector2(tipRadius, (float)hull.Tip));
+
+        }
+
+        return profile.Count >= 2 ? profile.ToArray() : null;
 
     }
 
     /// <summary>Sweeps a radius/height profile about the nose axis, welding facets that meet shallowly.</summary>
-    private static void Revolve(SurfaceTool surface, Vector2[] profile, int segments, bool outward, Func<int, float, float, bool> hole) {
+    private static void Revolve(SurfaceTool surface, Vector2[] profile, int segments, bool outward, float tile, Func<int, float, float, bool> hole) {
 
         int facets = profile.Length - 1;
 
@@ -339,8 +872,8 @@ public sealed partial class VesselView : Node3D {
                 float leftU = (float)step / segments * TilesAround;
                 float rightU = (float)(step + 1) / segments * TilesAround;
 
-                float lowV = arc[index] / TileMetres;
-                float highV = arc[index + 1] / TileMetres;
+                float lowV = arc[index] / tile;
+                float highV = arc[index + 1] / tile;
 
                 // Godot takes clockwise winding as front-facing, so an inward sweep is the same two
                 // triangles with their last two corners swapped. Flipping only the shading normal
@@ -388,13 +921,15 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    private static void Pocket(SurfaceTool surface, int centre, Hull hull, float datum) {
+    private static void Pocket(SurfaceTool surface, int centre, Hull hull, Part part) {
 
-        float outer = (float)hull.RadiusAt(RcsHeight);
-        float floor = outer - RcsDepth;
+        float middleHeight = (float)part.Centre;
 
-        float low = PortLow - datum;
-        float high = PortHigh - datum;
+        float outer = (float)hull.RadiusAt(middleHeight);
+        float floor = outer - (float)part.Depth;
+
+        float low = (float)part.Bottom;
+        float high = (float)part.Top;
 
         float from = Mathf.Tau * (centre - RcsHalfSteps) / RadialSegments;
         float to = Mathf.Tau * (centre + RcsHalfSteps) / RadialSegments;
@@ -475,6 +1010,19 @@ public sealed partial class VesselView : Node3D {
 
     }
 
+    /// <summary>An ablator: near-black, matte and non-metallic, so what the eye reads off it during
+    /// an entry is the emission and nothing else.</summary>
+    private static StandardMaterial3D ShieldMaterial() {
+
+        StandardMaterial3D material = HullMaterial(new Color(0.088f, 0.080f, 0.074f), 0.0f, 1.0f);
+
+        material.NormalScale = 3.0f;
+        material.MetallicSpecular = 0.18f;
+
+        return material;
+
+    }
+
     private static StandardMaterial3D Paint(Color albedo, float metallic, float roughness) {
 
         return new StandardMaterial3D {
@@ -489,7 +1037,7 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    private static ArrayMesh BuildNozzleMesh() {
+    private static ArrayMesh BuildNozzleMesh(float gauge) {
 
         // Mounting boss, then the chamber pinching down to the throat, then the bell. Sampling the
         // bell along its own curve is what stops it reading as a plain cone at this size.
@@ -512,15 +1060,23 @@ public sealed partial class VesselView : Node3D {
 
         };
 
+        float scale = gauge / NozzleGauge;
+
+        for (int index = 0; index < profile.Length; index++) {
+
+            profile[index] *= scale;
+
+        }
+
         SurfaceTool surface = new SurfaceTool();
 
         surface.Begin(Mesh.PrimitiveType.Triangles);
 
-        Revolve(surface, profile, NozzleSegments, true, null);
+        Revolve(surface, profile, NozzleSegments, true, 1.0f, null);
 
         ArrayMesh mesh = new ArrayMesh();
 
-        Commit(mesh, surface, "Nozzle", NozzleMaterial());
+        Commit(mesh, surface, "Nozzle", NozzleMaterial(), null);
 
         return mesh;
 
@@ -537,32 +1093,46 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    private void AttachThrusters(float datum) {
+    /// <summary>A cluster's nozzles, either recessed in a pocket cut through the wall or standing
+    /// on it. Which one it is comes off the part's own depth, not off the stage it belongs to.</summary>
+    private void AttachThrusters(Node3D node, Stage stage, Part part) {
 
-        ArrayMesh nozzle = BuildNozzleMesh();
+        float gauge = (float)part.Extent;
 
-        float floor = (float)Meridian.BodyRadius - RcsDepth;
+        ArrayMesh nozzle = BuildNozzleMesh(gauge);
 
-        for (int index = 0; index < RcsPorts; index++) {
+        float height = (float)part.Centre;
 
-            float angle = Mathf.Tau * PortCentre(index) / RadialSegments;
+        float scale = gauge / NozzleGauge;
 
-            Vector3 outward = Radial(angle);
-            Vector3 side = Vector3.Up.Cross(outward).Normalized();
+        float seat = part.Depth > 0.0
+            ? (float)(stage.Hull.RadiusAt(height) - part.Depth)
+            : (float)stage.Hull.RadiusAt(height);
+
+        // A pocket takes the pair further apart than a pod does, because each bell has to clear the
+        // sill and the lintel of the cut rather than just the skin.
+        float spread = part.Depth > 0.0 ? RcsOffset : (float)part.Length * 0.28f;
+
+        for (int index = 0; index < part.Count; index++) {
+
+            float angle = Mathf.Tau * PortCentre(part.Count, index) / RadialSegments;
+
+            Vector3 outward = Surface(stage, angle, height);
+            Vector3 side = Vector3.Up.Cross(Radial(angle)).Normalized();
 
             // One nozzle canted forward and one aft: a port that only fired radially could not pitch.
             for (int sense = -1; sense <= 1; sense += 2) {
 
                 Vector3 axis = (outward * Mathf.Cos(RcsCant) + Vector3.Up * (Mathf.Sin(RcsCant) * sense)).Normalized();
 
-                _body.AddChild(new MeshInstance3D {
+                node.AddChild(new MeshInstance3D {
 
-                    Name = $"Rcs{index}{(sense > 0 ? "Fore" : "Aft")}",
+                    Name = $"{part.Name}{index}{(sense > 0 ? "Fore" : "Aft")}",
                     Mesh = nozzle,
 
                     Transform = new Transform3D(
                         new Basis(side, axis, side.Cross(axis).Normalized()),
-                        outward * floor + axis * NozzleBase + Vector3.Up * (RcsHeight + RcsOffset * sense - datum)),
+                        Radial(angle) * seat + axis * (NozzleBase * scale) + Vector3.Up * (height + spread * sense)),
 
                     CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
 
@@ -574,9 +1144,26 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    private void AttachEngine(float datum) {
+    /// <summary>Outward normal of the mould line at a station, so hardware on a tapered wall stands
+    /// off it square rather than leaning through it.</summary>
+    private static Vector3 Surface(Stage stage, float angle, float height) {
 
-        Node3D engine = Import("engine", EngineLength, Basis.Identity);
+        double step = 0.05;
+
+        double below = stage.Hull.RadiusAt(height - step);
+        double above = stage.Hull.RadiusAt(height + step);
+
+        Vector2 slope = new Vector2((float)(step * 2.0), (float)(above - below));
+
+        Vector2 normal = new Vector2(slope.Y, -slope.X).Normalized();
+
+        return (Radial(angle) * -normal.X + Vector3.Up * -normal.Y).Normalized();
+
+    }
+
+    private void AttachEngine(Node3D node, Piece piece, Part part) {
+
+        Node3D engine = Import("engine", (float)part.Length, Basis.Identity);
 
         if (engine == null) {
 
@@ -589,13 +1176,55 @@ public sealed partial class VesselView : Node3D {
         // The plume has to leave the nozzle the model actually has, so the bell is measured off the
         // scaled mesh rather than carried as a constant beside it. Plumbing hangs off one side and
         // widens that axis, so the narrower of the two is the one that reads the bell.
-        _bellRadius = Mathf.Min(bounds.Size.X, bounds.Size.Z) * 0.5f;
+        float bellRadius = Mathf.Min(bounds.Size.X, bounds.Size.Z) * 0.5f;
 
-        engine.Position = new Vector3(0.0f, EngineDeck - bounds.Size.Y * 0.5f - datum, 0.0f);
+        engine.Position = new Vector3(0.0f, (float)part.Top - bounds.Size.Y * 0.5f, 0.0f);
 
-        _bellPlane = engine.Position.Y - bounds.Size.Y * 0.5f;
+        float bellPlane = engine.Position.Y - bounds.Size.Y * 0.5f;
 
-        _body.AddChild(engine);
+        node.AddChild(engine);
+
+        AttachPlume(node, piece, bellRadius, bellPlane);
+
+    }
+
+    /// <summary>Loads a part and scales it so its own height fills the run it has to fill, seated
+    /// on the station that run starts at. On the height rather than on the largest extent, because
+    /// a capsule is wider than it is tall and the run it stands in is the tall one.</summary>
+    private static Node3D Fit(string name, double bottom, double height) {
+
+        Node3D source = LoadModel(name);
+
+        if (source == null) {
+
+            return null;
+
+        }
+
+        Aabb bounds = Bounds(source, source.Transform);
+
+        if (bounds.Size.Y <= 0.0f) {
+
+            return source;
+
+        }
+
+        float scale = (float)height / bounds.Size.Y;
+
+        source.Transform = new Transform3D(
+
+            Basis.Identity.Scaled(Vector3.One * scale),
+
+            new Vector3(
+                -bounds.GetCenter().X * scale,
+                (float)bottom - bounds.Position.Y * scale,
+                -bounds.GetCenter().Z * scale));
+
+        Node3D holder = new Node3D { Name = name };
+
+        holder.AddChild(source);
+
+        return holder;
 
     }
 
@@ -697,7 +1326,7 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    private void AddPlumeLight(Vector3 position, float range) {
+    private static void AddPlumeLight(Node3D node, Piece piece, Vector3 position, float range) {
 
         OmniLight3D light = new OmniLight3D {
 
@@ -713,42 +1342,46 @@ public sealed partial class VesselView : Node3D {
 
         light.Position = position;
 
-        _body.AddChild(light);
+        node.AddChild(light);
 
-        _plumeLights.Add(light);
+        piece.Lights.Add(light);
 
     }
 
-    private void AttachPlume() {
+    private static void AttachPlume(Node3D node, Piece piece, float bellRadius, float bellPlane) {
 
-        _plumeMaterial = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Plume.gdshader") };
-        _plumeMaterial.RenderPriority = 3;
+        ShaderMaterial material = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Plume.gdshader") };
 
-        _plume = new MeshInstance3D {
+        material.RenderPriority = 3;
+
+        MeshInstance3D plume = new MeshInstance3D {
 
             Name = "Plume",
-            Mesh = BuildPlumeMesh(_bellRadius),
+            Mesh = BuildPlumeMesh(bellRadius),
 
-            MaterialOverride = _plumeMaterial,
+            MaterialOverride = material,
 
             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             Visible = false,
 
         };
 
-        _plume.Position = new Vector3(0.0f, _bellPlane, 0.0f);
+        plume.Position = new Vector3(0.0f, bellPlane, 0.0f);
 
-        _body.AddChild(_plume);
+        node.AddChild(plume);
+
+        piece.Plume = plume;
+        piece.PlumeMaterial = material;
 
         // One source at the throat lights the engine, and a ring out in the plume rakes the tank wall,
         // which a light on the axis alone never can: the barrel's normals are perpendicular to it.
-        AddPlumeLight(new Vector3(0.0f, _bellPlane - 1.0f, 0.0f), 12.0f);
+        AddPlumeLight(node, piece, new Vector3(0.0f, bellPlane - 1.0f, 0.0f), 12.0f);
 
         for (int index = 0; index < PlumeLightRing; index++) {
 
             float angle = Mathf.Tau * index / PlumeLightRing;
 
-            AddPlumeLight(new Vector3(Mathf.Cos(angle) * 1.5f, _bellPlane - 4.5f, Mathf.Sin(angle) * 1.5f), 22.0f);
+            AddPlumeLight(node, piece, new Vector3(Mathf.Cos(angle) * 1.5f, bellPlane - 4.5f, Mathf.Sin(angle) * 1.5f), 22.0f);
 
         }
 
@@ -782,13 +1415,13 @@ public sealed partial class VesselView : Node3D {
                     float a = Mathf.Tau * step / PlumeSegments;
                     float b = Mathf.Tau * (step + 1) / PlumeSegments;
 
-                    PlumeVertex(surface, lowerR, lowerY, a, lowerT, radial);
-                    PlumeVertex(surface, upperR, upperY, a, upperT, radial);
-                    PlumeVertex(surface, upperR, upperY, b, upperT, radial);
+                    Volume(surface, lowerR, lowerY, a, lowerT, radial);
+                    Volume(surface, upperR, upperY, a, upperT, radial);
+                    Volume(surface, upperR, upperY, b, upperT, radial);
 
-                    PlumeVertex(surface, lowerR, lowerY, a, lowerT, radial);
-                    PlumeVertex(surface, upperR, upperY, b, upperT, radial);
-                    PlumeVertex(surface, lowerR, lowerY, b, lowerT, radial);
+                    Volume(surface, lowerR, lowerY, a, lowerT, radial);
+                    Volume(surface, upperR, upperY, b, upperT, radial);
+                    Volume(surface, lowerR, lowerY, b, lowerT, radial);
 
                 }
 
@@ -800,7 +1433,94 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    private static void PlumeVertex(SurfaceTool surface, float radius, float y, float angle, float axial, float radial) {
+    private void AttachSheath() {
+
+        _sheathMaterial = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Entry.gdshader") };
+
+        _sheathMaterial.RenderPriority = 4;
+
+        _sheath = new MeshInstance3D {
+
+            Name = "Sheath",
+            Mesh = BuildSheathMesh(),
+
+            MaterialOverride = _sheathMaterial,
+
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            Visible = false,
+
+        };
+
+        AddChild(_sheath);
+
+    }
+
+    /// <summary>The shock layer and the wake behind it, as one surface of revolution in units of the
+    /// body's own radius: a bowl standing off the leading face, opening out into a trail. Nested
+    /// shells the same way the plume is, because both are volumes being stood in for by surfaces.</summary>
+    private static ArrayMesh BuildSheathMesh() {
+
+        SurfaceTool surface = new SurfaceTool();
+
+        surface.Begin(Mesh.PrimitiveType.Triangles);
+
+        for (int shell = 0; shell < SheathShells; shell++) {
+
+            float radial = (shell + 0.5f) / SheathShells;
+            float girth = 0.34f + 0.66f * radial;
+
+            for (int station = 0; station < SheathStations; station++) {
+
+                float lower = (float)station / SheathStations;
+                float upper = (float)(station + 1) / SheathStations;
+
+                for (int step = 0; step < SheathSegments; step++) {
+
+                    float a = Mathf.Tau * step / SheathSegments;
+                    float b = Mathf.Tau * (step + 1) / SheathSegments;
+
+                    (float lowerR, float lowerY) = SheathStation(lower, girth);
+                    (float upperR, float upperY) = SheathStation(upper, girth);
+
+                    Volume(surface, lowerR, lowerY, a, lower, radial);
+                    Volume(surface, upperR, upperY, a, upper, radial);
+                    Volume(surface, upperR, upperY, b, upper, radial);
+
+                    Volume(surface, lowerR, lowerY, a, lower, radial);
+                    Volume(surface, upperR, upperY, b, upper, radial);
+                    Volume(surface, lowerR, lowerY, b, lower, radial);
+
+                }
+
+            }
+
+        }
+
+        return surface.Commit();
+
+    }
+
+    // The bow half is an ellipse standing off the face; the wake half opens out on a root curve so
+    // it widens fast where the flow is still turning and slowly a long way back.
+    private static (float Radius, float Height) SheathStation(float fraction, float girth) {
+
+        const float Bow = 0.22f;
+
+        if (fraction <= Bow) {
+
+            float angle = Mathf.Pi * 0.5f * (fraction / Bow);
+
+            return (girth * Mathf.Sin(angle), SheathStandoff * Mathf.Cos(angle));
+
+        }
+
+        float along = (fraction - Bow) / (1.0f - Bow);
+
+        return (girth * (1.0f + SheathFlare * Mathf.Pow(along, 0.55f)), -SheathWake * along);
+
+    }
+
+    private static void Volume(SurfaceTool surface, float radius, float y, float angle, float axial, float radial) {
 
         float cosine = Mathf.Cos(angle);
         float sine = Mathf.Sin(angle);

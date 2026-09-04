@@ -3,6 +3,14 @@
     "Name": "Terra",
     "Radius": 1274200.0,
     "Mu": 1.5927375e13,
-    "RotationPeriodSeconds": 86400.0
+    "RotationPeriodSeconds": 86400.0,
+    "Atmosphere": {
+      "SeaLevelDensity": 1.225,
+      "ScaleHeight": 5600.0,
+      "Top": 45000.0,
+      "SeaLevelTemperature": 288.0,
+      "LapseRate": 0.00986,
+      "TropopauseAltitude": 7250.0
+    }
   }
 ]

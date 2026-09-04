@@ -7,15 +7,23 @@ using Godot;
 
 namespace FullThrust.Game;
 
-/// <summary>The vehicle in section. Every outline is a run of stations - the mould line for the
-/// structure, the part's own profile for anything bolted to it - so a hull nobody has seen before
-/// draws itself without this panel knowing what it is looking at.</summary>
+/// <summary>The vehicle in section, a stage at a time. Every outline is a run of stations - the
+/// mould line for the structure, the part's own profile for anything bolted to it - so a stack
+/// nobody has seen before draws itself without this panel knowing what it is looking at.</summary>
 public sealed partial class CraftPanel : Control {
 
-    private const float PanelHeight = 200.0f;
-    private const float PanelWidth = 72.0f;
+    // The tallest the diagram is ever drawn. What it actually takes is what the stack needs,
+    // so a capsule on its own does not sit in a column of empty box.
+    private const float DiagramCeiling = 200.0f;
 
-    private const float Pad = 10.0f;
+    // Wide enough that a squat vehicle is limited by the box's height rather than by its width.
+    // A capsule is twice as wide as it is tall, and in a narrow cell it draws as a smear.
+    private const float PanelWidth = 104.0f;
+
+    private const float ControlHeight = 24.0f;
+    private const float ControlGap = 8.0f;
+
+    private const float Pad = 8.0f;
 
     private const int ColumnStations = 28;
 
@@ -24,6 +32,7 @@ public sealed partial class CraftPanel : Control {
 
     private sealed class Piece {
 
+        public Stage Stage;
         public Part Part;
 
         public Rect2 Bounds;
@@ -33,81 +42,198 @@ public sealed partial class CraftPanel : Control {
 
     }
 
-    private Vessel _vessel;
+    /// <summary>One stage's own drawing: its mould line, the wall inside it, and the proud rings
+    /// the profile itself declares.</summary>
+    private sealed class Section {
+
+        public Stage Stage;
+
+        public Vector2[] Shell;
+        public Vector2[] Wall;
+
+        /// <summary>The run of the mould line a shield covers, as its own closed outline.</summary>
+        public Vector2[] Shield;
+
+        public readonly List<(float Depth, float Half)> Bands = new List<(float, float)>();
+
+    }
+
+    private Flight _flight;
     private Popover _popover;
 
-    private readonly List<Piece> _pieces = new List<Piece>();
-    private readonly List<(float Depth, float Half)> _bands = new List<(float, float)>();
+    private Button _stage;
 
-    private Vector2[] _shell;
-    private Vector2[] _wall;
+    private readonly List<Piece> _pieces = new List<Piece>();
+    private readonly List<Section> _sections = new List<Section>();
 
     private float _scale;
     private float _axis;
     private float _top;
     private double _tip;
 
+    private float _diagram;
+
     private Part _hovered;
     private Part _selected;
 
-    public void Build(Vessel vessel, Popover popover) {
+    public void Build(Flight flight, Popover popover) {
 
-        _vessel = vessel;
+        _flight = flight;
         _popover = popover;
-
-        CustomMinimumSize = new Vector2(PanelWidth, PanelHeight);
-        Size = new Vector2(PanelWidth, PanelHeight);
 
         MouseFilter = MouseFilterEnum.Stop;
         MouseDefaultCursorShape = CursorShape.PointingHand;
 
-        Hull hull = vessel.Hull;
+        _stage = HudTheme.Button("STAGE", new Vector2(PanelWidth, ControlHeight));
 
-        double low = hull.Base;
-        double high = hull.Tip;
-        double wide = hull.MaxRadius;
+        _stage.Size = new Vector2(PanelWidth, ControlHeight);
 
-        foreach (Part part in vessel.Parts) {
+        _stage.Pressed += () => _flight.Separate();
 
-            low = Math.Min(low, part.Bottom);
-            high = Math.Max(high, part.Top);
+        AddChild(_stage);
 
-            wide = Math.Max(wide, part.RingRadius + part.Extent);
+        flight.Staged += _ => Lay();
+
+        Lay();
+
+    }
+
+    /// <summary>Fits the stack to the cell and rebuilds every outline in it. Run again whenever the
+    /// stack changes shape, which is the whole of what staging does to this panel.</summary>
+    private void Lay() {
+
+        _pieces.Clear();
+        _sections.Clear();
+
+        _hovered = null;
+        _selected = null;
+
+        Vessel vessel = _flight.Vessel;
+
+        double low = vessel.Base;
+        double high = vessel.Tip;
+        double wide = 0.0;
+
+        foreach (Stage stage in vessel.Stages) {
+
+            wide = Math.Max(wide, stage.Hull.MaxRadius);
+
+            foreach (Part part in stage.Parts) {
+
+                low = Math.Min(low, part.Bottom);
+                high = Math.Max(high, part.Top);
+
+                wide = Math.Max(wide, part.RingRadius + part.Extent);
+
+            }
 
         }
 
-        _scale = (float)Math.Min((PanelHeight - Pad * 2.0f) / (high - low), (PanelWidth * 0.5f - Pad) / wide);
+        _scale = (float)Math.Min((DiagramCeiling - Pad * 2.0f) / (high - low), (PanelWidth * 0.5f - Pad) / wide);
+
+        // The box is cut to the vehicle rather than the vehicle floated in a fixed box, so what the
+        // panel takes off the screen says something about what is left of the stack.
+        _diagram = (float)(high - low) * _scale + Pad * 2.0f;
 
         _axis = PanelWidth * 0.5f;
-        _top = (PanelHeight - (float)(high - low) * _scale) * 0.5f;
+        _top = Pad;
         _tip = high;
 
-        _shell = Revolve(Inset(hull, 0.0), 0.0f);
-        _wall = Revolve(Inset(hull, hull.WallThickness), 0.0f);
+        CustomMinimumSize = new Vector2(PanelWidth, _diagram + ControlGap + ControlHeight);
+        Size = CustomMinimumSize;
 
-        BuildBands(hull);
+        _stage.Position = new Vector2(0.0f, _diagram + ControlGap);
 
-        // Hardware bolted to the hull is picked before the run of hull behind it, so a click on a
-        // thruster port never lands on the tank it is cut into.
-        foreach (Part part in vessel.Parts) {
+        foreach (Stage stage in vessel.Stages) {
 
-            if (!part.IsMouldLine) {
+            Section section = new Section {
 
-                Register(part);
+                Stage = stage,
+
+                Shell = Revolve(Inset(stage.Hull, 0.0), 0.0f),
+                Wall = Revolve(Inset(stage.Hull, stage.Hull.WallThickness), 0.0f),
+
+                Shield = Ablator(stage),
+
+            };
+
+            BuildBands(section);
+
+            _sections.Add(section);
+
+            // Hardware bolted to the hull is picked before the run of hull behind it, so a click on a
+            // thruster port never lands on the tank it is cut into.
+            foreach (Part part in stage.Parts) {
+
+                if (!part.IsMouldLine) {
+
+                    Register(stage, part);
+
+                }
 
             }
 
         }
 
-        foreach (Part part in vessel.Parts) {
+        foreach (Stage stage in vessel.Stages) {
 
-            if (part.IsMouldLine) {
+            foreach (Part part in stage.Parts) {
 
-                Register(part);
+                if (part.IsMouldLine) {
+
+                    Register(stage, part);
+
+                }
 
             }
 
         }
+
+    }
+
+    /// <summary>The shield's own run of the mould line, closed off at the top. Drawn solid, it is
+    /// what makes a capsule read as a capsule in section rather than as a cone.</summary>
+    private Vector2[] Ablator(Stage stage) {
+
+        Part shield = null;
+
+        foreach (Part part in stage.Parts) {
+
+            if (part.Kind == PartKind.Shield) {
+
+                shield = part;
+
+            }
+
+        }
+
+        if (shield == null) {
+
+            return null;
+
+        }
+
+        List<Hull.Station> run = new List<Hull.Station>();
+
+        foreach (Hull.Station station in stage.Hull.Stations) {
+
+            if (station.Z >= shield.Bottom && station.Z <= shield.Top) {
+
+                run.Add(station);
+
+            }
+
+        }
+
+        if (run.Count < 2) {
+
+            return null;
+
+        }
+
+        run.Add(new Hull.Station(shield.Top, stage.Hull.RadiusAt(shield.Top)));
+
+        return Revolve(run, 0.0f);
 
     }
 
@@ -156,9 +282,9 @@ public sealed partial class CraftPanel : Control {
 
     // Every proud ring on the mould line is a run of stations standing out from the wall on both
     // sides of it. Read off the profile rather than listed, so any hull draws its own hardware.
-    private void BuildBands(Hull hull) {
+    private void BuildBands(Section section) {
 
-        _bands.Clear();
+        Hull hull = section.Stage.Hull;
 
         for (int index = 1; index < hull.Stations.Count - 1; index++) {
 
@@ -186,7 +312,7 @@ public sealed partial class CraftPanel : Control {
 
             double centre = (hull.Stations[index].Z + hull.Stations[last].Z) * 0.5;
 
-            _bands.Add((Depth(centre), (float)radius * _scale));
+            section.Bands.Add((Depth(centre), (float)radius * _scale));
 
             index = last;
 
@@ -194,15 +320,15 @@ public sealed partial class CraftPanel : Control {
 
     }
 
-    private void Register(Part part) {
+    private void Register(Stage stage, Part part) {
 
-        Piece piece = new Piece { Part = part };
+        Piece piece = new Piece { Stage = stage, Part = part };
 
         float half;
 
         if (part.IsMouldLine) {
 
-            half = (float)Widest(part) * _scale;
+            half = (float)Widest(stage, part) * _scale;
 
         }
         else {
@@ -228,13 +354,13 @@ public sealed partial class CraftPanel : Control {
     }
 
     /// <summary>Widest the mould line gets over a part's run, so its hit box matches what is drawn.</summary>
-    private double Widest(Part part) {
+    private static double Widest(Stage stage, Part part) {
 
         double widest = 0.0;
 
         for (int step = 0; step <= 12; step++) {
 
-            widest = Math.Max(widest, _vessel.Hull.RadiusAt(part.Bottom + part.Length * step / 12.0));
+            widest = Math.Max(widest, stage.Hull.RadiusAt(part.Bottom + part.Length * step / 12.0));
 
         }
 
@@ -243,6 +369,10 @@ public sealed partial class CraftPanel : Control {
     }
 
     public void Sync() {
+
+        HudTheme.Light(_stage, false);
+
+        _stage.Disabled = !_flight.Vessel.CanSeparate;
 
         QueueRedraw();
 
@@ -302,23 +432,25 @@ public sealed partial class CraftPanel : Control {
 
         }
 
-        Part shown = _selected;
+        Piece shown = Find(_selected);
 
-        Rect2 box = Find(shown).Bounds;
-
-        _popover.Raise(shown, shown.Name, (rows, actions) => Read(shown, rows, actions), new Vector2(GlobalPosition.X - Pad, GlobalPosition.Y + box.GetCenter().Y));
+        _popover.Raise(shown.Part, shown.Part.Name, (rows, actions) => Read(shown, rows, actions), new Vector2(GlobalPosition.X - Pad, GlobalPosition.Y + shown.Bounds.GetCenter().Y));
 
     }
 
     public override void _Draw() {
 
-        if (_vessel == null) {
+        if (_flight == null) {
 
             return;
 
         }
 
-        DrawColoredPolygon(_shell, Skin);
+        foreach (Section section in _sections) {
+
+            DrawColoredPolygon(section.Shell, Skin);
+
+        }
 
         foreach (Piece piece in _pieces) {
 
@@ -326,14 +458,41 @@ public sealed partial class CraftPanel : Control {
 
         }
 
-        Column();
+        foreach (Section section in _sections) {
 
-        DrawPolyline(_wall, HudTheme.Dim * new Color(1.0f, 1.0f, 1.0f, 0.30f), 1.0f, true);
+            Column(section);
+
+            DrawPolyline(section.Wall, HudTheme.Dim * new Color(1.0f, 1.0f, 1.0f, 0.30f), 1.0f, true);
+
+            // The ablator is the one run of a hull that is solid rather than a shell, and drawing
+            // it as one is what makes a capsule read as a capsule instead of as a cone.
+            if (section.Shield != null) {
+
+                DrawColoredPolygon(section.Shield, new Color(0.043f, 0.051f, 0.063f, 0.96f));
+                DrawPolyline(section.Shield, HudTheme.Dim * new Color(1.0f, 1.0f, 1.0f, 0.55f), 1.0f, true);
+
+            }
+
+        }
 
         Seams();
-        Bands();
 
-        DrawPolyline(_shell, HudTheme.Ink * new Color(1.0f, 1.0f, 1.0f, 0.72f), 1.4f, true);
+        foreach (Section section in _sections) {
+
+            Bands(section);
+
+        }
+
+        foreach (Section section in _sections) {
+
+            // The live stage is the bright one; a payload riding above it is available, not active.
+            bool live = section.Stage == _flight.Vessel.Active;
+
+            DrawPolyline(section.Shell, HudTheme.Ink * new Color(1.0f, 1.0f, 1.0f, live ? 0.72f : 0.44f), live ? 1.4f : 1.2f, true);
+
+        }
+
+        Joints();
 
         foreach (Piece piece in _pieces) {
 
@@ -343,20 +502,21 @@ public sealed partial class CraftPanel : Control {
 
     }
 
-    /// <summary>What is in the tank, drawn where it sits: oxidiser standing on the floor, fuel on
-    /// the bulkhead above it, both to the surface the fill height puts them at.</summary>
-    private void Column() {
+    /// <summary>What is in a stage's tank, drawn where it sits: oxidiser standing on the floor, fuel
+    /// on the bulkhead above it, both to the surface the fill height puts them at.</summary>
+    private void Column(Section section) {
 
-        Hull hull = _vessel.Hull;
+        Stage stage = section.Stage;
+        Hull hull = stage.Hull;
 
-        if (_vessel.PropellantCapacity <= 0.0 || _vessel.PropellantMass <= 0.0 || hull.TankVolume <= 0.0) {
+        if (stage.PropellantCapacity <= 0.0 || stage.PropellantMass <= 0.0 || hull.TankVolume <= 0.0) {
 
             return;
 
         }
 
-        double surface = hull.FillHeight(_vessel.PropellantMass / _vessel.PropellantCapacity);
-        double bulkhead = hull.FillHeight(_vessel.OxidiserVolume / hull.TankVolume);
+        double surface = hull.FillHeight(stage.FillFraction);
+        double bulkhead = hull.FillHeight(stage.OxidiserVolume / hull.TankVolume);
 
         Band(hull, hull.TankBottom, bulkhead, HudTheme.Oxidiser);
         Band(hull, bulkhead, surface, HudTheme.Fuel);
@@ -414,9 +574,9 @@ public sealed partial class CraftPanel : Control {
 
     }
 
-    private void Bands() {
+    private void Bands(Section section) {
 
-        foreach ((float depth, float half) in _bands) {
+        foreach ((float depth, float half) in section.Bands) {
 
             DrawLine(new Vector2(_axis - half, depth), new Vector2(_axis + half, depth), HudTheme.Ink * new Color(1.0f, 1.0f, 1.0f, 0.34f), 1.6f);
 
@@ -443,9 +603,31 @@ public sealed partial class CraftPanel : Control {
 
             }
 
-            float half = (float)_vessel.Hull.RadiusAt(piece.Part.Top) * _scale;
+            float half = (float)piece.Stage.Hull.RadiusAt(piece.Part.Top) * _scale;
 
             DrawLine(new Vector2(_axis - half, y), new Vector2(_axis + half, y), HudTheme.Dim * new Color(1.0f, 1.0f, 1.0f, 0.45f), 1.0f, true);
+
+        }
+
+    }
+
+    /// <summary>Where one stage lets go of the next. A heavier rule than a seam, with the tick that
+    /// says which way the stack comes apart.</summary>
+    private void Joints() {
+
+        for (int index = 1; index < _sections.Count; index++) {
+
+            Hull hull = _sections[index].Stage.Hull;
+
+            float y = Depth(hull.Base);
+            float half = (float)_sections[index - 1].Stage.Hull.MaxRadius * _scale + 3.0f;
+
+            Color ink = HudTheme.Ink * new Color(1.0f, 1.0f, 1.0f, 0.55f);
+
+            DrawLine(new Vector2(_axis - half, y), new Vector2(_axis + half, y), ink, 1.0f);
+
+            DrawLine(new Vector2(_axis - half, y), new Vector2(_axis - half, y + 4.0f), ink, 1.0f);
+            DrawLine(new Vector2(_axis + half, y), new Vector2(_axis + half, y + 4.0f), ink, 1.0f);
 
         }
 
@@ -461,8 +643,8 @@ public sealed partial class CraftPanel : Control {
 
         bool live = piece.Part.Kind switch {
 
-            PartKind.Engine => _vessel.CurrentThrust > 0.0,
-            PartKind.Thruster => _vessel.HasRcs,
+            PartKind.Engine => piece.Stage == _flight.Vessel.Active && _flight.Vessel.CurrentThrust > 0.0,
+            PartKind.Thruster => _flight.Vessel.RcsEnabled && piece.Stage.HasReactionControl,
 
             _ => false,
 
@@ -513,52 +695,71 @@ public sealed partial class CraftPanel : Control {
 
     /// <summary>What one part is doing. Only figures the sim actually carries, and only actions the
     /// part genuinely has authority over.</summary>
-    private void Read(Part part, List<(string Label, string Value)> rows, List<(string Label, Action Run)> actions) {
+    private void Read(Piece piece, List<(string Label, string Value)> rows, List<(string Label, Action Run)> actions) {
 
-        Vessel vessel = _vessel;
+        Vessel vessel = _flight.Vessel;
+
+        Stage stage = piece.Stage;
+        Part part = piece.Part;
+
+        bool live = stage == vessel.Active;
 
         switch (part.Kind) {
 
             case PartKind.Engine:
 
-                rows.Add(("THRUST", $"{vessel.CurrentThrust / 1000.0:F1} / {vessel.ThrustNewtons / 1000.0:F0} kN"));
-                rows.Add(("IMPULSE", $"{vessel.SpecificImpulse:F0} s"));
-                rows.Add(("LIT", $"{vessel.EnginesLit} / {vessel.EngineCount}"));
-                rows.Add(("FLOW", $"{vessel.CurrentMassFlow:F2} kg/s"));
+                rows.Add(("THRUST", $"{(live ? vessel.CurrentThrust : 0.0) / 1000.0:F1} / {stage.ThrustNewtons / 1000.0:F0} kN"));
+                rows.Add(("IMPULSE", $"{stage.SpecificImpulse:F0} s"));
+                rows.Add(("LIT", $"{stage.EnginesLit} / {stage.EngineCount}"));
+                rows.Add(("FLOW", $"{(live ? vessel.CurrentMassFlow : 0.0):F2} kg/s"));
                 rows.Add(("BELL", $"{part.Extent * 2.0:F2} m"));
 
-                actions.Add(("CUT", () => vessel.Throttle = 0.0));
-                actions.Add(("FULL", () => vessel.Throttle = 1.0));
+                if (live) {
+
+                    actions.Add(("CUT", () => vessel.Throttle = 0.0));
+                    actions.Add(("FULL", () => vessel.Throttle = 1.0));
+
+                }
 
                 break;
 
             case PartKind.Tank:
 
-                rows.Add(("LOAD", $"{vessel.PropellantMass / 1000.0:F2} / {vessel.PropellantCapacity / 1000.0:F2} t"));
-                rows.Add(("VOLUME", $"{vessel.Hull.TankVolume:F2} m³"));
-                rows.Add(("MIXTURE", $"{vessel.MixtureRatio:F2} : 1"));
-                rows.Add(("ULLAGE", $"{Ullage(vessel) * 100.0:F0} %"));
-                rows.Add(("DELTA-V", $"{vessel.DeltaV:N0} m/s"));
+                rows.Add(("LOAD", $"{stage.PropellantMass / 1000.0:F2} / {stage.PropellantCapacity / 1000.0:F2} t"));
+                rows.Add(("VOLUME", $"{stage.Hull.TankVolume:F2} m³"));
+                rows.Add(("MIXTURE", $"{stage.MixtureRatio:F2} : 1"));
+                rows.Add(("ULLAGE", $"{(1.0 - stage.FillFraction) * 100.0:F0} %"));
+                rows.Add(("DELTA-V", $"{(live ? vessel.DeltaV : 0.0):N0} m/s"));
 
                 break;
 
             case PartKind.Thruster:
 
-                rows.Add(("STATUS", vessel.HasRcs ? "ARMED" : vessel.RcsEnabled ? "DRY" : "SAFE"));
-                rows.Add(("MONOPROP", $"{vessel.RcsPropellantMass:F0} / {vessel.RcsPropellantCapacity:F0} kg"));
-                rows.Add(("CLUSTER", $"{vessel.RcsThrustNewtons:N0} N"));
-                rows.Add(("TORQUE", $"{vessel.ControlTorqueLimit / 1000.0:F1} kN·m"));
+                rows.Add(("STATUS", stage.HasReactionControl ? vessel.RcsEnabled ? "ARMED" : "SAFE" : "DRY"));
+                rows.Add(("MONOPROP", $"{stage.RcsPropellantMass:F0} / {stage.RcsPropellantCapacity:F0} kg"));
+                rows.Add(("CLUSTER", $"{stage.RcsThrustNewtons:N0} N"));
+                rows.Add(("TORQUE", $"{stage.ControlTorque / 1000.0:F1} kN·m"));
                 rows.Add(("DUTY", $"{vessel.RcsDuty * 100.0:F0} %"));
 
                 actions.Add((vessel.RcsEnabled ? "SAFE" : "ARM", () => vessel.RcsEnabled = !vessel.RcsEnabled));
 
                 break;
 
+            case PartKind.Shield:
+
+                rows.Add(("SKIN", $"{vessel.SkinTemperature:N0} K"));
+                rows.Add(("LIMIT", $"{stage.HeatLimit:N0} K"));
+                rows.Add(("FLUX", $"{vessel.Aero.HeatFlux / 1000.0:N0} kW/m²"));
+                rows.Add(("BLUNTNESS", $"{vessel.Profile.BaseCurvature:F2} m"));
+                rows.Add(("MASS", $"{stage.Ballast.Mass:N0} kg"));
+
+                break;
+
             default:
 
-                rows.Add(("MASS", $"{Share(part):N0} kg"));
+                rows.Add(("MASS", $"{Share(stage, part):N0} kg"));
                 rows.Add(("SPAN", $"{part.Length:F2} m"));
-                rows.Add(("DIAMETER", $"{vessel.Hull.RadiusAt(part.Centre) * 2.0:F2} m"));
+                rows.Add(("DIAMETER", $"{stage.Hull.RadiusAt(part.Centre) * 2.0:F2} m"));
 
                 break;
 
@@ -566,23 +767,15 @@ public sealed partial class CraftPanel : Control {
 
     }
 
-    /// <summary>Share of the tank the propellant has left behind, which is what the diagram draws
-    /// above the surface line.</summary>
-    private static double Ullage(Vessel vessel) {
-
-        return vessel.PropellantCapacity > 0.0 ? 1.0 - vessel.PropellantMass / vessel.PropellantCapacity : 1.0;
-
-    }
-
     // Dry mass is modelled as a shell of one areal density, so a run of the mould line carries
     // exactly its share of the swept area. Nothing here is invented; it falls out of that model.
-    private double Share(Part part) {
+    private static double Share(Stage stage, Part part) {
 
-        Hull hull = _vessel.Hull;
+        Hull hull = stage.Hull;
 
         double total = hull.ShellArea(hull.Base, hull.Tip);
 
-        return total > 0.0 ? _vessel.DryMass * hull.ShellArea(part.Bottom, part.Top) / total : 0.0;
+        return total > 0.0 ? stage.ShellMass * hull.ShellArea(part.Bottom, part.Top) / total : 0.0;
 
     }
 

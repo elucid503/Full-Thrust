@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 using FullThrust.Sim;
 
@@ -31,8 +32,8 @@ public sealed partial class PlanView : Control {
     // plane: there is no day side to draw across the disc and nothing on the conic is ever eclipsed.
     private const float Grazing = 0.08f;
 
-    private readonly Vector2[] _run = new Vector2[Samples + 1];
-    private readonly Color[] _tint = new Color[Samples + 1];
+    private readonly List<Vector2> _run = new List<Vector2>(Samples + 1);
+    private readonly List<Color> _tint = new List<Color>(Samples + 1);
 
     private Flight _flight;
 
@@ -168,10 +169,15 @@ public sealed partial class PlanView : Control {
     }
 
     /// <summary>The apsides, filled for high and hollow for low, the same pair of shapes the map
-    /// itself uses. Nothing joins them: a chord across the planet is a line the vessel never flies.</summary>
+    /// itself uses. Nothing joins them: a chord across the planet is a line the vessel never flies.
+    /// A periapsis under the ground is not a place, so it is not marked as one.</summary>
     private void Apsides(Orbit orbit, Color ink) {
 
-        DrawArc(Project(orbit.PositionAtTrueAnomaly(0.0)), 2.6f, 0.0f, Mathf.Tau, 16, ink, 1.2f, true);
+        if (orbit.PeriapsisRadius >= _flight.Body.Radius) {
+
+            DrawArc(Project(orbit.PositionAtTrueAnomaly(0.0)), 2.6f, 0.0f, Mathf.Tau, 16, ink, 1.2f, true);
+
+        }
 
         if (orbit.IsClosed) {
 
@@ -315,39 +321,69 @@ public sealed partial class PlanView : Control {
 
     private void Trace(Orbit orbit, double start, double span, double cut, Color ink, bool dotted) {
 
+        _run.Clear();
+        _tint.Clear();
+
         for (int sample = 0; sample <= Samples; sample++) {
 
             double fraction = (double)sample / Samples;
 
-            Vector3d point = orbit.PositionAtTrueAnomaly(start + span * fraction);
+            double anomaly = start + span * fraction;
 
-            _run[sample] = Project(point);
+            // The run of a conic that lies under the ground is not a path anything flies; drawn, it
+            // is a chord through the body. It ends where the surface is and picks up on the far side.
+            if (orbit.RadiusAtTrueAnomaly(anomaly) < _flight.Body.Radius) {
+
+                Stroke(dotted);
+
+                continue;
+
+            }
+
+            Vector3d point = orbit.PositionAtTrueAnomaly(anomaly);
+
             float shade = MapPath.Shade(fraction, cut);
+
+            _run.Add(Project(point));
 
             // Capped rather than scaled. Multiplying compounds with the fade, so the far end of the
             // shadow vanishes into it; a flat weight gives the stretch a clean step at both ends,
             // which is the whole point of drawing it.
-            _tint[sample] = ink * new Color(1.0f, 1.0f, 1.0f, Eclipsed(point) ? Math.Min(shade, 0.22f) : shade);
+            _tint.Add(ink * new Color(1.0f, 1.0f, 1.0f, Eclipsed(point) ? Math.Min(shade, 0.22f) : shade));
 
         }
 
-        if (!dotted) {
+        Stroke(dotted);
 
-            DrawPolylineColors(_run, _tint, 1.8f, true);
+    }
 
-            return;
+    private void Stroke(bool dotted) {
 
-        }
+        if (_run.Count >= 2) {
 
-        for (int sample = 0; sample < Samples; sample++) {
+            if (dotted) {
 
-            if (sample / Dash % 2 == 0) {
+                for (int sample = 0; sample + 1 < _run.Count; sample++) {
 
-                DrawLine(_run[sample], _run[sample + 1], _tint[sample], 1.8f, true);
+                    if (sample / Dash % 2 == 0) {
+
+                        DrawLine(_run[sample], _run[sample + 1], _tint[sample], 1.8f, true);
+
+                    }
+
+                }
+
+            }
+            else {
+
+                DrawPolylineColors(_run.ToArray(), _tint.ToArray(), 1.8f, true);
 
             }
 
         }
+
+        _run.Clear();
+        _tint.Clear();
 
     }
 
