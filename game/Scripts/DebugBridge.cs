@@ -315,7 +315,7 @@ public sealed partial class DebugBridge : Node {
 
         if (!float.TryParse(query["x"], out float x) || !float.TryParse(query["y"], out float y)) {
 
-            return new Dictionary<string, object> { ["error"] = "usage: /click?x=<px>&y=<py>[&press=false]" };
+            return new Dictionary<string, object> { ["error"] = "usage: /click?x=<px>&y=<py>[&button=left|right][&press=click|down|up|move|move-held]" };
 
         }
 
@@ -323,25 +323,60 @@ public sealed partial class DebugBridge : Node {
 
         Input.WarpMouse(at);
 
-        Input.ParseInputEvent(new InputEventMouseMotion { Position = at, GlobalPosition = at });
+        bool held = query["button"] == "right";
 
-        if (!bool.TryParse(query["press"], out bool press) || press) {
+        MouseButton index = held ? MouseButton.Right : MouseButton.Left;
+        MouseButtonMask mask = held ? MouseButtonMask.Right : MouseButtonMask.Left;
 
-            foreach (bool down in new[] { true, false }) {
+        string press = query["press"] ?? "click";
+
+        // A drag is three calls - down, one or more moves, up - so the mask has to say which button
+        // is still held while the pointer moves, or the map never sees the motion as a drag at all.
+        bool down = press == "down";
+        bool up = press == "up";
+
+        Input.ParseInputEvent(new InputEventMouseMotion {
+
+            Position = at,
+            GlobalPosition = at,
+
+            ButtonMask = down || press == "move-held" ? mask : 0,
+
+        });
+
+        if (press == "click" || press == "true") {
+
+            foreach (bool state in new[] { true, false }) {
 
                 Input.ParseInputEvent(new InputEventMouseButton {
 
                     Position = at,
                     GlobalPosition = at,
 
-                    ButtonIndex = MouseButton.Left,
-                    ButtonMask = down ? MouseButtonMask.Left : 0,
+                    ButtonIndex = index,
+                    ButtonMask = state ? mask : 0,
 
-                    Pressed = down,
+                    Pressed = state,
 
                 });
 
             }
+
+        }
+
+        if (down || up) {
+
+            Input.ParseInputEvent(new InputEventMouseButton {
+
+                Position = at,
+                GlobalPosition = at,
+
+                ButtonIndex = index,
+                ButtonMask = down ? mask : 0,
+
+                Pressed = down,
+
+            });
 
         }
 
@@ -452,6 +487,7 @@ public sealed partial class DebugBridge : Node {
                 state["nodeRadial"] = node.Radial;
                 state["nodeBurnSeconds"] = node.BurnSeconds(flight.Vessel);
                 state["timeToIgnition"] = flight.TimeToIgnition;
+                state["nodeScreen"] = MapView.Active != null && MapView.Active.NodeLive ? MapView.Active.NodeAt.ToString() : null;
 
                 Orbit planned = flight.PlannedOrbit;
 

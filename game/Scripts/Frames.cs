@@ -28,6 +28,10 @@ public static class Frames {
     // A quarter turn about X carries the sim's polar Z onto Godot's vertical Y and preserves handedness.
     public static Vector3 Direction(Vector3d value) => new Vector3((float)value.X, (float)value.Z, (float)-value.Y);
 
+    // The inverse of Direction: a Godot direction read back as a sim one. The map turns a drag in
+    // camera axes into a delta-v, and the sim is the only place that vector means anything.
+    public static Vector3d Sim(Vector3 value) => new Vector3d(value.X, -value.Z, value.Y);
+
     // Same quarter-turn as Direction: shuffle the axis, leave the angle.
     public static Quaternion Rotation(QuaternionD value) => new Quaternion((float)value.X, (float)value.Z, (float)-value.Y, (float)value.W);
 

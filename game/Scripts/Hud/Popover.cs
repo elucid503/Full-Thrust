@@ -13,13 +13,19 @@ public sealed partial class Popover : Control {
     private const float Margin = 11.0f;
 
     private const float RowHeight = 17.0f;
-    private const float HeaderHeight = 28.0f;
+
+    // The title sits on its own margin rather than on the hairline. Everything below is measured
+    // from HeaderHeight, so raising the two together moves the whole column with it.
+    private const float TitleTop = 9.0f;
+    private const float HeaderHeight = 34.0f;
     private const float ActionHeight = 24.0f;
 
     private const float ActionWidth = 88.0f;
 
     private const float RowTop = 4.0f;
-    private const float Foot = 9.0f;
+
+    // Clears the action row off the bottom hairline. A button hard against the edge reads as a crop.
+    private const float Foot = 15.0f;
 
     /// <summary>Fills the panel for whatever it is showing. Called every frame, so the figures are live.</summary>
     public delegate void Reader(List<(string Label, string Value)> rows, List<(string Label, Action Run)> actions);
@@ -37,6 +43,10 @@ public sealed partial class Popover : Control {
 
     /// <summary>Whether the panel is up and showing this particular thing.</summary>
     public bool Shows(object subject) => Visible && ReferenceEquals(_subject, subject);
+
+    /// <summary>What it is showing, or null when it is down. A caller whose subject can stop
+    /// existing needs this to take the panel down with it.</summary>
+    public object Subject => Visible ? _subject : null;
 
     public override void _Ready() {
 
@@ -120,7 +130,7 @@ public sealed partial class Popover : Control {
 
         DrawStyleBox(HudTheme.Panel(0.0f), new Rect2(Vector2.Zero, Size));
 
-        HudTheme.WriteIn(this, HudTheme.Strong, HudTheme.Head, new Rect2(Margin, 4.0f, Width - Margin * 2.0f, 20.0f), _title, HudTheme.Ink, HorizontalAlignment.Left);
+        HudTheme.WriteIn(this, HudTheme.Strong, HudTheme.Head, new Rect2(Margin, TitleTop, Width - Margin * 2.0f, 20.0f), _title, HudTheme.Ink, HorizontalAlignment.Left);
 
         DrawLine(new Vector2(Margin, HeaderHeight), new Vector2(Width - Margin, HeaderHeight), HudTheme.Edge, 1.0f);
 

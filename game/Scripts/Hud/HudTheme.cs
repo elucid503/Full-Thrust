@@ -111,6 +111,12 @@ public static class HudTheme {
         button.AddThemeStyleboxOverride("pressed", lit ? ChipLitHover : ChipHover);
         button.AddThemeStyleboxOverride("focus", lit ? ChipLit : ChipIdle);
 
+        // Without this a shut control falls back to Godot's own box and disappears off the panel.
+        // Shut is the darkest rung of the same ladder, not a different look.
+        button.AddThemeStyleboxOverride("disabled", ChipIdle);
+
+        button.AddThemeColorOverride("font_disabled_color", Faint);
+
         button.AddThemeColorOverride("font_color", lit ? Ink : Dim);
         button.AddThemeColorOverride("font_hover_color", Ink);
         button.AddThemeColorOverride("font_pressed_color", Ink);

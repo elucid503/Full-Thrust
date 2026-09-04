@@ -5,7 +5,7 @@
 [ext_resource type="Script" path="res://Scripts/Planet.cs" id="3_planet"]
 [ext_resource type="Script" path="res://Scripts/OrbitCamera.cs" id="4_camera"]
 [ext_resource type="Script" path="res://Scripts/VesselView.cs" id="5_vessel"]
-[ext_resource type="Script" path="res://Scripts/MapView.cs" id="7_map"]
+[ext_resource type="Script" path="res://Scripts/Map/MapView.cs" id="7_map"]
 [ext_resource type="Script" path="res://Scripts/Hud/Hud.cs" id="8_hud"]
 
 [node name="Main" type="Node3D"]
