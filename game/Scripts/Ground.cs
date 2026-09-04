@@ -155,7 +155,7 @@ public sealed partial class Ground : Node3D {
     public void Build(CelestialBody body, ShaderMaterial[] materials) {
 
         _body = body;
-        _terrain = body.Terrain;
+        _terrain = body.Terrain ?? throw new InvalidOperationException("no terrain survey; run tools/planet_maps.py heightfield");
         _radius = body.Radius;
         _materials = materials;
 
@@ -371,7 +371,24 @@ public sealed partial class Ground : Node3D {
         double t = patch.T;
         double span = patch.Span;
 
-        patch.Job = Task.Run(() => Tessellate(face, s, t, span));
+        // Caught here rather than left on the task: a scene reload can tear a build down under a
+        // worker, and an exception that escapes one takes the process with it.
+        patch.Job = Task.Run(() => {
+
+            try {
+
+                return Tessellate(face, s, t, span);
+
+            }
+            catch (Exception failure) {
+
+                GD.PushError($"terrain patch build failed: {failure.Message}");
+
+                return null;
+
+            }
+
+        });
 
     }
 
@@ -380,6 +397,12 @@ public sealed partial class Ground : Node3D {
         Surface surface = patch.Job.Result;
 
         patch.Job = null;
+
+        if (surface == null) {
+
+            return;
+
+        }
 
         patch.Anchor = surface.Anchor;
         patch.Bound = surface.Bound;
