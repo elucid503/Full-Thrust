@@ -272,7 +272,25 @@ public sealed partial class DebugBridge : Node {
 
         if (double.TryParse(query["altitude"], out double altitude)) {
 
-            flight.Place(altitude, double.TryParse(query["speed"], out double speed) ? speed : flight.Vessel.Velocity.Length);
+            double speed = double.TryParse(query["speed"], out double wanted) ? wanted : flight.Vessel.Velocity.Length;
+
+            if (double.TryParse(query["latitude"], out double latitude) && double.TryParse(query["longitude"], out double longitude)) {
+
+                flight.PlaceAt(latitude, longitude, altitude, speed);
+
+            }
+            else {
+
+                flight.Place(altitude, speed);
+
+            }
+
+        }
+
+        if (query["site"] != null) {
+
+            flight.PlaceAt(flight.Site.Latitude * 180.0 / Math.PI, flight.Site.Longitude * 180.0 / Math.PI,
+                double.TryParse(query["site"], out double above) ? above : 400.0, 0.0);
 
         }
 
@@ -488,6 +506,36 @@ public sealed partial class DebugBridge : Node {
 
         }
 
+        // Yaw and pitch are measured off the world axes, which means the same pair frames a
+        // different scene at every latitude. A depression angle off the local horizon does not.
+        if (double.TryParse(query["look"], out double depression) && Flight.Active != null) {
+
+            Vessel vessel = Flight.Active.Vessel;
+
+            Vector3d up = vessel.Position.Normalized;
+            Vector3d along = vessel.Velocity - up * Vector3d.Dot(vessel.Velocity, up);
+
+            if (along.LengthSquared < 1.0) {
+
+                along = Vector3d.Cross(Vector3d.UnitZ, up);
+
+            }
+
+            if (double.TryParse(query["bearing"], out double bearing)) {
+
+                Vector3d north = Vector3d.Cross(up, Vector3d.Cross(Vector3d.UnitZ, up).Normalized);
+                Vector3d east = Vector3d.Cross(Vector3d.UnitZ, up).Normalized;
+
+                along = north * Math.Cos(bearing * Math.PI / 180.0) + east * Math.Sin(bearing * Math.PI / 180.0);
+
+            }
+
+            double radians = depression * Math.PI / 180.0;
+
+            camera.AimAt(Frames.Direction((along.Normalized * Math.Cos(radians) - up * Math.Sin(radians)).Normalized));
+
+        }
+
         if (float.TryParse(query["yaw"], out float yaw)) {
 
             camera.Yaw = yaw;
@@ -555,6 +603,9 @@ public sealed partial class DebugBridge : Node {
             state["position"] = flight.Vessel.Position.ToString();
             state["angularVelocity"] = flight.Vessel.AngularVelocity.ToString();
             state["altitude"] = flight.Altitude;
+            state["groundAltitude"] = flight.Body.HeightAboveGround(flight.Vessel.Position, flight.Time);
+            state["patches"] = Planet.Active?.PatchCount ?? 0;
+            state["patchLevel"] = Planet.Active?.DeepestLevel ?? 0;
             state["speed"] = flight.Vessel.Velocity.Length;
             state["apoapsis"] = flight.Orbit.ApoapsisRadius - flight.Body.Radius;
             state["periapsis"] = flight.Orbit.PeriapsisRadius - flight.Body.Radius;

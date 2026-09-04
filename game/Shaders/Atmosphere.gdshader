@@ -1,7 +1,13 @@
 shader_type spatial;
-render_mode unshaded, blend_add, depth_draw_never, depth_test_disabled, cull_front;
+render_mode unshaded, blend_mix, depth_draw_never, depth_test_disabled, cull_front;
 
-// Single-scatter Rayleigh/Mie; integral bounds from ray-sphere hits and the depth buffer, not the mesh.
+// Single-scatter Rayleigh/Mie; integral bounds from ray-sphere hits and the depth buffer, not the
+// mesh. The shell composites rather than adds: what is behind it is dimmed by the air in front of
+// it before the scattered light is laid over the top, which is the only way a distant ridge fades
+// into the haze and the only way a star field goes out at sunrise.
+
+uniform sampler2D screen_texture : hint_screen_texture, filter_linear;
+uniform sampler2D depth_buffer : hint_depth_texture, filter_nearest;
 
 uniform vec3 planet_centre = vec3(0.0, 0.0, 0.0);
 uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
@@ -18,9 +24,12 @@ uniform float mie_direction : hint_range(0.0, 0.99) = 0.76;
 
 uniform float sun_intensity = 8.0;
 
-uniform sampler2D depth_buffer : hint_depth_texture, filter_nearest;
+// Single scattering alone leaves a daytime sky too dark and too directional: most of what reaches
+// the eye from overhead has bounced more than once. An isotropic term on the Rayleigh phase is the
+// cheapest honest shape for that - it grows with the same optical depth and has no direction.
+uniform float multiscatter : hint_range(0.0, 0.2) = 0.035;
 
-const int view_samples = 20;
+const int view_samples = 24;
 const int light_samples = 6;
 
 // Returns the near and far ray parameters of a sphere hit, or a reversed pair when the ray misses.
@@ -77,7 +86,7 @@ void fragment() {
 
     }
 
-    // Anything already drawn - the vessel, most obviously - caps the integral where it sits.
+    // Anything already drawn - the ground, the vehicle - caps the integral where it sits.
     float depth = texture(depth_buffer, SCREEN_UV).x;
 
     if (depth > 0.0) {
@@ -94,16 +103,27 @@ void fragment() {
 
     }
 
-    float step_length = (far - near) / float(view_samples);
+    // From orbit the air on the ray is a band in the middle of it and even spacing finds it. From
+    // inside, almost all of it is in the first few kilometres, and even spacing walks straight past
+    // the part that matters. The samples are bunched towards the eye as the eye descends.
+    float altitude = length(origin) - planet_radius;
+    float bunching = mix(3.0, 1.0, clamp(altitude / (atmosphere_radius - planet_radius), 0.0, 1.0));
 
     vec3 rayleigh_total = vec3(0.0);
     vec3 mie_total = vec3(0.0);
 
     vec2 view_optical_depth = vec2(0.0);
 
+    float span = far - near;
+
     for (int index = 0; index < view_samples; index++) {
 
-        vec3 position = origin + ray * (near + step_length * (float(index) + 0.5));
+        float low = pow(float(index) / float(view_samples), bunching);
+        float high = pow(float(index + 1) / float(view_samples), bunching);
+
+        float step_length = span * (high - low);
+
+        vec3 position = origin + ray * (near + span * (low + high) * 0.5);
 
         vec2 density = densities(position) * step_length;
 
@@ -139,11 +159,16 @@ void fragment() {
 
     float cosine = dot(ray, sun_direction);
 
-    float rayleigh_phase = 3.0 / (16.0 * PI) * (1.0 + cosine * cosine);
+    float rayleigh_phase = 3.0 / (16.0 * PI) * (1.0 + cosine * cosine) + multiscatter;
 
     float g = mie_direction;
     float mie_phase = 3.0 / (8.0 * PI) * ((1.0 - g * g) * (1.0 + cosine * cosine)) / ((2.0 + g * g) * pow(1.0 + g * g - 2.0 * g * cosine, 1.5));
 
-    ALBEDO = sun_intensity * (rayleigh_total * rayleigh_coefficients * rayleigh_phase + mie_total * mie_coefficient * mie_phase);
+    vec3 inscatter = sun_intensity * (rayleigh_total * rayleigh_coefficients * rayleigh_phase + mie_total * mie_coefficient * mie_phase);
+
+    vec3 transmittance = exp(-(rayleigh_coefficients * view_optical_depth.x + mie_coefficient * 1.1 * view_optical_depth.y));
+
+    ALBEDO = texture(screen_texture, SCREEN_UV).rgb * transmittance + inscatter;
+    ALPHA = 1.0;
 
 }

@@ -11,9 +11,7 @@ namespace FullThrust.Game;
 /// integrates whenever thrust or air makes that conic a lie.</summary>
 public sealed partial class Flight : Node {
 
-    // The surface maps are 8192 x 4096 - 977 m a texel - so at 70 km one texel covered twenty screen
-    // pixels and the ground read as mush. Held here until M4's LOD surface earns a lower orbit back.
-    private const double StartAltitude = 300000.0;
+    private const double StartAltitude = 100000.0;
     private const double StartInclination = 0.61;
     private const double StartTrueAnomaly = 0.60;
 
@@ -46,6 +44,10 @@ public sealed partial class Flight : Node {
 
     public CelestialBody Body { get; private set; }
     public Vessel Vessel { get; private set; }
+
+    /// <summary>Where the complex stands. Commissioned before anything reads the ground, because
+    /// levelling the pad changes the terrain function every other reader shares.</summary>
+    public LaunchSite Site { get; private set; }
 
     public Autopilot Autopilot => _own.Pilot;
 
@@ -81,6 +83,11 @@ public sealed partial class Flight : Node {
         Active = this;
 
         Body = BodyCatalog.Home;
+        Body.Terrain = Survey();
+
+        Site = LaunchSite.Home;
+        Site.Commission(Body);
+
         Vessel = Stack.Build();
 
         _own = new Tracked { Vessel = Vessel };
@@ -405,7 +412,7 @@ public sealed partial class Flight : Node {
 
         }
 
-        if (Body.AltitudeOf(vessel.Position) <= 0.0) {
+        if (Body.HeightAboveGround(vessel.Position, Time) <= 0.0) {
 
             vessel.Fate = VesselFate.Impacted;
 
@@ -527,6 +534,35 @@ public sealed partial class Flight : Node {
         Vessel.Position = up * (Body.Radius + Math.Max(altitude, 1.0));
         Vessel.Velocity = along * speed + Body.AirVelocityAt(Vessel.Position);
 
+        Vessel.AngularVelocity = Vector3d.Zero;
+
+        Rerail();
+
+        Frames.Rebase(Vessel.Position);
+
+    }
+
+    /// <summary>Drops the vehicle over a point on the ground, at a height over that ground and on a
+    /// level eastward path. The only way to reach a named place without flying to it.</summary>
+    public void PlaceAt(double latitudeDegrees, double longitudeDegrees, double height, double speed) {
+
+        double latitude = latitudeDegrees * Math.PI / 180.0;
+        double longitude = longitudeDegrees * Math.PI / 180.0;
+
+        double cosine = Math.Cos(latitude);
+
+        Vector3d up = new Vector3d(cosine * Math.Cos(longitude), cosine * Math.Sin(longitude), Math.Sin(latitude));
+
+        double ground = Body.Terrain != null ? Math.Max(Body.Terrain.Elevation(up), 0.0) : 0.0;
+
+        Vector3d inertial = Body.ToInertial(up, Time);
+
+        Vessel.Position = inertial * (Body.Radius + ground + Math.Max(height, 1.0));
+
+        Vector3d east = Vector3d.Cross(Vector3d.UnitZ, inertial).Normalized;
+
+        Vessel.Velocity = east * speed + Body.AirVelocityAt(Vessel.Position);
+        Vessel.Orientation = QuaternionD.LookAlong(east, inertial);
         Vessel.AngularVelocity = Vector3d.Zero;
 
         Rerail();
@@ -822,6 +858,26 @@ public sealed partial class Flight : Node {
     private static double Axis(Key positive, Key negative) {
 
         return (Input.IsKeyPressed(positive) ? 1.0 : 0.0) - (Input.IsKeyPressed(negative) ? 1.0 : 0.0);
+
+    }
+
+    // The survey is repository data rather than an imported resource, so it is read straight off
+    // disk. Sixty megabytes once at load; every patch of ground and every contact test reads it.
+    private static Terrain Survey() {
+
+        using FileAccess file = FileAccess.Open("res://Assets/Planet/elevation.r16", FileAccess.ModeFlags.Read);
+
+        if (file == null) {
+
+            GD.PushError("no elevation grid; run tools/planet_maps.py heightfield");
+
+            return null;
+
+        }
+
+        using System.IO.MemoryStream stream = new System.IO.MemoryStream(file.GetBuffer((long)file.GetLength()));
+
+        return Terrain.Load(stream, BodyCatalog.Home.Radius);
 
     }
 

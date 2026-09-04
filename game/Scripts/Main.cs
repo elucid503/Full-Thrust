@@ -144,8 +144,6 @@ public sealed partial class Main : Node3D {
 
         _flight.Advance(delta);
 
-        _planet.Sync(_flight.Time);
-
         Vector3 up = Frames.Direction(_flight.Vessel.Position.Normalized);
 
         _earthshine.LookAtFromPosition(Vector3.Zero, up, Mathf.Abs(up.Y) > 0.99f ? Vector3.Right : Vector3.Up);
@@ -164,6 +162,12 @@ public sealed partial class Main : Node3D {
         _earthlight.Position = focus;
 
         _camera.Sync(focus);
+
+        // The ground subdivides towards whoever is looking at it, and in map mode nobody is - the
+        // vessel stands in so the tree does not collapse to its roots and rebuild on the way back.
+        Vector3d eye = _camera.IsCurrent ? Frames.Origin + Frames.Sim(_camera.Eye) : _flight.Vessel.Position;
+
+        _planet.Sync(_flight.Time, eye);
 
         _map.Sync(delta);
 
@@ -215,7 +219,11 @@ public sealed partial class Main : Node3D {
 
             TonemapMode = Godot.Environment.ToneMapper.Aces,
             TonemapWhite = 6.0f,
-            TonemapExposure = 1.0f,
+
+            // Sunlit ground has an albedo near a third, and at unit exposure a third of the way up
+            // an ACES curve with six stops of headroom is a dark photograph. The headroom is there
+            // for the plume, not for the daylight.
+            TonemapExposure = 1.55f,
 
             GlowEnabled = true,
             GlowIntensity = 0.55f,
