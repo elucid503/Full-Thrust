@@ -21,12 +21,19 @@ public sealed partial class Ground : Node3D {
     // needs no bounding volume to be right before the patch has been built.
     private const double SplitFactor = 3.2;
 
+    // Merged back a little further out than it split, so a patch sitting on the boundary does not
+    // build and free itself once a frame for as long as the camera hovers there.
+    private const double MergeFactor = 4.0;
+
     // Sixteen halvings of a two-thousand-kilometre face leaves a thirty-metre patch, and a vertex
     // every metre. Past that the detail spectrum has nothing left to say.
     private const int MaxLevel = 16;
 
-    private const int BuildsPerFrame = 8;
-    private const int PendingLimit = 32;
+    private const int BuildsPerFrame = 6;
+
+    // In flight at once. Held under the core count so the workers building patches cannot take
+    // every thread the frame itself needs.
+    private static readonly int PendingLimit = Math.Max(4, System.Environment.ProcessorCount - 2);
 
     // Skirts, not stitching. Neighbouring patches meet at different levels wherever the tree steps,
     // and a wall dropped from every border vertex covers the gap for a hundred lines less code.
@@ -141,6 +148,10 @@ public sealed partial class Ground : Node3D {
 
     public int DeepestLevel { get; private set; }
 
+    /// <summary>Milliseconds the last traversal took on the main thread. The tree is walked every
+    /// frame and the meshes are handed over on this thread, so it is the one number worth watching.</summary>
+    public double SyncMilliseconds { get; private set; }
+
     public void Build(CelestialBody body, ShaderMaterial[] materials) {
 
         _body = body;
@@ -192,6 +203,8 @@ public sealed partial class Ground : Node3D {
     /// scene, and re-place everything standing through the floating origin.</summary>
     public void Sync(double time, Vector3d eye) {
 
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
+
         Vector3d local = _body.ToBodyFixed(eye, time);
 
         _pending = 0;
@@ -214,6 +227,8 @@ public sealed partial class Ground : Node3D {
 
         }
 
+        SyncMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+
     }
 
     private void Visit(Patch patch, Vector3d eye) {
@@ -227,7 +242,10 @@ public sealed partial class Ground : Node3D {
 
         }
 
-        bool wanted = patch.Level < MaxLevel && Distance(patch, eye) < SplitFactor * patch.Edge;
+        double reach = Distance(patch, eye);
+
+        bool wanted = patch.Level < MaxLevel
+            && reach < (patch.Children != null ? MergeFactor : SplitFactor) * patch.Edge;
 
         if (!wanted) {
 
@@ -312,6 +330,16 @@ public sealed partial class Ground : Node3D {
         PatchCount++;
 
         DeepestLevel = Math.Max(DeepestLevel, patch.Level);
+
+        // A build that threw would otherwise never complete and never be retried, and the patch
+        // would stay a hole in the ground for the rest of the flight.
+        if (patch.Job != null && patch.Job.IsCompleted && !patch.Job.IsCompletedSuccessfully) {
+
+            GD.PushError($"terrain patch build failed: {patch.Job.Exception?.GetBaseException().Message}");
+
+            patch.Job = null;
+
+        }
 
         if (patch.Job != null && patch.Job.IsCompletedSuccessfully && _adopted < BuildsPerFrame) {
 
@@ -456,12 +484,17 @@ public sealed partial class Ground : Node3D {
 
     /// <summary>Builds one patch off the terrain function. Runs on a worker: it touches nothing but
     /// the survey, which is immutable once loaded.</summary>
+    // Scratch for one patch, kept per worker. The sample grid is the same size every time and is
+    // dead the moment the mesh is woven, so allocating it fresh only feeds the collector.
+    [ThreadStatic] private static Vector3d[] _points;
+    [ThreadStatic] private static double[] _sounding;
+
     private Surface Tessellate(int face, double s, double t, double span) {
 
         int side = Grid + 3;
 
-        Vector3d[] points = new Vector3d[side * side];
-        double[] sounding = new double[side * side];
+        Vector3d[] points = _points ??= new Vector3d[side * side];
+        double[] sounding = _sounding ??= new double[side * side];
 
         double lowest = double.MaxValue;
         double highest = double.MinValue;

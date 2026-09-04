@@ -11,9 +11,18 @@ namespace FullThrust.Game;
 /// integrates whenever thrust or air makes that conic a lie.</summary>
 public sealed partial class Flight : Node {
 
-    private const double StartAltitude = 100000.0;
-    private const double StartInclination = 0.61;
-    private const double StartTrueAnomaly = 0.60;
+    // The pitch programme. Straight up until the vehicle is clear of the complex, then over on a
+    // gravity turn that has it flying horizontally by the time the air has run out. The exponent is
+    // what decides how much of the turn happens early: below a half it pitches over too hard and
+    // the stack flies at an angle of attack it cannot hold.
+    private const double KickAltitude = 380.0;
+    private const double TurnAltitude = 42_000.0;
+    private const double TurnExponent = 0.50;
+
+    // Thrust over weight at which the clamps let go. A real hold-down releases on a pressure
+    // signal a moment before the vehicle could lift itself; a couple of percent of margin is the
+    // same thing said in the only units this has.
+    private const double ReleaseMargin = 1.02;
 
     private const double IntegrationStep = 1.0 / 120.0;
 
@@ -93,22 +102,9 @@ public sealed partial class Flight : Node {
         _own = new Tracked { Vessel = Vessel };
         _traffic.Add(_own);
 
-        double radius = Body.Radius + StartAltitude;
-        double speed = Body.CircularVelocityAt(StartAltitude);
+        Seat();
 
-        double sine = Math.Sin(StartTrueAnomaly);
-        double cosine = Math.Cos(StartTrueAnomaly);
-
-        double inclinationSine = Math.Sin(StartInclination);
-        double inclinationCosine = Math.Cos(StartInclination);
-
-        Vessel.Position = new Vector3d(radius * cosine, radius * sine * inclinationCosine, radius * sine * inclinationSine);
-        Vessel.Velocity = new Vector3d(-speed * sine, speed * cosine * inclinationCosine, speed * cosine * inclinationSine);
-
-        // A shortest-arc rotation leaves the roll wherever it lands, which reads as a crooked navball.
-        Vessel.Orientation = QuaternionD.LookAlong(Vessel.Velocity, Vessel.Position);
-
-        Autopilot.Hold = AttitudeHold.Prograde;
+        Autopilot.Hold = AttitudeHold.Stability;
 
         Rerail();
 
@@ -130,6 +126,51 @@ public sealed partial class Flight : Node {
     public bool Ended => !Vessel.Intact;
 
     public bool DebugPaused { get; set; }
+
+    /// <summary>True while the clamps still have hold of the vehicle.</summary>
+    public bool Clamped { get; private set; } = true;
+
+    /// <summary>Sets the vehicle down on the mount with its own datum on the deck, pointed up and
+    /// rolled downrange, turning with the planet like everything else standing on it.</summary>
+    private void Seat() {
+
+        Vessel.Position = Site.SeatAt(Body, Vessel, Time);
+        Vessel.Velocity = Body.AirVelocityAt(Vessel.Position);
+        Vessel.Orientation = Site.AttitudeAt(Body, Time);
+
+        Vessel.AngularVelocity = Vector3d.Zero;
+        Vessel.ControlTorque = Vector3d.Zero;
+
+        Frames.Rebase(Vessel.Position);
+
+    }
+
+    /// <summary>Holds the stack on the pad until its own engine can carry it, then lets go for good.
+    /// The step is taken first and undone after, so propellant burns and the chamber comes up to
+    /// pressure exactly as it would with the bolts still in.</summary>
+    private void HoldDown() {
+
+        if (!Clamped) {
+
+            return;
+
+        }
+
+        if (Vessel.CurrentThrust > Vessel.Mass * Body.SurfaceGravity * ReleaseMargin) {
+
+            Clamped = false;
+
+            Rerail();
+
+            return;
+
+        }
+
+        Seat();
+
+        Rerail();
+
+    }
 
     public double AtmosphereTop => Body.AtmosphereTop;
 
@@ -174,6 +215,7 @@ public sealed partial class Flight : Node {
         if (!Ended) {
 
             ReadControls(delta);
+            SteerAscent();
             Retire();
             AimAtNode();
             RunWarpToNode();
@@ -209,6 +251,8 @@ public sealed partial class Flight : Node {
             remaining -= interval;
 
         }
+
+        HoldDown();
 
         Sweep();
 
@@ -412,6 +456,12 @@ public sealed partial class Flight : Node {
 
         }
 
+        if (Clamped && vessel == Vessel) {
+
+            return;
+
+        }
+
         if (Body.HeightAboveGround(vessel.Position, Time) <= 0.0) {
 
             vessel.Fate = VesselFate.Impacted;
@@ -536,6 +586,8 @@ public sealed partial class Flight : Node {
 
         Vessel.AngularVelocity = Vector3d.Zero;
 
+        Clamped = false;
+
         Rerail();
 
         Frames.Rebase(Vessel.Position);
@@ -564,6 +616,8 @@ public sealed partial class Flight : Node {
         Vessel.Velocity = east * speed + Body.AirVelocityAt(Vessel.Position);
         Vessel.Orientation = QuaternionD.LookAlong(east, inertial);
         Vessel.AngularVelocity = Vector3d.Zero;
+
+        Clamped = false;
 
         Rerail();
 
@@ -664,6 +718,18 @@ public sealed partial class Flight : Node {
             ClearNode();
 
         }
+
+    }
+
+    /// <summary>Where the ascent hold is pointed right now: a gravity turn measured off the height
+    /// over the ground rather than off a clock, so a heavy day and a light one fly the same shape.</summary>
+    private void SteerAscent() {
+
+        double height = Body.HeightAboveGround(Vessel.Position, Time);
+
+        double through = Math.Clamp((height - KickAltitude) / (TurnAltitude - KickAltitude), 0.0, 1.0);
+
+        Autopilot.AscentPitch = Math.PI * 0.5 * Math.Pow(through, TurnExponent);
 
     }
 
@@ -787,6 +853,7 @@ public sealed partial class Flight : Node {
             case Key.Key4: Autopilot.Hold = AttitudeHold.Antinormal; break;
             case Key.Key5: Autopilot.Hold = AttitudeHold.RadialOut; break;
             case Key.Key6: Autopilot.Hold = AttitudeHold.RadialIn; break;
+            case Key.Key8: Autopilot.Hold = AttitudeHold.Ascent; break;
 
             case Key.Key7:
 

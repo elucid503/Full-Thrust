@@ -125,7 +125,7 @@ public sealed class Hull {
 
     public double Volume => Sweep(Base, Tip, false).Measure;
 
-    public double TankVolume => Sweep(TankBottom, TankTop, false).Measure;
+    public double TankVolume => Column[Column.Length - 1].Measure;
 
     /// <summary>Swept area of the mould line over a span; dry mass divides by this, so a run of it carries its share.</summary>
     public double ShellArea(double low, double high) => Sweep(Math.Max(low, Base), Math.Min(high, Tip), true).Measure;
@@ -181,6 +181,28 @@ public sealed class Hull {
 
     }
 
+    // The mould line does not move, so the swept shell is the same integral every time it is asked
+    // for and the answer only scales with the mass hung on it.
+    private Accumulation _shell;
+    private bool _swept;
+
+    private Accumulation Shell {
+
+        get {
+
+            if (!_swept) {
+
+                _shell = Sweep(Base, Tip, true);
+                _swept = true;
+
+            }
+
+            return _shell;
+
+        }
+
+    }
+
     /// <summary>Dry structure, taken as a shell of uniform areal density over the whole mould line.</summary>
     public MassProperties Structure(double mass) {
 
@@ -190,7 +212,7 @@ public sealed class Hull {
 
         }
 
-        return Assemble(mass, Sweep(Base, Tip, true), (Base + Tip) * 0.5);
+        return Assemble(mass, Shell, (Base + Tip) * 0.5);
 
     }
 
@@ -203,9 +225,7 @@ public sealed class Hull {
 
         }
 
-        double top = FillHeight(Math.Min(fillFraction, 1.0));
-
-        return Assemble(mass, Sweep(TankBottom, top, false), TankBottom);
+        return Assemble(mass, Filled(Math.Min(fillFraction, 1.0)), TankBottom);
 
     }
 
@@ -244,6 +264,26 @@ public sealed class Hull {
             FirstMoment = firstMoment;
             SecondMoment = secondMoment;
             RadialMoment = radialMoment;
+
+        }
+
+        public Accumulation Plus(Accumulation other) {
+
+            return new Accumulation(Measure + other.Measure, FirstMoment + other.FirstMoment,
+                SecondMoment + other.SecondMoment, RadialMoment + other.RadialMoment);
+
+        }
+
+        public Accumulation Towards(Accumulation other, double fraction) {
+
+            return new Accumulation(
+
+                Measure + (other.Measure - Measure) * fraction,
+                FirstMoment + (other.FirstMoment - FirstMoment) * fraction,
+                SecondMoment + (other.SecondMoment - SecondMoment) * fraction,
+                RadialMoment + (other.RadialMoment - RadialMoment) * fraction
+
+            );
 
         }
 
@@ -308,10 +348,55 @@ public sealed class Hull {
 
     }
 
+    // Every integral over the tank, accumulated slice by slice from the bottom. Both the fill
+    // height and the propellant's mass properties are readings off this table rather than sweeps of
+    // their own: they are wanted for every stage on every step of the integrator, and a bisection
+    // that re-swept the tank forty-eight times to answer one of them was the whole cost of a frame.
+    private Accumulation[] _column;
+
+    private Accumulation[] Column {
+
+        get {
+
+            if (_column == null) {
+
+                _column = Accumulate();
+
+            }
+
+            return _column;
+
+        }
+
+    }
+
+    private Accumulation[] Accumulate() {
+
+        int slices = Math.Max(1, (int)Math.Ceiling((TankTop - TankBottom) / SliceLength));
+
+        Accumulation[] column = new Accumulation[slices + 1];
+
+        column[0] = new Accumulation(0.0, 0.0, 0.0, 0.0);
+
+        for (int index = 0; index < slices; index++) {
+
+            double bottom = TankBottom + (TankTop - TankBottom) * index / slices;
+            double top = TankBottom + (TankTop - TankBottom) * (index + 1) / slices;
+
+            column[index + 1] = column[index].Plus(Sweep(bottom, top, false));
+
+        }
+
+        return column;
+
+    }
+
     /// <summary>Height the propellant surface stands at for a given fill, measured from the datum.</summary>
     public double FillHeight(double fillFraction) {
 
-        double capacity = TankVolume;
+        Accumulation[] column = Column;
+
+        double capacity = column[column.Length - 1].Measure;
 
         if (capacity <= 0.0) {
 
@@ -319,17 +404,41 @@ public sealed class Hull {
 
         }
 
-        double wanted = capacity * fillFraction;
+        return Surface(column, capacity * Math.Clamp(fillFraction, 0.0, 1.0), out _);
 
-        double low = TankBottom;
-        double high = TankTop;
+    }
 
-        // Filled volume rises monotonically with height, so bisection converges without a derivative.
-        for (int iteration = 0; iteration < 48; iteration++) {
+    // Everything under the propellant's surface, interpolated between the two slice boundaries the
+    // surface falls between. A slice is two centimetres, so the interpolation is exact to the
+    // thickness of the paint.
+    private Accumulation Filled(double fillFraction) {
 
-            double middle = (low + high) * 0.5;
+        Accumulation[] column = Column;
 
-            if (Sweep(TankBottom, middle, false).Measure < wanted) {
+        double capacity = column[column.Length - 1].Measure;
+
+        if (capacity <= 0.0) {
+
+            return new Accumulation(0.0, 0.0, 0.0, 0.0);
+
+        }
+
+        Surface(column, capacity * fillFraction, out Accumulation under);
+
+        return under;
+
+    }
+
+    private double Surface(Accumulation[] column, double wanted, out Accumulation under) {
+
+        int low = 0;
+        int high = column.Length - 1;
+
+        while (high - low > 1) {
+
+            int middle = (low + high) >> 1;
+
+            if (column[middle].Measure <= wanted) {
 
                 low = middle;
 
@@ -342,7 +451,15 @@ public sealed class Hull {
 
         }
 
-        return (low + high) * 0.5;
+        double span = column[high].Measure - column[low].Measure;
+
+        double fraction = span > 0.0 ? (wanted - column[low].Measure) / span : 0.0;
+
+        under = column[low].Towards(column[high], fraction);
+
+        double step = (TankTop - TankBottom) / (column.Length - 1);
+
+        return TankBottom + step * (low + fraction);
 
     }
 

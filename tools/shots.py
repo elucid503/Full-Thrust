@@ -21,7 +21,10 @@ OUT = ".artifacts/m4"
 
 # The quadtree only subdivides towards the eye, so a jump has to be given frames to page in before
 # the shot is worth taking. This is how many state polls it takes to stop growing.
-SETTLE = 40
+SETTLE = 90
+
+# The bridge answers on the main thread, so polling it hard is polling the frame rate away.
+POLL = 0.12
 
 
 # Depression is measured off the local horizon and bearing off local north, so a view frames the
@@ -37,14 +40,26 @@ VIEWS = {
     # Where the imagery runs out and the detail materials take over.
     "alps": dict(latitude=46.0, longitude=7.7, altitude=6_000.0, look=14.0, bearing=90.0, distance=300.0),
 
-    # Low over a mountain: the case the whole detail spectrum exists for.
-    "valley": dict(latitude=46.2, longitude=7.9, altitude=700.0, look=6.0, bearing=200.0, distance=120.0),
+    # Low over bare rock, with no snow to flatten it: the case the detail spectrum exists for.
+    "valley": dict(latitude=36.2, longitude=-112.3, altitude=700.0, look=6.0, bearing=200.0, distance=120.0),
 
     # Coast, shallows and surf, looking out to sea from over the launch site.
     "cape": dict(latitude=28.52, longitude=-80.62, altitude=1_200.0, look=16.0, bearing=110.0, distance=180.0),
 
-    # Standing on the pad, looking down the range.
+    # The vehicle where the flight actually starts, clamped and untouched. These two come before
+    # anything that moves it, because moving it is what lets the clamps go.
+    "clamped": dict(look=8.0, bearing=200.0, distance=48.0, hold=True),
+
+    "complex": dict(look=26.0, bearing=225.0, distance=130.0, hold=True),
+
+    # Standing off the pad, looking down the range.
     "pad": dict(latitude=28.52, longitude=-80.62, altitude=45.0, look=3.0, bearing=90.0, distance=60.0),
+
+    # The antisolar point: nothing here should be lit by anything but its own cities.
+    "night": dict(latitude=-11.5, longitude=161.6, altitude=250_000.0, look=40.0, bearing=90.0, distance=110.0),
+
+    # The whole planet at once, which is the one view the quadtree has to serve from outside itself.
+    "map": dict(latitude=-25.0, longitude=-72.0, altitude=300_000.0, look=30.0, bearing=90.0, distance=90.0, map=True),
 
 }
 
@@ -67,11 +82,13 @@ def settle(rounds=SETTLE):
 
     for _ in range(rounds):
 
+        time.sleep(POLL)
+
         state = call("/state")
 
         steady = steady + 1 if state["patches"] == last else 0
 
-        if steady >= 5 and state["fps"] > 20:
+        if steady >= 8 and state["fps"] > 20:
             return state
 
         last = state["patches"]
@@ -83,10 +100,18 @@ def shoot(name, tag):
 
     view = VIEWS[name]
 
-    call("/control", pause="true", latitude=view["latitude"], longitude=view["longitude"],
-         altitude=view["altitude"], speed=0.0)
+    if view.get("hold"):
+
+        call("/control", pause="true")
+
+    else:
+
+        call("/control", pause="true", latitude=view["latitude"], longitude=view["longitude"],
+             altitude=view["altitude"], speed=0.0)
 
     call("/camera", look=view["look"], bearing=view["bearing"], distance=view["distance"])
+
+    call("/control", map="true" if view.get("map") else "false")
 
     state = settle()
 

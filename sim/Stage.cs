@@ -56,6 +56,32 @@ public sealed class Stage {
     /// <summary>Peak torque about any one body axis this stage's cluster can raise, newton-metres.</summary>
     public double ControlTorque { get; init; }
 
+    /// <summary>How far the engine can be swung off the axis, radians. A launch vehicle is steered
+    /// by this and not by its thrusters: the moment a gimbal raises goes with the thrust, so it is
+    /// hundreds of times what a cluster can manage and it costs no propellant of its own.</summary>
+    public double GimbalRange { get; init; }
+
+    /// <summary>Station the gimballed thrust acts through, which is the engine's own mounting deck.</summary>
+    public double GimbalPlane {
+
+        get {
+
+            foreach (Part part in Parts) {
+
+                if (part.Kind == PartKind.Engine) {
+
+                    return part.Top;
+
+                }
+
+            }
+
+            return Hull.Base;
+
+        }
+
+    }
+
     public double RcsPropellantMass { get; set; }
     public double RcsPropellantCapacity { get; init; }
 

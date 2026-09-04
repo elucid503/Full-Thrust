@@ -69,6 +69,9 @@ public static class Meridian {
     // fifteen seconds.
     public const double ControlTorque = 7000.0;
 
+    /// <summary>The bell swings on its mount, which is what steers the second half of an ascent.</summary>
+    public const double GimbalRange = 5.0 * Math.PI / 180.0;
+
     // Where the hardware that is not on the mould line sits. The lathe, the part list and the
     // craft diagram all read these, so none of them can place a nozzle the others disagree with.
     public const int RcsPorts = 4;
@@ -81,8 +84,8 @@ public static class Meridian {
     public const double EngineDeck = 0.36;
     public const double EngineLength = 2.55;
 
-    public const double EngineMouthRadius = 0.62;
-    public const double EngineThroatRadius = 0.115;
+    public const double EngineMouthRadius = 0.92;
+    public const double EngineThroatRadius = 0.1715;
     public const double EngineChamberRadius = 0.30;
 
     // Where the chamber ends and where the throat sits, as fractions of the engine's length below
@@ -97,7 +100,10 @@ public static class Meridian {
     public const double RcsSpecificImpulse = 224.0;
     public const double RcsPropellantMass = 120.0;
 
-    public const double ThrustNewtons = 180_000.0;
+    // Sized on what the stack weighs when the booster lets go rather than on the deorbit burn it
+    // ends its mission with: a second stage that cannot hold its own altitude never reaches orbit,
+    // whatever it has left in the tank.
+    public const double ThrustNewtons = 400_000.0;
     public const double SpecificImpulse = 342.0;
 
     // A gas-generator kerolox chamber. With the bell drawn above it, the exit pressure lands near a
@@ -106,52 +112,52 @@ public static class Meridian {
 
     public static readonly double ExpansionRatio = EngineMouthRadius * EngineMouthRadius / (EngineThroatRadius * EngineThroatRadius);
 
-    public static Hull BuildHull() {
+    public static Hull BuildHull(double datum) {
 
         Hull.Station[] stations = {
 
-            new Hull.Station(0.00, BodyRadius),
-            new Hull.Station(0.55, BodyRadius),
+            new Hull.Station(datum + 0.00, BodyRadius),
+            new Hull.Station(datum + 0.55, BodyRadius),
 
-            new Hull.Station(SkirtTop, BodyRadius),
-            new Hull.Station(0.98, BandRadius),
-            new Hull.Station(1.06, BandRadius),
-            new Hull.Station(1.09, BodyRadius),
+            new Hull.Station(datum + SkirtTop, BodyRadius),
+            new Hull.Station(datum + 0.98, BandRadius),
+            new Hull.Station(datum + 1.06, BandRadius),
+            new Hull.Station(datum + 1.09, BodyRadius),
 
-            new Hull.Station(3.08, BodyRadius),
-            new Hull.Station(3.10, WeldRadius),
-            new Hull.Station(3.12, BodyRadius),
+            new Hull.Station(datum + 3.08, BodyRadius),
+            new Hull.Station(datum + 3.10, WeldRadius),
+            new Hull.Station(datum + 3.12, BodyRadius),
 
-            new Hull.Station(5.38, BodyRadius),
-            new Hull.Station(5.40, WeldRadius),
-            new Hull.Station(5.42, BodyRadius),
+            new Hull.Station(datum + 5.38, BodyRadius),
+            new Hull.Station(datum + 5.40, WeldRadius),
+            new Hull.Station(datum + 5.42, BodyRadius),
 
-            new Hull.Station(TankTop, BodyRadius),
-            new Hull.Station(7.73, BandRadius),
-            new Hull.Station(7.87, BandRadius),
-            new Hull.Station(AdapterBase, BodyRadius),
+            new Hull.Station(datum + TankTop, BodyRadius),
+            new Hull.Station(datum + 7.73, BandRadius),
+            new Hull.Station(datum + 7.87, BandRadius),
+            new Hull.Station(datum + AdapterBase, BodyRadius),
 
             // The separation joint, where the bolts that hold the capsule down actually are.
             // Stepped, not ramped: without the two stations at the body radius either side, the
             // lathe reads the whole adapter as one long taper up to the band.
-            new Hull.Station(8.38, BodyRadius),
-            new Hull.Station(8.40, BandRadius),
-            new Hull.Station(8.50, BandRadius),
-            new Hull.Station(8.52, BodyRadius),
+            new Hull.Station(datum + 8.38, BodyRadius),
+            new Hull.Station(datum + 8.40, BandRadius),
+            new Hull.Station(datum + 8.50, BandRadius),
+            new Hull.Station(datum + 8.52, BodyRadius),
 
-            new Hull.Station(StageTop, BodyRadius),
+            new Hull.Station(datum + StageTop, BodyRadius),
 
         };
 
-        return new Hull(stations, SkirtTop, TankTop);
+        return new Hull(stations, datum + SkirtTop, datum + TankTop);
 
     }
 
     /// <summary>The nozzle in section: a cylindrical chamber, a throat, and a bell opening out
     /// from it. Drawn from the same figures the engine is rated on rather than sketched.</summary>
-    private static Hull.Station[] BuildBell() {
+    private static Hull.Station[] BuildBell(double datum) {
 
-        double top = EngineDeck;
+        double top = datum + EngineDeck;
         double chamber = top - EngineLength * ChamberDepth;
         double throat = top - EngineLength * ThroatDepth;
         double mouth = top - EngineLength;
@@ -183,20 +189,20 @@ public static class Meridian {
     }
 
     /// <summary>A quad in section: one pocket in the tank wall with a nozzle mouth at each end of it.</summary>
-    private static Hull.Station[] BuildQuad() {
+    private static Hull.Station[] BuildQuad(double datum) {
 
-        double low = RcsHeight - RcsHalfHeight;
-        double high = RcsHeight + RcsHalfHeight;
+        double low = datum + RcsHeight - RcsHalfHeight;
+        double high = datum + RcsHeight + RcsHalfHeight;
 
         return new[] {
 
             new Hull.Station(low, RcsPortRadius * 0.55),
             new Hull.Station(low + 0.06, RcsPortRadius),
-            new Hull.Station(RcsHeight - 0.06, RcsPortRadius),
+            new Hull.Station(datum + RcsHeight - 0.06, RcsPortRadius),
 
-            new Hull.Station(RcsHeight, RcsPortRadius * 0.42),
+            new Hull.Station(datum + RcsHeight, RcsPortRadius * 0.42),
 
-            new Hull.Station(RcsHeight + 0.06, RcsPortRadius),
+            new Hull.Station(datum + RcsHeight + 0.06, RcsPortRadius),
             new Hull.Station(high - 0.06, RcsPortRadius),
             new Hull.Station(high, RcsPortRadius * 0.55),
 
@@ -205,7 +211,7 @@ public static class Meridian {
     }
 
     /// <summary>The stage broken into the pieces a pilot can point at, tail to nose.</summary>
-    public static Part[] BuildParts() {
+    public static Part[] BuildParts(double datum) {
 
         return new[] {
 
@@ -215,10 +221,10 @@ public static class Meridian {
 
                 Kind = PartKind.Engine,
 
-                Bottom = EngineDeck - EngineLength,
-                Top = EngineDeck,
+                Bottom = datum + EngineDeck - EngineLength,
+                Top = datum + EngineDeck,
 
-                Profile = BuildBell(),
+                Profile = BuildBell(datum),
 
             },
 
@@ -228,8 +234,8 @@ public static class Meridian {
 
                 Kind = PartKind.Structure,
 
-                Bottom = 0.0,
-                Top = SkirtTop,
+                Bottom = datum,
+                Top = datum + SkirtTop,
 
             },
 
@@ -239,8 +245,8 @@ public static class Meridian {
 
                 Kind = PartKind.Tank,
 
-                Bottom = SkirtTop,
-                Top = TankTop,
+                Bottom = datum + SkirtTop,
+                Top = datum + TankTop,
 
             },
 
@@ -250,15 +256,15 @@ public static class Meridian {
 
                 Kind = PartKind.Thruster,
 
-                Bottom = RcsHeight - RcsHalfHeight,
-                Top = RcsHeight + RcsHalfHeight,
+                Bottom = datum + RcsHeight - RcsHalfHeight,
+                Top = datum + RcsHeight + RcsHalfHeight,
 
                 Count = RcsPorts,
                 RingRadius = BodyRadius - RcsPortRadius,
 
                 Depth = RcsPocketDepth,
 
-                Profile = BuildQuad(),
+                Profile = BuildQuad(datum),
 
             },
 
@@ -268,8 +274,8 @@ public static class Meridian {
 
                 Kind = PartKind.Structure,
 
-                Bottom = TankTop,
-                Top = StageTop,
+                Bottom = datum + TankTop,
+                Top = datum + StageTop,
 
             },
 
@@ -277,9 +283,9 @@ public static class Meridian {
 
     }
 
-    public static Stage BuildStage() {
+    public static Stage BuildStage(double datum = 0.0) {
 
-        Hull hull = BuildHull();
+        Hull hull = BuildHull(datum);
 
         double capacity = hull.TankVolume * PropellantDensity;
 
@@ -288,12 +294,12 @@ public static class Meridian {
             Name = "Meridian",
 
             Hull = hull,
-            Parts = BuildParts(),
+            Parts = BuildParts(datum),
 
             ShellMass = ShellMass,
 
             // A sixty centimetre powerhead on the deck: a solid of that size about its own centre.
-            Ballast = new MassProperties(EngineMass, EngineDeck - 0.21, new Vector3d(75.0, 75.0, 60.0)),
+            Ballast = new MassProperties(EngineMass, datum + EngineDeck - 0.21, new Vector3d(75.0, 75.0, 60.0)),
 
             PropellantMass = capacity,
             PropellantCapacity = capacity,
@@ -313,6 +319,7 @@ public static class Meridian {
             RcsSpecificImpulse = RcsSpecificImpulse,
 
             ControlTorque = ControlTorque,
+            GimbalRange = GimbalRange,
 
             RcsPropellantMass = RcsPropellantMass,
             RcsPropellantCapacity = RcsPropellantMass,

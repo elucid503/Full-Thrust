@@ -27,20 +27,28 @@ public sealed class Terrain {
     }
 
     // Longest detail wavelength, and how many times it is halved. The finest octave lands near
-    // fifteen metres, which is under the closest the mesh ever samples.
-    private const double DetailWavelength = 240_000.0;
-    private const int DetailOctaves = 15;
+    // fifteen metres, which is under the closest the mesh ever samples. There is no point starting
+    // any longer than this: the measured grid already carries everything above a kilometre, and
+    // every octave above that is one the renderer pays for on every vertex it builds.
+    private const double DetailWavelength = 30_000.0;
+    private const int DetailOctaves = 12;
+
+    // Ridges are a shape, not a texture. Below a hundred metres the rolling sum and the detail
+    // material carry the surface and a ninth octave of ridge would only cost.
+    private const int RidgeOctaves = 9;
 
     // Amplitude falls by this each octave. A half would be a fractal dimension of two - glassy,
     // nothing like ground. Real relief sits near 0.58 and keeps a metre of bump at fifteen metres.
     private const double DetailGain = 0.58;
 
-    private const double RollingAmplitude = 22.0;
-    private const double RidgeAmplitude = 420.0;
+    private const double RollingAmplitude = 34.0;
+    private const double RidgeAmplitude = 620.0;
 
     // Slope, in metres per metre off the measured grid, over which ground goes from flat to broken.
-    private const double SmoothSlope = 0.006;
-    private const double BrokenSlope = 0.075;
+    // A 741 m post smooths real relief badly, so the survey reads far flatter than the ground is and
+    // the band has to start low or nothing outside a mountain range ever stands up at all.
+    private const double SmoothSlope = 0.003;
+    private const double BrokenSlope = 0.055;
 
     private const uint FileMagic = 0x46485446;
 
@@ -249,7 +257,7 @@ public sealed class Terrain {
 
         // Offset so the ridge field is not the same field as the rolling one read twice. Ridges only
         // ever stand up out of the survey's own relief; nothing here digs into it.
-        double ridged = Noise.Ridged(at.X + 91.7, at.Y - 43.1, at.Z + 17.9, DetailOctaves, DetailGain);
+        double ridged = Noise.Ridged(at.X + 91.7, at.Y - 43.1, at.Z + 17.9, RidgeOctaves, DetailGain);
 
         return rolling + ridged * RidgeAmplitude * ruggedness;
 

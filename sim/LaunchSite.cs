@@ -25,6 +25,10 @@ public sealed class LaunchSite {
     /// <summary>Standoff of the pad deck over the natural ground, metres.</summary>
     private const double Standoff = 3.0;
 
+    /// <summary>Height of the launch mount's deck over the pad, metres. The vehicle's own datum
+    /// stands on it, and the complex is drawn to it, so the two cannot part company.</summary>
+    public const double MountHeight = 4.5;
+
     public string Name { get; init; }
 
     public double Latitude { get; init; }
@@ -81,6 +85,16 @@ public sealed class LaunchSite {
 
     /// <summary>The pad deck in the inertial frame, at a mission time.</summary>
     public Vector3d PositionAt(CelestialBody body, double time) => body.ToInertial(Up * (body.Radius + Height), time);
+
+    /// <summary>Where a vessel's centre of mass sits with its own datum on the mount, at a mission
+    /// time. The stack is held here until its engine can lift it.</summary>
+    public Vector3d SeatAt(CelestialBody body, Vessel vessel, double time) {
+
+        double seat = body.Radius + Height + MountHeight + vessel.CentreOfMassZ - vessel.Base;
+
+        return body.ToInertial(Up * seat, time);
+
+    }
 
     /// <summary>Straight up out of the pad, inertial.</summary>
     public Vector3d UpAt(CelestialBody body, double time) => body.ToInertial(Up, time);

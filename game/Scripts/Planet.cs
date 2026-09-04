@@ -49,6 +49,7 @@ public sealed partial class Planet : Node3D {
 
     public int PatchCount => _ground?.PatchCount ?? 0;
     public int DeepestLevel => _ground?.DeepestLevel ?? 0;
+    public double GroundMilliseconds => _ground?.SyncMilliseconds ?? 0.0;
 
     public void Build(CelestialBody body, Vector3 sunDirection) {
 
@@ -84,7 +85,7 @@ public sealed partial class Planet : Node3D {
 
         _clouds.SetShaderParameter("cloud_map", cloud);
         _clouds.SetShaderParameter("shape_noise", Volume(128, 0.035f, 4));
-        _clouds.SetShaderParameter("detail_noise", Volume(64, 0.060f, 3));
+        _clouds.SetShaderParameter("detail_noise", Billow(64, 0.075f, 3));
 
         _clouds.SetShaderParameter("sun_direction", sunDirection);
         _clouds.SetShaderParameter("planet_radius", radius);
@@ -220,6 +221,39 @@ public sealed partial class Planet : Node3D {
     // The frequency is in voxels of the volume itself, not in metres: the shader decides how many
     // metres a tile of it covers. Godot generates these on its own threads at load, which is a
     // volume that never has to be built by a tool or carried in the repository.
+    // Worley rather than value noise, and inverted: the cells read as the cauliflower a cloud
+    // frays into, where a second field of the same smooth noise only ever softened its edges.
+    private static NoiseTexture3D Billow(int size, float frequency, int octaves) {
+
+        FastNoiseLite noise = new FastNoiseLite {
+
+            NoiseType = FastNoiseLite.NoiseTypeEnum.Cellular,
+            CellularReturnType = FastNoiseLite.CellularReturnTypeEnum.Distance,
+            CellularDistanceFunction = FastNoiseLite.CellularDistanceFunctionEnum.Euclidean,
+
+            Frequency = frequency,
+
+            FractalType = FastNoiseLite.FractalTypeEnum.Fbm,
+            FractalOctaves = octaves,
+            FractalGain = 0.5f,
+
+        };
+
+        return new NoiseTexture3D {
+
+            Noise = noise,
+
+            Width = size,
+            Height = size,
+            Depth = size,
+
+            Seamless = true,
+            Normalize = true,
+
+        };
+
+    }
+
     private static NoiseTexture3D Volume(int size, float frequency, int octaves) {
 
         FastNoiseLite noise = new FastNoiseLite {

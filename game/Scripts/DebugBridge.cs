@@ -300,6 +300,14 @@ public sealed partial class DebugBridge : Node {
 
         }
 
+        // An ascent is four minutes of flight and the air holds the warp ladder at one, so the only
+        // way to watch one from a script in reasonable time is to run the clock faster.
+        if (double.TryParse(query["timescale"], out double scale)) {
+
+            Engine.TimeScale = Math.Clamp(scale, 0.1, 20.0);
+
+        }
+
         if (query["relativeX"] != null || query["relativeY"] != null || query["relativeZ"] != null) {
 
             double Value(string name) => double.TryParse(query[name], out double number) ? number : 0.0;
@@ -604,7 +612,11 @@ public sealed partial class DebugBridge : Node {
             state["angularVelocity"] = flight.Vessel.AngularVelocity.ToString();
             state["altitude"] = flight.Altitude;
             state["groundAltitude"] = flight.Body.HeightAboveGround(flight.Vessel.Position, flight.Time);
+            state["clamped"] = flight.Clamped;
+            state["dynamicPressure"] = flight.Vessel.Aero.DynamicPressure;
             state["patches"] = Planet.Active?.PatchCount ?? 0;
+            state["groundMs"] = Planet.Active?.GroundMilliseconds ?? 0.0;
+            state["flightMs"] = (GetTree().CurrentScene as Main)?.FlightMilliseconds ?? 0.0;
             state["patchLevel"] = Planet.Active?.DeepestLevel ?? 0;
             state["speed"] = flight.Vessel.Velocity.Length;
             state["apoapsis"] = flight.Orbit.ApoapsisRadius - flight.Body.Radius;

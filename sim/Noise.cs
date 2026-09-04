@@ -4,14 +4,42 @@ namespace FullThrust.Sim;
 /// permutation table, so the renderer's worker threads and the physics land on identical numbers.</summary>
 public static class Noise {
 
-    // Twelve gradients on the edges of a cube, the classic Perlin set.
-    private static readonly double[] Gradients = {
+    // A permutation of 0..255, laid down twice so an index and its successor never wrap. Built from
+    // a fixed multiplier rather than from Random: the terrain has to be the same field on every
+    // machine and in every runtime, because the renderer and the physics both read it.
+    private static readonly byte[] Permutation = BuildPermutation();
 
-        1.0, 1.0, 0.0, -1.0, 1.0, 0.0, 1.0, -1.0, 0.0, -1.0, -1.0, 0.0,
-        1.0, 0.0, 1.0, -1.0, 0.0, 1.0, 1.0, 0.0, -1.0, -1.0, 0.0, -1.0,
-        0.0, 1.0, 1.0, 0.0, -1.0, 1.0, 0.0, 1.0, -1.0, 0.0, -1.0, -1.0,
+    private static byte[] BuildPermutation() {
 
-    };
+        byte[] order = new byte[512];
+
+        for (int index = 0; index < 256; index++) {
+
+            order[index] = (byte)index;
+
+        }
+
+        uint state = 0x9E3779B9u;
+
+        for (int index = 255; index > 0; index--) {
+
+            state = state * 1664525u + 1013904223u;
+
+            int swap = (int)(state >> 16) % (index + 1);
+
+            (order[index], order[swap]) = (order[swap], order[index]);
+
+        }
+
+        for (int index = 0; index < 256; index++) {
+
+            order[index + 256] = order[index];
+
+        }
+
+        return order;
+
+    }
 
     /// <summary>Perlin noise on the unit lattice, in roughly [-1, 1].</summary>
     public static double Value(double x, double y, double z) {
@@ -96,25 +124,17 @@ public static class Noise {
 
     private static double Lerp(double a, double b, double t) => a + (b - a) * t;
 
+    // The twelve cube-edge gradients, chosen by four bits and evaluated as sums rather than read
+    // out of a table: this runs a couple of hundred million times over a flight and the bounds
+    // check on the table was a measurable part of it.
     private static double Dot(int x, int y, int z, double dx, double dy, double dz) {
 
-        int index = (int)(Hash(x, y, z) % 12u) * 3;
+        int hash = Permutation[Permutation[Permutation[x & 255] + (y & 255)] + (z & 255)] & 15;
 
-        return Gradients[index] * dx + Gradients[index + 1] * dy + Gradients[index + 2] * dz;
+        double u = hash < 8 ? dx : dy;
+        double v = hash < 4 ? dy : hash == 12 || hash == 14 ? dx : dz;
 
-    }
-
-    private static uint Hash(int x, int y, int z) {
-
-        uint h = (uint)(x * 0x27D4EB2D) ^ (uint)(y * 0x165667B1) ^ (uint)(z * 0x9E3779B1);
-
-        h ^= h >> 15;
-        h *= 0x2C1B3C6D;
-        h ^= h >> 13;
-        h *= 0x297A2D39;
-        h ^= h >> 16;
-
-        return h;
+        return ((hash & 1) == 0 ? u : -u) + ((hash & 2) == 0 ? v : -v);
 
     }
 

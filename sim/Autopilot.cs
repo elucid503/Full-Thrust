@@ -12,6 +12,7 @@ public enum AttitudeHold {
     RadialOut,
     RadialIn,
     Maneuver,
+    Ascent,
 
 }
 
@@ -35,6 +36,11 @@ public sealed class Autopilot {
     /// <summary>World direction the maneuver hold points at; set from the planned node each frame.</summary>
     public Vector3d ManeuverDirection { get; set; }
 
+    /// <summary>How far off vertical the ascent hold is currently flying, radians. The programme
+    /// that decides it belongs to the flight, which knows the height over the ground; all this has
+    /// to do is point the nose where it is told.</summary>
+    public double AscentPitch { get; set; }
+
     public void Update(Vessel vessel, double dt) {
 
         if (dt <= 0.0) {
@@ -43,8 +49,9 @@ public sealed class Autopilot {
 
         }
 
-        // The quads are the only attitude authority aboard, so a dry or disabled cluster means no control at all.
-        if (!vessel.HasRcs) {
+        // A live engine steers on its gimbal and a coasting one on its thrusters. With neither there
+        // is no authority at all, and a dry or disabled cluster on a shut engine is exactly that.
+        if (!vessel.HasControl) {
 
             vessel.ControlTorque = Vector3d.Zero;
 
@@ -87,13 +94,30 @@ public sealed class Autopilot {
     }
 
     /// <summary>Unit direction the nose should point for a hold, or zero where the frame is degenerate.</summary>
-    public static Vector3d Reference(AttitudeHold hold, Vector3d position, Vector3d velocity, Vector3d maneuver = default) {
+    public static Vector3d Reference(AttitudeHold hold, Vector3d position, Vector3d velocity, Vector3d maneuver = default, double ascentPitch = 0.0) {
 
         Vector3d prograde = velocity.Normalized;
         Vector3d normal = Vector3d.Cross(position, velocity).Normalized;
 
         // Radial-out is completed from the other two so the triad stays orthogonal on an eccentric orbit.
         Vector3d radial = Vector3d.Cross(prograde, normal).Normalized;
+
+        if (hold == AttitudeHold.Ascent) {
+
+            Vector3d up = position.Normalized;
+            Vector3d downrange = velocity - up * Vector3d.Dot(velocity, up);
+
+            // Straight up until there is a track to turn along. A vehicle on the pad already has
+            // the planet's own spin under it, so in practice this is only the degenerate case.
+            if (downrange.LengthSquared < 1.0) {
+
+                return up;
+
+            }
+
+            return (up * Math.Cos(ascentPitch) + downrange.Normalized * Math.Sin(ascentPitch)).Normalized;
+
+        }
 
         return hold switch {
 
@@ -116,7 +140,7 @@ public sealed class Autopilot {
 
     private Vector3d PointingError(Vessel vessel) {
 
-        Vector3d wanted = Reference(Hold, vessel.Position, vessel.Velocity, ManeuverDirection);
+        Vector3d wanted = Reference(Hold, vessel.Position, vessel.Velocity, ManeuverDirection, AscentPitch);
 
         if (wanted.LengthSquared <= 0.0) {
 

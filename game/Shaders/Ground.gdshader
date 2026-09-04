@@ -22,17 +22,35 @@ uniform vec3 planet_centre = vec3(0.0, 0.0, 0.0);
 uniform float planet_radius = 1274200.0;
 uniform float cloud_spin = 0.0;
 
-// A detail tile is held at roughly this fraction of the viewing distance, which keeps it the same
-// size on screen at every altitude. Halving it doubles the grain and quadruples the tiling.
-uniform float detail_pitch = 0.16;
-uniform float detail_floor = 1.0;
+// Two fixed tile sizes in metres rather than one chosen from the viewing distance. A tile that
+// tracks the camera keeps its size on screen, which sounds right and is not: the pattern then slides
+// through scale as the camera moves and reads as grain. Fixed tiles let the mip chain do what it is
+// for - the fine one averages itself away with distance and the coarse one takes over - which is
+// also what ground actually does to an eye moving away from it.
+uniform float detail_fine = 2.6;
+uniform float detail_coarse = 34.0;
+
+// And a third, wide enough that it is still resolved from a few kilometres up. Without it the
+// ground between the imagery's four-hundred-metre texels is one flat colour with grain on it, which
+// is exactly what an aerial view of it looked like.
+uniform float detail_macro = 380.0;
+
+// How much of the relief comes from the coarse tile. The fine one is grain; the coarse one is the
+// shape of the ground between one vertex of the mesh and the next.
+uniform float detail_balance : hint_range(0.0, 1.0) = 0.55;
+
+uniform float macro_contrast : hint_range(0.0, 1.0) = 0.27;
+
+// How much of the detail material's own colour is allowed through. The photograph is still the
+// ground's colour; this is the difference between rock and soil at a range no photograph resolves.
+uniform float material_hue : hint_range(0.0, 1.0) = 0.30;
 
 // Detail is worth nothing once a tile is under a pixel; past here the imagery carries it alone.
 uniform float detail_near = 18000.0;
 uniform float detail_far = 46000.0;
 
-uniform float detail_relief : hint_range(0.0, 4.0) = 1.40;
-uniform float detail_contrast : hint_range(0.0, 1.0) = 0.34;
+uniform float detail_relief : hint_range(0.0, 4.0) = 1.15;
+uniform float detail_contrast : hint_range(0.0, 1.0) = 0.30;
 
 // Slope, as one less the cosine to the local vertical, over which soil gives way to bare rock.
 uniform float rock_slope_low = 0.05;
@@ -50,10 +68,14 @@ uniform float wave_tile = 11.0;
 uniform float wave_speed = 0.045;
 uniform float wave_relief : hint_range(0.0, 3.0) = 0.85;
 
-// A mirror-smooth sea aliases into sparkle as soon as one wave is under a pixel, so the surface is
-// roughened with distance instead - which is what a real sea does to a sun glitter anyway.
-uniform float sea_roughness_near = 0.055;
-uniform float sea_roughness_far = 0.17;
+// A mirror-smooth sea aliases into sparkle the moment one wave falls under a pixel. The waves are
+// faded out over the same range the roughness comes up over, which is the same statement made twice:
+// what the normal map stops resolving is exactly what the roughness has to stand in for.
+uniform float sea_roughness_near = 0.075;
+uniform float sea_roughness_far = 0.30;
+
+uniform float swell_near = 500.0;
+uniform float swell_far = 6000.0;
 
 uniform float cloud_altitude = 9000.0;
 uniform float cloud_shadow : hint_range(0.0, 1.0) = 0.55;
@@ -67,7 +89,11 @@ uniform float close_lift : hint_range(0.5, 1.0) = 0.83;
 // slope facing away from the sun goes to black.
 uniform float sky_fill : hint_range(0.0, 0.5) = 0.11;
 
-uniform float night_gain = 0.9;
+// The lights are compressed into a JPEG, and a JPEG has no true black: without a floor taken off
+// it the whole night side carries a flat warm haze rather than only its cities.
+uniform float night_floor = 0.035;
+
+uniform float night_gain = 1.1;
 uniform float night_dusk = -0.02;
 uniform float night_dark = -0.20;
 
@@ -135,17 +161,15 @@ void fragment() {
 
     float range = length(VERTEX);
 
-    // One tile per this many metres, snapped to powers of two so the lattice offset each patch
-    // carries stays a whole number of tiles and no patch edge can show the join.
-    float octave = max(log2(range * detail_pitch), log2(detail_floor));
-
-    float coarse = floor(octave);
-    float blend = octave - coarse;
-
-    vec2 near_uv = UV2 / exp2(coarse);
-    vec2 far_uv = near_uv * 0.5;
+    vec2 near_uv = UV2 / detail_fine;
+    vec2 far_uv = UV2 / detail_coarse;
+    vec2 wide_uv = UV2 / detail_macro;
 
     float detail = 1.0 - smoothstep(detail_near, detail_far, range);
+
+    // The widest tile is worth carrying much further out than the other two, because from altitude
+    // it is the only thing standing between the imagery and a flat wash.
+    float macro = 1.0 - smoothstep(detail_far, detail_far * 3.4, range);
 
     vec3 world_normal = normalize(mat3(INV_VIEW_MATRIX) * NORMAL);
 
@@ -157,6 +181,18 @@ void fragment() {
 
     vec3 relief = vec3(0.0, 0.0, 1.0);
 
+    if (macro > 0.001) {
+
+        // Broad blotching first: the same material read at a few hundred metres a tile, which is
+        // the scale the imagery has already smoothed away.
+        vec3 wide = mix(texture(soil_colour, wide_uv).rgb, texture(rock_colour, wide_uv).rgb, bare);
+
+        float blotch = dot(wide, vec3(0.2126, 0.7152, 0.0722));
+
+        ground *= 1.0 + macro_contrast * macro * (1.0 - snow * 0.6) * (blotch - 0.5) * 2.0;
+
+    }
+
     if (detail > 0.001) {
 
         vec3 near_grain = mix(texture(soil_colour, near_uv).rgb, texture(rock_colour, near_uv).rgb, bare);
@@ -165,13 +201,19 @@ void fragment() {
         vec3 near_bump = mix(texture(soil_normal, near_uv).rgb, texture(rock_normal, near_uv).rgb, bare);
         vec3 far_bump = mix(texture(soil_normal, far_uv).rgb, texture(rock_normal, far_uv).rgb, bare);
 
-        relief = mix(near_bump, far_bump, blend) * 2.0 - 1.0;
+        relief = mix(near_bump, far_bump, detail_balance) * 2.0 - 1.0;
 
-        // The imagery is the colour; the detail is only the variance the imagery cannot hold, so it
-        // is applied as a modulation about its own mean rather than mixed in as a second albedo.
-        float grain = dot(mix(near_grain, far_grain, blend), vec3(0.2126, 0.7152, 0.0722));
+        vec3 material = mix(near_grain, far_grain, detail_balance);
 
-        vec3 lifted = pow(ground, vec3(close_lift)) * (1.0 + detail_contrast * (1.0 - snow) * (grain - 0.5) * 2.0);
+        // The imagery is still the colour: the luminance is taken as a modulation about the
+        // material's own mean, and only a fraction of its hue is let through on top of that.
+        float grain = dot(material, vec3(0.2126, 0.7152, 0.0722));
+
+        vec3 tint = material / max(grain, 0.04);
+
+        vec3 lifted = pow(ground, vec3(close_lift)) * (1.0 + detail_contrast * (1.0 - snow * 0.6) * (grain - 0.5) * 2.0);
+
+        lifted *= mix(vec3(1.0), tint, material_hue * (1.0 - snow) * (1.0 - sea));
 
         ground = mix(ground, lifted, detail);
 
@@ -179,7 +221,9 @@ void fragment() {
 
     vec3 swell = vec3(0.0, 0.0, 1.0);
 
-    if (sea > 0.001 && detail > 0.001) {
+    float swell_fade = 1.0 - smoothstep(swell_near, swell_far, range);
+
+    if (sea > 0.001 && swell_fade > 0.001) {
 
         vec2 drift = vec2(TIME * wave_speed, TIME * wave_speed * 0.63);
 
@@ -195,8 +239,8 @@ void fragment() {
 
     vec3 water = mix(deep_colour, shallow_colour, shallow * shallow);
 
-    float land_relief = detail_relief * detail * (1.0 - snow * 0.7);
-    float sea_relief = wave_relief * detail;
+    float land_relief = detail_relief * detail * (1.0 - snow * 0.45);
+    float sea_relief = wave_relief * swell_fade;
 
     vec3 perturbed = mix(relief * vec3(land_relief, land_relief, 1.0), swell * vec3(sea_relief, sea_relief, 1.0), sea);
 
@@ -209,7 +253,7 @@ void fragment() {
 
     METALLIC = 0.0;
 
-    float swell_roughness = mix(sea_roughness_near, sea_roughness_far, smoothstep(300.0, 30000.0, range));
+    float swell_roughness = mix(sea_roughness_far, sea_roughness_near, swell_fade);
 
     ROUGHNESS = mix(mix(mix(0.93, 0.80, climate.b), 0.45, snow), swell_roughness, sea);
     SPECULAR = mix(0.5, 0.32, sea);
@@ -221,7 +265,9 @@ void fragment() {
     // Half the sky for a flat face, less for one tipped over, and none of it at night.
     float dome = 0.5 + 0.5 * clamp(dot(world_normal, up), 0.0, 1.0);
 
-    EMISSION = texture(night_map, UV).rgb * night_gain * night * lit * (1.0 - sea * 0.85)
+    vec3 lights = max(texture(night_map, UV).rgb - night_floor, vec3(0.0)) / (1.0 - night_floor);
+
+    EMISSION = lights * night_gain * night * lit * (1.0 - sea * 0.85)
         + ALBEDO * sky_fill * daylight * dome;
 
 }

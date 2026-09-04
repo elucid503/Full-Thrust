@@ -21,6 +21,7 @@ public sealed partial class Main : Node3D {
 
     private Flight _flight;
     private Planet _planet;
+    private LaunchComplex _complex;
     private VesselView _vessel;
     private MapView _map;
     private Hud _hud;
@@ -37,6 +38,7 @@ public sealed partial class Main : Node3D {
 
         _flight = GetNode<Flight>("Flight");
         _planet = GetNode<Planet>("Planet");
+        _complex = GetNode<LaunchComplex>("Complex");
         _vessel = GetNode<VesselView>("Vessel");
         _map = GetNode<MapView>("Map");
         _hud = GetNode<Hud>("Hud");
@@ -78,6 +80,7 @@ public sealed partial class Main : Node3D {
         _environment.Environment = BuildEnvironment();
 
         _planet.Build(_flight.Body, SunDirection);
+        _complex.Build(_flight.Body, _flight.Site);
         _vessel.Build(_flight.Vessel);
         _hud.Build(_flight);
 
@@ -140,9 +143,16 @@ public sealed partial class Main : Node3D {
 
     }
 
+    /// <summary>Milliseconds the last simulation step took, for the debug bridge.</summary>
+    public double FlightMilliseconds { get; private set; }
+
     private void Step(double delta) {
 
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
+
         _flight.Advance(delta);
+
+        FlightMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 
         Vector3 up = Frames.Direction(_flight.Vessel.Position.Normalized);
 
@@ -161,13 +171,21 @@ public sealed partial class Main : Node3D {
 
         _earthlight.Position = focus;
 
-        _camera.Sync(focus);
+        // Two metres of clearance over whatever the ground is doing under the vehicle, which is
+        // close enough to the ground under the camera at any arm length it can be swung to.
+        float clearance = (float)(_flight.Body.SurfaceRadiusUnder(_flight.Vessel.Position, _flight.Time) + 2.0);
 
-        // The ground subdivides towards whoever is looking at it, and in map mode nobody is - the
-        // vessel stands in so the tree does not collapse to its roots and rebuild on the way back.
-        Vector3d eye = _camera.IsCurrent ? Frames.Origin + Frames.Sim(_camera.Eye) : _flight.Vessel.Position;
+        _camera.Sync(focus, Frames.Point(Vector3d.Zero), clearance);
+
+        // The ground subdivides towards whoever is looking at it, and culls what is under their
+        // horizon - so it has to be the camera actually rendering, or the map frames a whole planet
+        // and gets back only the hemisphere the vehicle can see.
+        Vector3 viewpoint = _map.Open ? _map.Camera.GlobalPosition : _camera.Eye;
+
+        Vector3d eye = Frames.Origin + Frames.Sim(viewpoint);
 
         _planet.Sync(_flight.Time, eye);
+        _complex.Sync(_flight.Time, eye);
 
         _map.Sync(delta);
 

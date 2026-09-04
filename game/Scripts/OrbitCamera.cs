@@ -87,7 +87,11 @@ public sealed partial class OrbitCamera : Node3D {
 
     }
 
-    public void Sync(Vector3 focus) {
+    /// <summary>Swings the arm and then lifts the eye clear of the ground, so a chase view close to
+    /// the surface cannot end up looking at the inside of a hill.</summary>
+    public void Sync(Vector3 focus, Vector3 centre, float floor) {
+
+        Vector3 vertical = (focus - centre).Normalized();
 
         Vector3 arm = new Vector3(
 
@@ -99,8 +103,25 @@ public sealed partial class OrbitCamera : Node3D {
 
         Position = focus;
 
-        _camera.Position = arm * Distance;
-        _camera.LookAt(GlobalPosition, Vector3.Up);
+        Vector3 eye = focus + arm * Distance;
+
+        Vector3 radial = eye - centre;
+
+        float height = radial.Length();
+
+        if (height > 0.0f && height < floor) {
+
+            eye = centre + radial * (floor / height);
+
+        }
+
+        _camera.GlobalPosition = eye;
+
+        // Rolled to the local vertical rather than to the world's: at any latitude but the equator
+        // the two are different, and on the ground the difference is a horizon that leans.
+        Vector3 look = (GlobalPosition - eye).Normalized();
+
+        _camera.LookAt(GlobalPosition, Mathf.Abs(look.Dot(vertical)) > 0.999f ? Vector3.Up : vertical);
 
     }
 

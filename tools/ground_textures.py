@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Build the ground's detail materials from ambientCG, and the sea's wave normal from noise.
+"""Build the ground's detail materials from ambientCG, the launch complex's, and a wave normal.
 
 The surface imagery is 415 m a texel, so from anywhere under about forty kilometres it is a flat
 colour field. These two materials are what stands in below that: they carry no colour of their own -
@@ -7,7 +7,13 @@ the photograph is the colour - only the luminance variance and the normals that 
 cannot hold. That is why they are picked on the standard deviation of their normal map rather than
 on how much they look like ground, and why the albedo is reduced to a grey.
 
-    py tools/ground_textures.py                 build with the chosen pair
+The complex's materials are taken the other way round: an apron is concrete and reads as concrete,
+so its colour is kept rather than reduced. Its steelwork is the hull's own painted set, tinted -
+there is no reason to carry a second white-painted-metal texture for it.
+
+    py tools/ground_textures.py                 build every material
+    py tools/ground_textures.py ground          only the detail pair and the wave normal
+    py tools/ground_textures.py pad             only the complex's surfaces
     py tools/ground_textures.py audit A B C     print the detail in each candidate and stop
 
 The wave normal is generated rather than downloaded. A water normal map is band-limited noise and
@@ -34,6 +40,10 @@ SIZE = 1024
 # surface the imagery hands over to them.
 ROCK = "Rock030"
 SOIL = "Ground037"
+
+# The apron the complex stands on, and the road that reaches it.
+CONCRETE = "Concrete016"
+ASPHALT = "Asphalt014"
 
 WAVE_SIZE = 512
 
@@ -85,20 +95,39 @@ def build_material(asset, name):
     colour = read(archive, asset, "Color").convert("RGB").resize((SIZE, SIZE), Image.LANCZOS)
     normal = read(archive, asset, "NormalGL").convert("RGB").resize((SIZE, SIZE), Image.LANCZOS)
 
-    # Only the luminance is used, and a colour cast in it would tint the imagery it modulates. The
-    # range is stretched so the material's own contrast survives being reduced to one channel.
-    grey = np.asarray(colour, dtype=np.float32).mean(axis=2)
+    # Centred on a mid grey rather than reduced to one: the shader takes the luminance as a
+    # modulation of the photograph and a fraction of the hue as the material the ground is made of,
+    # and a greyed material can only ever supply the first of those. Centring is what lets it be a
+    # modulation at all - a material that averaged dark would darken every surface it landed on.
+    pixels = np.asarray(colour, dtype=np.float32)
+
+    grey = pixels.mean(axis=2, keepdims=True)
 
     low, high = np.percentile(grey, 2), np.percentile(grey, 98)
     level = np.clip((grey - low) / max(high - low, 1e-6), 0.0, 1.0)
 
-    # Centred on the mean, because the shader applies it as a modulation about a half.
-    flat = np.clip(64.0 + level * 127.0, 0, 255).astype(np.uint8)
+    hue = pixels / np.maximum(grey, 1.0)
 
-    Image.fromarray(np.stack([flat] * 3, axis=-1), "RGB").save(os.path.join(OUT, f"{name}_colour.jpg"), quality=92, subsampling=0)
+    balanced = np.clip(hue * (64.0 + level * 127.0), 0, 255).astype(np.uint8)
+
+    Image.fromarray(balanced, "RGB").save(os.path.join(OUT, f"{name}_colour.jpg"), quality=92, subsampling=0)
     normal.save(os.path.join(OUT, f"{name}_normal.jpg"), quality=94, subsampling=0)
 
     print(f"  {asset} -> {name}, normal sigma {np.asarray(normal, dtype=np.float32)[..., :2].std():.2f}")
+
+
+def build_surface(asset, name):
+    """A material kept as it arrived, for a surface that is meant to read as what it is."""
+
+    archive = download(asset)
+
+    colour = read(archive, asset, "Color").convert("RGB").resize((SIZE, SIZE), Image.LANCZOS)
+    normal = read(archive, asset, "NormalGL").convert("RGB").resize((SIZE, SIZE), Image.LANCZOS)
+
+    colour.save(os.path.join(OUT, f"{name}_colour.jpg"), quality=92, subsampling=0)
+    normal.save(os.path.join(OUT, f"{name}_normal.jpg"), quality=94, subsampling=0)
+
+    print(f"  {asset} -> {name}")
 
 
 def tileable_noise(size, cells, octaves):
@@ -161,14 +190,25 @@ def main():
 
     os.makedirs(OUT, exist_ok=True)
 
-    print("building detail materials")
+    wanted = sys.argv[1:] or ["ground", "pad"]
 
-    build_material(ROCK, "rock")
-    build_material(SOIL, "soil")
+    if "ground" in wanted:
 
-    print("building wave normal")
+        print("building detail materials")
 
-    build_wave()
+        build_material(ROCK, "rock")
+        build_material(SOIL, "soil")
+
+        print("building wave normal")
+
+        build_wave()
+
+    if "pad" in wanted:
+
+        print("building complex surfaces")
+
+        build_surface(CONCRETE, "pad_concrete")
+        build_surface(ASPHALT, "pad_asphalt")
 
     print("done")
 

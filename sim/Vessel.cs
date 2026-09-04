@@ -270,6 +270,17 @@ public sealed class Vessel {
 
         get {
 
+            return (RcsEnabled ? ThrusterTorqueLimit : 0.0) + GimbalTorqueLimit;
+
+        }
+
+    }
+
+    /// <summary>What the clusters alone can raise, whether or not they are switched on.</summary>
+    public double ThrusterTorqueLimit {
+
+        get {
+
             double total = 0.0;
 
             foreach (Stage stage in _stages) {
@@ -283,6 +294,26 @@ public sealed class Vessel {
             }
 
             return total;
+
+        }
+
+    }
+
+    /// <summary>What the live engine can raise by swinging on its mount. Zero the moment it shuts
+    /// down, which is exactly when a real vehicle hands its attitude back to the thrusters.</summary>
+    public double GimbalTorqueLimit {
+
+        get {
+
+            Stage stage = Active;
+
+            if (stage == null || stage.GimbalRange <= 0.0) {
+
+                return 0.0;
+
+            }
+
+            return CurrentThrust * Math.Abs(CentreOfMassZ - stage.GimbalPlane) * Math.Sin(stage.GimbalRange);
 
         }
 
@@ -368,7 +399,10 @@ public sealed class Vessel {
 
     }
 
-    public bool HasRcs => RcsEnabled && ControlTorqueLimit > 0.0;
+    /// <summary>Whether anything aboard can raise an attitude moment at all.</summary>
+    public bool HasControl => ControlTorqueLimit > 0.0;
+
+    public bool HasRcs => RcsEnabled && ThrusterTorqueLimit > 0.0;
 
     /// <summary>Translation force the clusters are currently commanding, in world axes.</summary>
     public Vector3d RcsForce {
@@ -395,7 +429,7 @@ public sealed class Vessel {
 
         get {
 
-            if (!HasRcs) {
+            if (!HasControl) {
 
                 return 0.0;
 
@@ -403,9 +437,15 @@ public sealed class Vessel {
 
             double limit = ControlTorqueLimit;
 
+            // Only the share of the moment the thrusters are actually raising is charged to the
+            // bottle; the gimbal's share is paid for out of the main tank like any other thrust.
+            double thrusters = RcsEnabled ? ThrusterTorqueLimit : 0.0;
+
+            double share = limit > 0.0 ? thrusters / limit : 0.0;
+
             double attitude = limit > 0.0 ? ControlTorque.Length / (limit * Math.Sqrt(3.0)) : 0.0;
 
-            return Math.Clamp(attitude + Clamped(TranslationCommand).Length / Math.Sqrt(3.0), 0.0, 1.0);
+            return Math.Clamp(attitude * share + Clamped(TranslationCommand).Length / Math.Sqrt(3.0), 0.0, 1.0);
 
         }
 

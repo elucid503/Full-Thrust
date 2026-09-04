@@ -24,27 +24,45 @@ uniform float top_radius = 1281200.0;
 uniform float cloud_spin = 0.0;
 
 uniform float coverage_floor : hint_range(0.0, 1.0) = 0.20;
-uniform float coverage_ceiling : hint_range(0.0, 1.0) = 0.78;
+uniform float coverage_ceiling : hint_range(0.0, 1.0) = 0.66;
 
 // Metres per tile of each volume, inverted. The shape tile is wide enough that its repeat is broken
 // up by the cover map long before the eye finds it.
-uniform float shape_scale = 0.00008;
+// Metres per tile of the shape volume, inverted. A hundred kilometres: cloud masses on a weather
+// map are tens of kilometres across, and a tile an order of magnitude under that reads from orbit
+// as static rather than as cloud. The same volume is read again a dozen times tighter, because at
+// that width alone one cloud spans no variation at all and comes out as a slab of erosion.
+uniform float shape_scale = 0.0000092;
+uniform float shape_ratio = 13.0;
+uniform float shape_mix : hint_range(0.0, 1.0) = 0.42;
 uniform float detail_scale = 0.0012;
-uniform float detail_erosion : hint_range(0.0, 1.0) = 0.34;
+uniform float detail_erosion : hint_range(0.0, 1.0) = 0.46;
+
+// The same volume read far wider: a weather field a hundred kilometres across that decides how much
+// of the map's cover actually builds and how tall it gets. Without it every cloud on the planet is
+// the same cloud, which is exactly how the first deck read.
+// How far out the frayed edges are still worth resolving.
+uniform float erosion_near = 24000.0;
+uniform float erosion_far = 120000.0;
+
+uniform float weather_scale = 0.16;
+uniform float weather_depth : hint_range(0.0, 1.0) = 0.65;
 
 // Extinction per metre through solid cloud. A three-kilometre tower at this coefficient comes out
 // near optical depth twenty, which is what a real cumulus stops.
-uniform float density_scale = 0.0065;
+uniform float density_scale = 0.0078;
 
 uniform float light_reach = 1700.0;
 
-uniform float sun_power = 5.5;
+uniform float sun_power = 7.2;
 
 uniform float forward_scatter : hint_range(0.0, 0.99) = 0.62;
 uniform float back_scatter : hint_range(-0.99, 0.0) = -0.18;
 
 uniform float powder : hint_range(0.0, 1.0) = 0.55;
-uniform float ambient_gain : hint_range(0.0, 2.0) = 0.55;
+// Held low on purpose: the sky fills a cloud's shaded side, but filling it as much as the sun
+// lights its top leaves a flat white card with no form in it at all.
+uniform float ambient_gain : hint_range(0.0, 2.0) = 0.36;
 
 uniform float drift = 0.0;
 
@@ -94,7 +112,7 @@ float remap(float value, float low, float high) {
 
 }
 
-float density_at(vec3 position) {
+float density_at(vec3 position, float erosion) {
 
     float radius = length(position);
 
@@ -114,13 +132,29 @@ float density_at(vec3 position) {
 
     }
 
-    // Flat bottomed and feathered on top, and the more cover there is the taller it is allowed to
-    // build - which is the difference between a stratus sheet and a stack of cumulus.
-    float profile = smoothstep(0.0, 0.14, level) * (1.0 - smoothstep(0.30 + cover * 0.55, 1.02, level));
-
     vec3 wind = vec3(drift, 0.0, drift * 0.4);
 
-    float shape = texture(shape_noise, position * shape_scale + wind).r;
+    float weather = texture(shape_noise, position * (shape_scale * weather_scale) + wind * 0.25).r;
+
+    // Under a weak weather field the map's cover thins to a sheet; under a strong one it builds.
+    cover *= mix(1.0 - weather_depth, 1.0 + weather_depth * 0.45, weather);
+
+    if (cover <= 0.0) {
+
+        return 0.0;
+
+    }
+
+    // Flat bottomed and feathered on top. How far up it is allowed to build is the weather's to
+    // decide, which is the difference between a stratus sheet and a stack of cumulus standing on it.
+    float ceiling = 0.16 + weather * 0.62 + cover * 0.24;
+
+    float profile = smoothstep(0.0, 0.10 + weather * 0.10, level) * (1.0 - smoothstep(ceiling, ceiling + 0.30, level));
+
+    float wide = texture(shape_noise, position * shape_scale + wind).r;
+    float close = texture(shape_noise, position * (shape_scale * shape_ratio) + wind * 2.3).r;
+
+    float shape = mix(wide, close, shape_mix);
 
     float density = remap(shape, 1.0 - cover * profile, 1.0);
 
@@ -130,14 +164,20 @@ float density_at(vec3 position) {
 
     }
 
+    if (erosion <= 0.001) {
+
+        return density * density_scale;
+
+    }
+
     // Erosion is strongest at the top of the deck, where a real cloud frays and the base does not.
     float wisp = texture(detail_noise, position * detail_scale + wind * 3.0).r;
 
-    return remap(density, wisp * detail_erosion * (0.25 + 0.75 * level), 1.0) * density_scale;
+    return remap(density, wisp * erosion * (0.25 + 0.75 * level), 1.0) * density_scale;
 
 }
 
-float towards_sun(vec3 position) {
+float towards_sun(vec3 position, float erosion) {
 
     float step_length = light_reach / float(light_steps);
 
@@ -145,11 +185,9 @@ float towards_sun(vec3 position) {
 
     for (int index = 0; index < light_steps; index++) {
 
-        // Cone-widened along the ray: the samples fan out into the neighbourhood the light actually
-        // came through rather than reading one thin line of it.
         vec3 at = position + sun_direction * (step_length * (float(index) + 0.5));
 
-        optical += density_at(at) * step_length;
+        optical += density_at(at, erosion) * step_length;
 
     }
 
@@ -242,9 +280,15 @@ void fragment() {
 
     for (int index = 0; index < view_steps; index++) {
 
-        vec3 position = origin + ray * (near + step_length * (float(index) + offset));
+        float travelled = near + step_length * (float(index) + offset);
 
-        float density = density_at(position);
+        vec3 position = origin + ray * travelled;
+
+        // A cloud two hundred kilometres off is a shape, not a texture: eroding it there only
+        // shatters it into single pixels, which is what a marched deck reads as from orbit.
+        float erosion = detail_erosion * (1.0 - smoothstep(erosion_near, erosion_far, travelled));
+
+        float density = density_at(position, erosion);
 
         if (density <= 0.0) {
 
@@ -252,18 +296,25 @@ void fragment() {
 
         }
 
-        float optical = towards_sun(position);
+        float optical = towards_sun(position, erosion);
 
         // The powder term is what gives a cloud a dark core against a bright edge; without it a
         // thick cloud lit from behind reads as a flat grey card.
         float energy = exp(-optical) * mix(1.0, (1.0 - exp(-optical * 2.0)) * 2.0, powder);
 
-        float lit = smoothstep(-0.12, 0.03, dot(position / length(position), sun_direction));
+        float elevation = dot(position / length(position), sun_direction);
+
+        float lit = smoothstep(-0.12, 0.03, elevation);
+
+        // The sky a cloud sits under is only bright while there is a sun over the horizon to light
+        // it. Without this the ambient term carries straight through the terminator and the night
+        // side of the deck glows blue.
+        float dusk = smoothstep(-0.30, 0.08, elevation);
 
         float level = clamp((length(position) - base_radius) / (top_radius - base_radius), 0.0, 1.0);
 
         vec3 light = sun_colour * (sun_power * energy * phase * lit)
-            + sky_colour * ambient_gain * (0.35 + 0.65 * level);
+            + sky_colour * ambient_gain * (0.35 + 0.65 * level) * dusk;
 
         float extinction = density * step_length;
         float remaining = exp(-extinction);

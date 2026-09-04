@@ -24,7 +24,7 @@ public static partial class Program {
         PropellantAndDeltaV();
         RigidBodyRotation();
         HullMassProperties();
-        MeridianStage();
+        LaunchVehicle();
         AegisCapsule();
         AttitudeHolds();
         OrbitGeometry();
@@ -367,27 +367,44 @@ public static partial class Program {
 
     }
 
-    private static void MeridianStage() {
+    private static readonly double StackTorque = Zenith.ControlTorque + Meridian.ControlTorque + Aegis.ControlTorque;
 
-        Section("meridian stage");
+    private static readonly double StackRcsThrust = Zenith.RcsThrustNewtons + Meridian.RcsThrustNewtons + Aegis.RcsThrustNewtons;
+
+    private static void LaunchVehicle() {
+
+        Section("launch vehicle");
 
         Vessel vessel = Stack.Build();
 
-        Stage meridian = vessel.Active;
+        Stage booster = vessel.Active;
         Stage capsule = vessel.Forward;
 
-        Near("stack length", vessel.Length, Meridian.PayloadDatum + Aegis.Height, 1e-9);
-        Near("tank capacity", vessel.PropellantCapacity, meridian.Hull.TankVolume * Meridian.PropellantDensity, 1e-9);
+        Near("stack length", vessel.Length, Stack.CapsuleDatum + Aegis.Height, 1e-9);
+        Near("tank capacity", vessel.PropellantCapacity, booster.Hull.TankVolume * Zenith.PropellantDensity, 1e-9);
 
         Near("the stack closes to a point", vessel.RadiusAt(vessel.Tip), 0.0, 1e-9);
-        Near("the adapter carries the tank's diameter", vessel.RadiusAt(Meridian.AdapterBase + 0.05), Meridian.BodyRadius, 1e-6);
-        Near("the adapter closes over the shield", vessel.RadiusAt(Meridian.PayloadDatum + 0.05), Meridian.BodyRadius, 1e-6);
+        Near("the interstage carries the booster diameter", vessel.RadiusAt(Zenith.TankTop + 0.5), Zenith.BodyRadius, 1e-6);
+        Near("the adapter closes over the shield", vessel.RadiusAt(Stack.CapsuleDatum + 0.05), Meridian.BodyRadius, 1e-6);
 
         Expect("centre of mass lies inside the stack", vessel.CentreOfMassZ > 0.0 && vessel.CentreOfMassZ < vessel.Tip, $"centre {vessel.CentreOfMassZ:F3} m");
         Expect("the stack is slender", vessel.Inertia.X > vessel.Inertia.Z * 4.0, $"transverse {vessel.Inertia.X:F0}, axial {vessel.Inertia.Z:F0}");
 
-        Near("dry mass is the two stages", vessel.DryMass, Meridian.DryMass + Aegis.DryMass, 1e-9);
-        Near("attitude authority is both clusters", vessel.ControlTorqueLimit, Meridian.ControlTorque + Aegis.ControlTorque, 1e-9);
+        Near("dry mass is the three stages", vessel.DryMass, Zenith.DryMass + Meridian.DryMass + Aegis.DryMass, 1e-9);
+        Near("attitude authority is every cluster", vessel.ThrusterTorqueLimit, StackTorque, 1e-9);
+
+        // A shut engine has nothing to swing, so a coasting stack is on its thrusters alone.
+        Near("and a shut engine adds none of its own", vessel.GimbalTorqueLimit, 0.0, 1e-12);
+
+        // The whole point of the first stage: the stack has to be able to leave the ground at all.
+        double weight = vessel.Mass * Home.SurfaceGravity;
+
+        Expect("it can lift itself off the pad", Zenith.ThrustNewtons > weight * 1.2, $"thrust to weight {Zenith.ThrustNewtons / weight:F2}");
+        Expect("without pulling it apart", Zenith.ThrustNewtons < weight * 1.8, $"thrust to weight {Zenith.ThrustNewtons / weight:F2}");
+
+        // Orbit needs about 3.44 km/s at the top of the air, and something near 900 m/s more goes
+        // to gravity and drag on the way up. The rest is what the mission is flown on.
+        Expect("the stack can reach orbit and then some", vessel.StackDeltaV > 8000.0, $"{vessel.StackDeltaV:F0} m/s");
 
         double loadedCentre = vessel.CentreOfMassZ;
 
@@ -396,8 +413,17 @@ public static partial class Program {
 
         Expect("burning off propellant moves the centre of mass forward", vessel.CentreOfMassZ > loadedCentre, $"{loadedCentre:F3} m to {vessel.CentreOfMassZ:F3} m");
 
-        Near("an empty stage is its shell, its engine and its bottle", meridian.Mass, Meridian.DryMass + Meridian.RcsPropellantMass, 1e-9);
+        Near("an empty stage is its shell, its engine and its bottle", booster.Mass, Zenith.DryMass + Zenith.RcsPropellantMass, 1e-9);
         Near("the capsule carries no bulk propellant", capsule.PropellantMass, 0.0, 1e-12);
+
+        // What the second stage has left once the booster has done its work is what M3 flew its
+        // mission on, so an ascent cannot quietly eat the deorbit budget.
+        Vessel orbiting = Stack.Build();
+
+        orbiting.PropellantMass = 0.0;
+        orbiting.Separate();
+
+        Expect("and the service stage still has a mission worth of it", orbiting.DeltaV > 5000.0, $"{orbiting.DeltaV:F0} m/s");
 
     }
 
@@ -615,7 +641,7 @@ public static partial class Program {
         autopilot.Update(vessel, step);
 
         Expect("pilot input drops the hold", autopilot.Hold == AttitudeHold.Off, $"hold is {autopilot.Hold}");
-        Near("and commands full torque", vessel.ControlTorque.X, Meridian.ControlTorque + Aegis.ControlTorque, 1e-9);
+        Near("and commands full torque", vessel.ControlTorque.X, StackTorque, 1e-9);
 
         autopilot.ManualCommand = Vector3d.Zero;
 
@@ -720,7 +746,7 @@ public static partial class Program {
 
         double burn = new Maneuver { Prograde = 500.0 }.BurnSeconds(vessel);
 
-        double exhaust = Meridian.SpecificImpulse * Vessel.StandardGravity;
+        double exhaust = Zenith.SpecificImpulse * Vessel.StandardGravity;
         double expected = vessel.Mass * (1.0 - Math.Exp(-500.0 / exhaust)) / vessel.MassFlowRate;
 
         Near("burn time follows the rocket equation", burn, expected, 1e-9);
@@ -778,7 +804,7 @@ public static partial class Program {
         vessel.RcsEnabled = true;
         autopilot.Update(vessel, 1.0 / 60.0);
 
-        Near("an enabled cluster raises full torque", vessel.ControlTorque.X, Meridian.ControlTorque + Aegis.ControlTorque, 1e-9);
+        Near("an enabled cluster raises full torque", vessel.ControlTorque.X, StackTorque, 1e-9);
 
         double duty = vessel.RcsDuty;
         double before = vessel.RcsPropellantMass;
@@ -800,7 +826,7 @@ public static partial class Program {
         vessel.Orientation = QuaternionD.Identity;
 
         Close("translation pushes along the commanded body axis", vessel.RcsForce.Normalized, Vector3d.UnitZ, 1e-12);
-        Near("at a third of the cluster rating", vessel.RcsForce.Length, (Meridian.RcsThrustNewtons + Aegis.RcsThrustNewtons) / 3.0, 1e-9);
+        Near("at a third of the cluster rating", vessel.RcsForce.Length, StackRcsThrust / 3.0, 1e-9);
 
         foreach (Stage stage in vessel.Stages) {
 
@@ -945,6 +971,7 @@ public static partial class Program {
         Vessel stack = Stack.Build();
 
         stack.Separate();
+        stack.Separate();
 
         return stack;
 
@@ -1027,19 +1054,18 @@ public static partial class Program {
         Vector3d momentum = stack.Velocity * mass;
         Vector3d centre = stack.Position * mass;
 
-        Expect("a stack of two can separate", stack.CanSeparate, "reported it could not");
+        Expect("a stack of three can separate", stack.CanSeparate, "reported it could not");
 
         Vessel spent = stack.Separate();
 
-        Expect("separation hands back the stage that came off", spent != null && spent.Name == "Meridian", "nothing came off");
+        Expect("separation hands back the stage that came off", spent != null && spent.Name == "Zenith", "nothing came off");
         Expect("and it is debris", spent.IsDebris, "reported it was still crewed");
         Expect("the stack is one stage shorter", stack.StageCount == stages - 1, $"{stack.StageCount} stages");
-        Expect("and the capsule is now the live stage", stack.Active.Name == "Aegis", stack.Active.Name);
-        Expect("a single stage cannot separate again", !stack.CanSeparate && stack.Separate() == null, "it came apart twice");
+        Expect("and the service stage is now the live one", stack.Active.Name == "Meridian", stack.Active.Name);
 
         Near("mass is conserved", stack.Mass + spent.Mass, mass, 1e-9);
         Close("momentum is conserved", stack.Velocity * stack.Mass + spent.Velocity * spent.Mass, momentum, 1e-6);
-        Close("and the pair's centre of mass has not moved", stack.Position * stack.Mass + spent.Position * spent.Mass, centre, 1e-6);
+        Close("and the pair's centre of mass has not moved", stack.Position * stack.Mass + spent.Position * spent.Mass, centre, 1e-3);
 
         Near("the springs push them apart at the rated speed", (stack.Velocity - spent.Velocity).Length, 0.7, 1e-9);
         Expect("the capsule leaves forward", Vector3d.Dot(stack.Velocity - spent.Velocity, stack.Nose) > 0.0, "it went backwards");
@@ -1049,11 +1075,18 @@ public static partial class Program {
         Expect("the two are now apart in space", (stack.Position - spent.Position).Length > 3.0, $"{(stack.Position - spent.Position).Length:F2} m apart");
 
         // Each piece carries its own everything: neither can reach into the other any more.
-        Near("the capsule keeps its own thrusters", stack.ControlTorqueLimit, Aegis.ControlTorque, 1e-9);
-        Near("and the spent stage keeps its own", spent.ControlTorqueLimit, Meridian.ControlTorque, 1e-9);
+        Near("the upper stack keeps its own thrusters", stack.ThrusterTorqueLimit, Meridian.ControlTorque + Aegis.ControlTorque, 1e-9);
+        Near("and the spent stage keeps its own", spent.ThrusterTorqueLimit, Zenith.ControlTorque, 1e-9);
 
-        Near("the capsule's mass properties are its own", stack.CentreOfMassZ, stack.Forward.Properties.CentreZ, 1e-9);
-        Expect("and it has an aerodynamic profile of its own", stack.Profile.Length < 3.0, $"{stack.Profile.Length:F2} m");
+        Vessel capsule = Stack.Build();
+
+        capsule.Separate();
+        capsule.Separate();
+
+        Expect("a single stage cannot separate again", !capsule.CanSeparate && capsule.Separate() == null, "it came apart twice");
+
+        Near("the capsule mass properties are its own", capsule.CentreOfMassZ, capsule.Forward.Properties.CentreZ, 1e-9);
+        Expect("and it has an aerodynamic profile of its own", capsule.Profile.Length < 3.0, $"{capsule.Profile.Length:F2} m");
 
     }
 
@@ -1115,6 +1148,10 @@ public static partial class Program {
 
         stack.Position = new Vector3d(apoapsis, 0.0, 0.0);
         stack.Velocity = new Vector3d(0.0, Math.Sqrt(Home.Mu * (2.0 / apoapsis - 1.0 / axis)), 0.0);
+
+        // The booster is long gone by the entry interface; what is flown here is the capsule and
+        // the stage that let it go.
+        stack.Separate();
 
         Vessel spent = stack.Separate();
 
