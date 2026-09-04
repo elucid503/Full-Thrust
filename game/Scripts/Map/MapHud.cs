@@ -73,6 +73,7 @@ public sealed partial class MapHud : CanvasLayer {
     public void Dismiss() {
 
         _popover.Dismiss();
+        _plan.CancelPlacement();
 
     }
 

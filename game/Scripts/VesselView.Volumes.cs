@@ -28,6 +28,19 @@ public sealed partial class VesselView {
     private static BoxMesh _proxy;
     private static NoiseTexture3D _noise;
     private static int _seeds;
+    private static readonly Dictionary<Vessel, VesselView> Views = new();
+
+    public int PlumeObstacles { get; private set; }
+
+    public override void _ExitTree() {
+
+        if (_vessel != null) {
+
+            Views.Remove(_vessel);
+
+        }
+
+    }
 
     private EntryField _entryField;
     private MeshInstance3D _wake;
@@ -250,6 +263,7 @@ public sealed partial class VesselView {
     private void BakeProfile() {
 
         _entryField = new EntryField(_vessel);
+        Views[_vessel] = this;
 
         foreach (ShaderMaterial material in new[] { _sheathMaterial, _wakeMaterial }) {
 
@@ -279,6 +293,7 @@ public sealed partial class VesselView {
 
     private void SyncPlume() {
 
+        PlumeObstacles = 0;
         _effectDelta = Mathf.Min((float)GetProcessDeltaTime(), 0.1f);
         _effectTime += _effectDelta;
         _thrust = Mathf.Lerp(_thrust, (float)_vessel.ThrustSetting, 1.0f - Mathf.Exp(-_effectDelta / 0.065f));
@@ -372,7 +387,84 @@ public sealed partial class VesselView {
         Vector3 high = new Vector3(radius, 0.0f, radius) + crossflow.Max(Vector3.Zero);
 
         Ground(volume, material, length, exit, ref low, ref high);
+        Obstacle(volume, material, length, exit, spread, ref low, ref high);
         Bounds(volume, material, low, high);
+
+    }
+
+    private void Obstacle(MeshInstance3D volume, ShaderMaterial material, float length, float exit, float spread,
+        ref Vector3 low, ref Vector3 high) {
+
+        Vector3d nozzle = _vessel.Position + Frames.Sim(volume.GlobalPosition - GlobalPosition);
+        Basis inverse = volume.GlobalBasis.Inverse();
+        VesselView nearest = null;
+        float distance = float.PositiveInfinity;
+
+        foreach (VesselView view in Views.Values) {
+
+            if (view == this || !view._vessel.Intact) {
+
+                continue;
+
+            }
+
+            Vessel vessel = view._vessel;
+            float radius = (float)Math.Sqrt(vessel.Length * vessel.Length * 0.25 + vessel.Profile.MaxRadius * vessel.Profile.MaxRadius);
+            Vector3d centre = vessel.Position + vessel.Nose * ((vessel.Base + vessel.Tip) * 0.5 - vessel.CentreOfMassZ);
+            Vector3 offset = inverse * Frames.Direction(centre - nozzle);
+            float along = -offset.Y;
+            float width = exit + Mathf.Max(along, 0.0f) * spread * 2.0f;
+
+            if (along + radius < 0.0f || along - radius > length || new Vector2(offset.X, offset.Z).Length() > width + radius) {
+
+                continue;
+
+            }
+
+            if (offset.LengthSquared() < distance) {
+
+                nearest = view;
+                distance = offset.LengthSquared();
+
+            }
+
+        }
+
+        material.SetShaderParameter("ship_enabled", nearest != null);
+
+        if (nearest == null) {
+
+            return;
+
+        }
+
+        PlumeObstacles++;
+        Vessel target = nearest._vessel;
+        Basis rotation = new Basis(Frames.Rotation(target.Orientation)).Inverse() * volume.GlobalBasis;
+        Vector3 origin = Frames.Direction(target.Orientation.Conjugate.Rotate(nozzle - target.Position))
+            + Vector3.Up * (float)target.CentreOfMassZ;
+        Transform3D transform = new Transform3D(rotation, origin);
+        EntryField field = nearest._entryField;
+        Vector3 boxLow = new Vector3(-field.Radius, field.Base, -field.Radius);
+        Vector3 boxHigh = new Vector3(field.Radius, field.Tip, field.Radius);
+
+        material.SetShaderParameter("ship_from_plume", transform);
+        material.SetShaderParameter("ship_field", field.Distance);
+        material.SetShaderParameter("ship_domain", field.Domain);
+        material.SetShaderParameter("ship_min", boxLow);
+        material.SetShaderParameter("ship_max", boxHigh);
+
+        Transform3D toPlume = transform.AffineInverse();
+        float layer = Mathf.Max(exit * 0.7f, 0.03f);
+
+        for (int corner = 0; corner < 8; corner++) {
+
+            Vector3 point = toPlume * new Vector3((corner & 1) == 0 ? boxLow.X : boxHigh.X,
+                (corner & 2) == 0 ? boxLow.Y : boxHigh.Y, (corner & 4) == 0 ? boxLow.Z : boxHigh.Z);
+            low = low.Min(point - Vector3.One * layer);
+            high = high.Max(point + Vector3.One * layer);
+
+        }
 
     }
 
@@ -454,7 +546,14 @@ public sealed partial class VesselView {
     private void SyncSheath() {
 
         AeroForces air = _vessel.Aero;
+        CelestialBody body = Flight.Active.Body;
+        double altitude = body.AltitudeOf(_vessel.Position);
         float wanted = air.InAir ? Mathf.Clamp((float)(air.HeatFlux / SheathFlux), 0.0f, 1.4f) : 0.0f;
+
+        // Lift faint upper-atmosphere emission while retaining the established peak brightness.
+        wanted = wanted < 1.0f ? Mathf.Sqrt(wanted) : wanted;
+        float depth = (float)(body.AtmosphereTop - altitude);
+        wanted *= Mathf.SmoothStep(0.0f, (float)Math.Max(body.AtmosphereTop * 0.02, 1.0), depth);
         wanted *= Mathf.SmoothStep(2.5f, 5.0f, (float)air.Mach);
         _sheathHeat = Mathf.Lerp(_sheathHeat, wanted, 1.0f - Mathf.Exp(-_effectDelta / 0.12f));
 
@@ -503,7 +602,7 @@ public sealed partial class VesselView {
         float densityLength = Mathf.Lerp(1.0f, 0.4f, Mathf.SmoothStep(0.025f, 0.18f, (float)air.Density));
         float wake = radius * (6.0f + 5.0f * Mathf.Min(_sheathHeat, 1.0f)) * 1.5f * densityLength;
         float ablation = HasShield(_vessel.Leading) ? Mathf.Clamp(((float)_vessel.SkinTemperature - 900.0f) / 600.0f, 0.0f, 1.0f) : 0.0f;
-        double ambient = Flight.Active.Body.Atmosphere.TemperatureAt(Flight.Active.Body.AltitudeOf(_vessel.Position));
+        double ambient = body.Atmosphere.TemperatureAt(altitude);
         EntrySpectrum spectrum = EntrySpectrum.For(air, ambient, _vessel.SkinTemperature);
 
         foreach (ShaderMaterial material in new[] { _sheathMaterial, _wakeMaterial }) {

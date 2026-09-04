@@ -2,7 +2,7 @@ using FullThrust.Sim;
 
 namespace FullThrust.Sim.Tests;
 
-public static class Program {
+public static partial class Program {
 
     private static int _checks;
     private static int _failures;
@@ -37,6 +37,7 @@ public static class Program {
         Staging();
         Reentry();
         NozzleExpansion();
+        VesselContacts();
 
         Console.WriteLine();
         Console.WriteLine($"{_checks - _failures}/{_checks} checks passed");
@@ -210,7 +211,8 @@ public static class Program {
 
         Section("integrator matches kepler");
 
-        (Vector3d position, Vector3d velocity) = (new Vector3d(1344200.0, 0.0, 0.0), Rotated(new Vector3d(0.0, 3900.0, 0.0), 0.45));
+        double radius = Home.Radius + Home.AtmosphereTop + 25000.0;
+        (Vector3d position, Vector3d velocity) = (new Vector3d(radius, 0.0, 0.0), Rotated(new Vector3d(0.0, 3900.0, 0.0), 0.45));
 
         Vessel vessel = Coaster(position, velocity);
 
@@ -690,8 +692,9 @@ public static class Program {
 
         Section("maneuver nodes");
 
-        double radius = 1344200.0;
-        double circular = Home.CircularVelocityAt(70000.0);
+        double altitude = Home.AtmosphereTop + 25000.0;
+        double radius = Home.Radius + altitude;
+        double circular = Home.CircularVelocityAt(altitude);
 
         Orbit orbit = Orbit.FromStateVectors(new Vector3d(radius, 0.0, 0.0), new Vector3d(0.0, circular, 0.0), Home.Mu, 0.0);
 

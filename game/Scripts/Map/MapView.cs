@@ -96,6 +96,22 @@ public sealed partial class MapView : Node3D {
         AddChild(_hud);
 
         _hud.Build(_flight, this);
+        _flight.VesselChanged += SelectVessel;
+
+    }
+
+    private void SelectVessel(Vessel previous, Vessel selected) {
+
+        Dragging = false;
+        _slipping = false;
+        _looking = false;
+        _hud.Dismiss();
+
+        if (Open) {
+
+            Frame();
+
+        }
 
     }
 

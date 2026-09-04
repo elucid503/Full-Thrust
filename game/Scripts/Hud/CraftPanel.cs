@@ -93,6 +93,7 @@ public sealed partial class CraftPanel : Control {
         AddChild(_stage);
 
         flight.Staged += _ => Lay();
+        flight.VesselChanged += (_, _) => Lay();
 
         Lay();
 

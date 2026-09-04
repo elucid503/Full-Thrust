@@ -31,6 +31,7 @@ public sealed partial class PropellantGauge : Control {
 
         _vessel = vessel;
         _popover = popover;
+        _hovered = null;
 
         CustomMinimumSize = Extent;
         Size = Extent;

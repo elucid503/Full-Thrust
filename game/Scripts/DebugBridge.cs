@@ -157,6 +157,12 @@ public sealed partial class DebugBridge : Node {
 
                     break;
 
+                case "/key":
+
+                    Respond(context, PressKey(context.Request.QueryString));
+
+                    break;
+
                 case "/screenshot":
 
                     _ = Capture(context, context.Request.QueryString["path"]);
@@ -273,6 +279,14 @@ public sealed partial class DebugBridge : Node {
         if (bool.TryParse(query["pause"], out bool pause)) {
 
             flight.DebugPaused = pause;
+
+        }
+
+        if (query["relativeX"] != null || query["relativeY"] != null || query["relativeZ"] != null) {
+
+            double Value(string name) => double.TryParse(query[name], out double number) ? number : 0.0;
+            flight.PlaceRelative(new Vector3d(Value("relativeX"), Value("relativeY"), Value("relativeZ")),
+                new Vector3d(Value("relativeVX"), Value("relativeVY"), Value("relativeVZ")), query["reverse"] == "true");
 
         }
 
@@ -432,6 +446,38 @@ public sealed partial class DebugBridge : Node {
 
     }
 
+    private static Dictionary<string, object> PressKey(System.Collections.Specialized.NameValueCollection query) {
+
+        if (!Enum.TryParse(query["code"], true, out Key code) || code == Key.None) {
+
+            return new Dictionary<string, object> { ["error"] = "usage: /key?code=Bracketleft|Bracketright|Z|X|R[&press=down|up|tap]" };
+
+        }
+
+        string press = query["press"] ?? "tap";
+
+        foreach (bool pressed in new[] { true, false }) {
+
+            if ((press == "down" && !pressed) || (press == "up" && pressed)) {
+
+                continue;
+
+            }
+
+            Input.ParseInputEvent(new InputEventKey {
+
+                Keycode = code,
+                PhysicalKeycode = code,
+                Pressed = pressed,
+
+            });
+
+        }
+
+        return new Dictionary<string, object> { ["key"] = code.ToString(), ["press"] = press };
+
+    }
+
     private static Dictionary<string, object> AimCamera(System.Collections.Specialized.NameValueCollection query) {
 
         OrbitCamera camera = OrbitCamera.Active;
@@ -501,6 +547,13 @@ public sealed partial class DebugBridge : Node {
         if (flight != null) {
 
             state["missionTime"] = flight.Time;
+            state["vessel"] = flight.Vessel.Name;
+            state["vesselIndex"] = flight.VesselIndex;
+            state["vesselCount"] = flight.VesselCount;
+            state["contacts"] = flight.ContactCount;
+            state["plumeObstacles"] = VesselView.Active?.PlumeObstacles ?? 0;
+            state["position"] = flight.Vessel.Position.ToString();
+            state["angularVelocity"] = flight.Vessel.AngularVelocity.ToString();
             state["altitude"] = flight.Altitude;
             state["speed"] = flight.Vessel.Velocity.Length;
             state["apoapsis"] = flight.Orbit.ApoapsisRadius - flight.Body.Radius;
@@ -510,6 +563,8 @@ public sealed partial class DebugBridge : Node {
             state["mass"] = flight.Vessel.Mass;
             state["deltaV"] = flight.Vessel.DeltaV;
             state["throttle"] = flight.Vessel.Throttle;
+            state["thrust"] = flight.Vessel.CurrentThrust;
+            state["rcsThrust"] = flight.Vessel.RcsForce.Length;
             state["warp"] = flight.Warp;
             state["hold"] = flight.Autopilot.Hold.ToString();
 
@@ -551,13 +606,25 @@ public sealed partial class DebugBridge : Node {
 
             foreach (Flight.Tracked debris in flight.Debris) {
 
+                Vector3d relativePosition = debris.Vessel.Position - flight.Vessel.Position;
+                Vector3d relativeVelocity = debris.Vessel.Velocity - flight.Vessel.Velocity;
+
                 tracked.Add(new Dictionary<string, object> {
 
                     ["name"] = debris.Vessel.Name,
                     ["altitude"] = flight.Body.AltitudeOf(debris.Vessel.Position),
                     ["range"] = (debris.Vessel.Position - flight.Vessel.Position).Length,
+                    ["relativePosition"] = new[] { relativePosition.X, relativePosition.Y, relativePosition.Z },
+                    ["relativeVelocity"] = new[] { relativeVelocity.X, relativeVelocity.Y, relativeVelocity.Z },
                     ["skinTemperature"] = debris.Vessel.SkinTemperature,
                     ["skinLimit"] = debris.Vessel.SkinLimit,
+                    ["throttle"] = debris.Vessel.Throttle,
+                    ["thrust"] = debris.Vessel.CurrentThrust,
+                    ["rcsThrust"] = debris.Vessel.RcsForce.Length,
+                    ["fuelMass"] = debris.Vessel.FuelMass,
+                    ["hold"] = debris.Pilot.Hold.ToString(),
+                    ["nodeDeltaV"] = debris.Plan?.DeltaV ?? 0.0,
+                    ["angularVelocity"] = debris.Vessel.AngularVelocity.ToString(),
 
                 });
 

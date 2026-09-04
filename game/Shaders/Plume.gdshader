@@ -27,6 +27,62 @@ uniform vec3 ground_impact = vec3(0.0);
 uniform float ground_radius = 0.0;
 uniform float ground_strength = 0.0;
 
+uniform bool ship_enabled = false;
+uniform sampler2D ship_field : filter_linear, repeat_disable;
+uniform mat4 ship_from_plume;
+uniform vec4 ship_domain;
+uniform vec3 ship_min;
+uniform vec3 ship_max;
+
+vec2 ship_interval(vec3 origin, vec3 direction, float reach) {
+
+    vec3 safe = mix(vec3(1.0), sign(direction), greaterThan(abs(direction), vec3(0.000001)))
+        * max(abs(direction), vec3(0.000001));
+    vec3 a = (ship_min - origin) / safe;
+    vec3 b = (ship_max - origin) / safe;
+    vec3 low = min(a, b);
+    vec3 high = max(a, b);
+    return vec2(max(0.0, max(low.x, max(low.y, low.z))), min(reach, min(high.x, min(high.y, high.z))));
+
+}
+
+vec3 ship_sample(vec3 point) {
+
+    vec2 radial = vec2(length(point.xz), point.y);
+    vec2 uv = (radial - ship_domain.xy) / ship_domain.zw;
+
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+
+        return vec3(length(max(max(ship_min - point, point - ship_max), vec3(0.0))), 0.0, 0.0);
+
+    }
+
+    return textureLod(ship_field, uv, 0.0).rgb;
+
+}
+
+float ship_visibility(vec3 point) {
+
+    vec3 origin = ship_from_plume[3].xyz;
+    vec3 offset = point - origin;
+    float reach = length(offset);
+    vec3 direction = offset / max(reach, 0.000001);
+    vec2 interval = ship_interval(origin, direction, reach);
+    float at = interval.x;
+
+    for (int step = 0; step < 24; step++) {
+
+        if (at >= interval.y) { return 1.0; }
+        float distance = ship_sample(origin + direction * at).x;
+        if (distance < 0.008) { return 0.0; }
+        at += max(distance * 0.85, 0.004);
+
+    }
+
+    return at >= interval.y ? 1.0 : 0.0;
+
+}
+
 vec4 exhaust_at(vec3 p) {
 
     float h = dot(p, ground_normal) + ground_offset;
@@ -85,6 +141,31 @@ vec4 exhaust_at(vec3 p) {
 
         light *= aperture * end * luminosity * brightness * throttle;
         extinction *= aperture * end * throttle;
+
+    }
+
+    if (ship_enabled) {
+
+        vec3 point = (ship_from_plume * vec4(p, 1.0)).xyz;
+        vec3 surface = ship_sample(point);
+
+        if (surface.x < 0.0) { return vec4(0.0); }
+
+        float visibility = ship_visibility(point);
+        vec3 radial_normal = vec3(point.x, 0.0, point.z) / max(length(point.xz), 0.00001);
+        vec3 normal = radial_normal * surface.y + vec3(0.0, surface.z, 0.0);
+        vec3 incoming = normalize(ship_from_plume[3].xyz - point);
+        float incidence = max(dot(normal, incoming), 0.0);
+        float layer = max(exit_radius * 0.38, 0.018);
+        float wall = exp(-surface.x / layer) * incidence;
+        wall *= 1.0 - smoothstep(layer, layer * 2.0, surface.x);
+        vec3 tangent = incoming - normal * dot(normal, incoming);
+        float turbulence = eddy(point / max(exit_radius * 2.0, 0.02) + tangent * effect_time * 4.0);
+
+        // An opaque hull removes the downstream stream; incident gas fans along the exposed skin.
+        light *= visibility;
+        extinction *= visibility;
+        light += mix(light, core_colour * length(light), 0.35) * wall * (1.2 + 2.0 * turbulence);
 
     }
 

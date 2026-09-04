@@ -9,7 +9,7 @@ namespace FullThrust.Game;
 /// <summary>Altitude and speed, over the shape of the orbit they came from.</summary>
 public sealed partial class TrajectoryPanel : Control {
 
-    private const int PanelWidth = 272;
+    private const int PanelWidth = 336;
     private const int PanelHeight = 74;
 
     // The panel's own hairline. The graph runs to it on every side, so the cell is the box.

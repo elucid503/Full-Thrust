@@ -7,7 +7,7 @@
     "Atmosphere": {
       "SeaLevelDensity": 1.225,
       "ScaleHeight": 5600.0,
-      "Top": 45000.0,
+      "Top": 75000.0,
       "SeaLevelTemperature": 288.0,
       "LapseRate": 0.00986,
       "TropopauseAltitude": 7250.0

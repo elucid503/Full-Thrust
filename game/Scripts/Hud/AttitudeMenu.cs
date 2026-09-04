@@ -14,7 +14,7 @@ public sealed partial class AttitudeMenu : Control {
     private const int Columns = 2;
 
     private const float RowHeight = 26.0f;
-    private const float CellWidth = 94.0f;
+    private const float CellWidth = 102.0f;
 
     private const float Inset = 5.0f;
     private const float Glyph = 22.0f;

@@ -32,25 +32,25 @@ public sealed partial class Flight : Node {
 
     public static Flight Active { get; private set; }
 
-    /// <summary>One body being propagated: what it is, the conic it is coasting on, and how much
-    /// real time the integrator still owes it.</summary>
+    // Every tracked state represents the same mission time, whether burning or coasting.
     public sealed class Tracked {
 
         public Vessel Vessel { get; init; }
 
         public Orbit Rails { get; set; }
 
-        internal double Debt;
+        public Autopilot Pilot { get; } = new Autopilot();
+        public Maneuver Plan { get; set; }
 
     }
 
     public CelestialBody Body { get; private set; }
     public Vessel Vessel { get; private set; }
 
-    public Autopilot Autopilot { get; private set; }
+    public Autopilot Autopilot => _own.Pilot;
 
     /// <summary>The planned impulse, or null when nothing is planned.</summary>
-    public Maneuver Node { get; private set; }
+    public Maneuver Node { get => _own.Plan; private set => _own.Plan = value; }
 
     public bool WarpingToNode { get; private set; }
 
@@ -66,7 +66,13 @@ public sealed partial class Flight : Node {
     /// <summary>Raised with a tracked body that has stopped existing, so its view goes with it.</summary>
     public event Action<Vessel> Scrubbed;
 
+    public event Action<Vessel, Vessel> VesselChanged;
+
     private readonly List<Tracked> _debris = new List<Tracked>();
+    private readonly List<Tracked> _traffic = new List<Tracked>();
+    private readonly HashSet<(Vessel, Vessel)> _separating = new();
+
+    public int ContactCount { get; private set; }
 
     private Tracked _own;
 
@@ -77,7 +83,8 @@ public sealed partial class Flight : Node {
         Body = BodyCatalog.Home;
         Vessel = Stack.Build();
 
-        Autopilot = new Autopilot();
+        _own = new Tracked { Vessel = Vessel };
+        _traffic.Add(_own);
 
         double radius = Body.Radius + StartAltitude;
         double speed = Body.CircularVelocityAt(StartAltitude);
@@ -102,8 +109,13 @@ public sealed partial class Flight : Node {
 
     }
 
-    /// <summary>Spent stages still being tracked, in the order they came off.</summary>
+    // The map and local views use this list for every vessel except the selected one.
     public IReadOnlyList<Tracked> Debris => _debris;
+
+    public int VesselCount => _traffic.Count;
+    public int VesselIndex => _traffic.IndexOf(_own);
+
+    public bool TrafficAccelerating => _traffic.Exists(track => track.Vessel.Intact && track.Vessel.IsAccelerating);
 
     /// <summary>What ended the flight, or Flying while it has not.</summary>
     public VesselFate Fate => Vessel.Fate;
@@ -122,15 +134,9 @@ public sealed partial class Flight : Node {
 
         get {
 
-            if (InAtmosphere) {
+            foreach (Tracked debris in _traffic) {
 
-                return true;
-
-            }
-
-            foreach (Tracked debris in _debris) {
-
-                if (Body.AirDensityAt(debris.Vessel.Position) > 0.0) {
+                if (debris.Vessel.Intact && Body.AirDensityAt(debris.Vessel.Position) > 0.0) {
 
                     return true;
 
@@ -148,30 +154,56 @@ public sealed partial class Flight : Node {
 
         if (DebugPaused) {
 
-            Vessel.Aero = Aerodynamics.Compute(Vessel, Body);
+            foreach (Tracked track in _traffic) {
+
+                track.Vessel.Aero = Aerodynamics.Compute(track.Vessel, Body);
+
+            }
+
             return;
 
         }
 
-        if (Ended) {
+        if (!Ended) {
 
-            return;
+            ReadControls(delta);
+            Retire();
+            AimAtNode();
+            RunWarpToNode();
 
         }
 
-        ReadControls(delta);
+        if (Ended || TrafficAccelerating || AirborneTraffic) {
 
-        Retire();
-        AimAtNode();
-        RunWarpToNode();
+            WarpStep = 0;
+
+        }
+
+        if (WarpStep > 0 && ContactInterval(delta * Warp) < delta * Warp) {
+
+            WarpStep = 0;
+
+        }
 
         double step = delta * Warp;
 
-        Time += step;
+        for (double remaining = step; remaining > 0.0;) {
 
-        Fly(_own, delta, step);
+            double interval = ContactInterval(remaining);
+            Time += interval;
 
-        Sweep(delta, step);
+            foreach (Tracked track in _traffic) {
+
+                Fly(track, interval / Warp, interval);
+
+            }
+
+            Contacts();
+            remaining -= interval;
+
+        }
+
+        Sweep();
 
         Judge(Vessel);
 
@@ -185,25 +217,40 @@ public sealed partial class Flight : Node {
 
         Vessel vessel = track.Vessel;
 
-        bool flown = !vessel.IsDebris;
+        if (!vessel.Intact) {
+
+            return;
+
+        }
+
+        if (track.Plan != null && Time > track.Plan.Time + 2.0) {
+
+            track.Plan = null;
+
+        }
+
+        if (track.Plan != null && !track.Plan.IsEmpty) {
+
+            track.Pilot.ManeuverDirection = track.Plan.WorldDeltaV(track.Rails);
+
+        }
+        else if (track.Pilot.Hold == AttitudeHold.Maneuver) {
+
+            track.Pilot.Hold = AttitudeHold.Stability;
+
+        }
 
         if (vessel.IsAccelerating || Body.AirDensityAt(vessel.Position) > 0.0) {
 
-            // Both thrust and air hold the ladder at one, so the integrator only ever advances real
-            // time and the debt never has to carry a warped step.
-            track.Debt += step;
+            // Finish the frame's remainder so nearby coasting vessels never run ahead of this one.
+            for (double remaining = step; remaining > 0.0;) {
 
-            while (track.Debt >= IntegrationStep) {
+                double interval = Math.Min(remaining, IntegrationStep);
 
-                if (flown) {
+                track.Pilot.Update(vessel, interval);
+                Integrator.Step(vessel, Body, interval);
 
-                    Autopilot.Update(vessel, IntegrationStep);
-
-                }
-
-                Integrator.Step(vessel, Body, IntegrationStep);
-
-                track.Debt -= IntegrationStep;
+                remaining -= interval;
 
             }
 
@@ -212,8 +259,6 @@ public sealed partial class Flight : Node {
             return;
 
         }
-
-        track.Debt = 0.0;
 
         (Vector3d position, Vector3d velocity) = track.Rails.StateAt(Time);
 
@@ -226,11 +271,7 @@ public sealed partial class Flight : Node {
 
         if (WarpStep == 0) {
 
-            if (flown) {
-
-                Autopilot.Update(vessel, delta);
-
-            }
+            track.Pilot.Update(vessel, delta);
 
             Integrator.StepAttitude(vessel, delta);
             Integrator.StepThermal(vessel, delta);
@@ -245,13 +286,97 @@ public sealed partial class Flight : Node {
 
     }
 
-    private void Sweep(double delta, double step) {
+    private double ContactInterval(double remaining) {
+
+        double interval = remaining;
+
+        for (int first = 0; first < _traffic.Count; first++) {
+
+            for (int second = first + 1; second < _traffic.Count; second++) {
+
+                Vessel a = _traffic[first].Vessel;
+                Vessel b = _traffic[second].Vessel;
+
+                if (!a.Intact || !b.Intact) {
+
+                    continue;
+
+                }
+
+                double speed = (b.Velocity - a.Velocity).Length;
+                double reach = VesselCollision.Radius(a) + VesselCollision.Radius(b) + speed * remaining + 1.0;
+
+                if ((b.Position - a.Position).LengthSquared < reach * reach) {
+
+                    double motion = speed + a.AngularVelocity.Length * VesselCollision.Radius(a)
+                        + b.AngularVelocity.Length * VesselCollision.Radius(b);
+                    double thickness = Math.Min(a.Profile.MaxRadius, b.Profile.MaxRadius) * 0.2;
+                    interval = Math.Min(interval, Math.Min(IntegrationStep, thickness / Math.Max(motion, 1.0)));
+
+                }
+
+            }
+
+        }
+
+        return interval;
+
+    }
+
+    private void Contacts() {
+
+        for (int first = 0; first < _traffic.Count; first++) {
+
+            for (int second = first + 1; second < _traffic.Count; second++) {
+
+                Tracked a = _traffic[first];
+                Tracked b = _traffic[second];
+
+                if (!a.Vessel.Intact || !b.Vessel.Intact) {
+
+                    continue;
+
+                }
+
+                bool contact = VesselCollision.Find(a.Vessel, b.Vessel, out VesselCollision.Contact hit);
+
+                // The adapter surrounds the heat shield until the separation springs clear the joint.
+                if (_separating.Contains((a.Vessel, b.Vessel))) {
+
+                    if (!contact) {
+
+                        _separating.Remove((a.Vessel, b.Vessel));
+
+                    }
+
+                    continue;
+
+                }
+
+                if (!contact) {
+
+                    continue;
+
+                }
+
+                VesselCollision.Resolve(a.Vessel, b.Vessel, hit);
+                a.Rails = a.Vessel.OrbitAround(Body, Time);
+                b.Rails = b.Vessel.OrbitAround(Body, Time);
+                ContactCount++;
+                WarpStep = 0;
+                WarpingToNode = false;
+
+            }
+
+        }
+
+    }
+
+    private void Sweep() {
 
         for (int index = _debris.Count - 1; index >= 0; index--) {
 
             Tracked debris = _debris[index];
-
-            Fly(debris, delta, step);
 
             Judge(debris.Vessel);
 
@@ -262,6 +387,8 @@ public sealed partial class Flight : Node {
             }
 
             _debris.RemoveAt(index);
+            _traffic.Remove(debris);
+            _separating.RemoveWhere(pair => pair.Item1 == debris.Vessel || pair.Item2 == debris.Vessel);
 
             Scrubbed?.Invoke(debris.Vessel);
 
@@ -311,13 +438,76 @@ public sealed partial class Flight : Node {
 
         Vessel spent = Vessel.Separate();
 
-        _debris.Add(new Tracked { Vessel = spent, Rails = spent.OrbitAround(Body, Time) });
+        Tracked track = new Tracked { Vessel = spent, Rails = spent.OrbitAround(Body, Time) };
+        _debris.Add(track);
+        _traffic.Add(track);
+        _separating.Add((Vessel, spent));
 
         Rerail();
 
         Staged?.Invoke(spent);
 
         return true;
+
+    }
+
+    public bool SwitchVessel(int direction) {
+
+        if (direction == 0) {
+
+            return false;
+
+        }
+
+        int current = VesselIndex;
+
+        for (int offset = 1; offset < _traffic.Count; offset++) {
+
+            int index = (current + Math.Sign(direction) * offset + _traffic.Count) % _traffic.Count;
+            Tracked next = _traffic[index];
+
+            if (!next.Vessel.Intact) {
+
+                continue;
+
+            }
+
+            Tracked previous = _own;
+            ClearManualInput(previous);
+            ClearManualInput(next);
+
+            _debris.Remove(next);
+            _debris.Add(previous);
+            _own = next;
+            Vessel = next.Vessel;
+
+            WarpStep = 0;
+            WarpingToNode = false;
+            Frames.Rebase(Vessel.Position);
+
+            VesselChanged?.Invoke(previous.Vessel, Vessel);
+
+            if (!previous.Vessel.Intact) {
+
+                _debris.Remove(previous);
+                _traffic.Remove(previous);
+                Scrubbed?.Invoke(previous.Vessel);
+
+            }
+
+            return true;
+
+        }
+
+        return false;
+
+    }
+
+    private static void ClearManualInput(Tracked track) {
+
+        track.Pilot.ManualCommand = Vector3d.Zero;
+        track.Vessel.ControlTorque = Vector3d.Zero;
+        track.Vessel.TranslationCommand = Vector3d.Zero;
 
     }
 
@@ -342,6 +532,27 @@ public sealed partial class Flight : Node {
         Rerail();
 
         Frames.Rebase(Vessel.Position);
+
+    }
+
+    public bool PlaceRelative(Vector3d offset, Vector3d velocity, bool reverse) {
+
+        if (_debris.Count == 0) {
+
+            return false;
+
+        }
+
+        Vessel other = _debris[0].Vessel;
+        Vessel.Position = other.Position + other.Orientation.Rotate(offset);
+        Vessel.Velocity = other.Velocity + other.Orientation.Rotate(velocity);
+        Vessel.Orientation = other.Orientation * (reverse ? QuaternionD.FromAxisAngle(Vector3d.UnitX, Math.PI) : QuaternionD.Identity);
+        Vessel.AngularVelocity = Vector3d.Zero;
+        _separating.Remove((Vessel, other));
+        _separating.Remove((other, Vessel));
+        Rerail();
+        Frames.Rebase(Vessel.Position);
+        return true;
 
     }
 
@@ -484,7 +695,7 @@ public sealed partial class Flight : Node {
 
         step = Math.Clamp(step, 0, WarpFactors.Length - 1);
 
-        if (step > 0 && (Vessel.IsAccelerating || AirborneTraffic)) {
+        if (step > 0 && (TrafficAccelerating || AirborneTraffic)) {
 
             return false;
 
@@ -500,6 +711,16 @@ public sealed partial class Flight : Node {
 
         if (@event is not InputEventKey key || !key.Pressed || key.Echo) {
 
+            return;
+
+        }
+
+        Key code = key.PhysicalKeycode != Key.None ? key.PhysicalKeycode : key.Keycode;
+
+        if (code == Key.Bracketleft || code == Key.Bracketright) {
+
+            SwitchVessel(code == Key.Bracketleft ? -1 : 1);
+            GetViewport().SetInputAsHandled();
             return;
 
         }
@@ -574,7 +795,7 @@ public sealed partial class Flight : Node {
 
         }
 
-        if (Vessel.IsAccelerating || AirborneTraffic) {
+        if (TrafficAccelerating || AirborneTraffic) {
 
             WarpStep = 0;
 

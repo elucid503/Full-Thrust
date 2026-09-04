@@ -13,7 +13,7 @@ public sealed partial class ElementsPanel : Control {
     private const float Margin = 13.0f;
 
     private const float LabelWidth = 86.0f;
-    private const float Column = 94.0f;
+    private const float Column = 104.0f;
 
     private const float RowHeight = 21.0f;
 

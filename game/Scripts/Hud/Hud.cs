@@ -53,6 +53,7 @@ public sealed partial class Hud : CanvasLayer {
         // Staging changes what the vehicle is, so the panels that were laid out for the old one are
         // laid out again rather than left describing a stage that is no longer aboard.
         flight.Staged += _ => Restack();
+        flight.VesselChanged += (_, _) => Restack();
 
     }
 
@@ -62,6 +63,7 @@ public sealed partial class Hud : CanvasLayer {
         _gauge.Build(_flight.Vessel, _popover);
 
         _popover.Dismiss();
+        _menu.Dismiss();
 
     }
 

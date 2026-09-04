@@ -83,6 +83,7 @@ public sealed partial class Main : Node3D {
 
         _flight.Staged += Release;
         _flight.Scrubbed += Scrub;
+        _flight.VesselChanged += SelectVessel;
 
         Vector3 nadir = -Frames.Direction(_flight.Vessel.Position.Normalized);
         Vector3 prograde = Frames.Direction(_flight.Vessel.Velocity.Normalized);
@@ -114,6 +115,16 @@ public sealed partial class Main : Node3D {
         AddChild(view);
 
         _debris[debris] = view;
+
+    }
+
+    private void SelectVessel(Vessel previous, Vessel selected) {
+
+        VesselView view = _debris[selected];
+        _debris.Remove(selected);
+        _debris[previous] = _vessel;
+        _vessel = view;
+        _vessel.MakeActive();
 
     }
 

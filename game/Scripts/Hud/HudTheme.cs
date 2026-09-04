@@ -23,9 +23,9 @@ public static class HudTheme {
     // on the line box sits low by half a descent; this is what it centres on instead.
     public const float NumeralCap = 0.73f;
 
-    public const int Tiny = 9;
-    public const int Small = 11;
-    public const int Body = 13;
+    public const int Tiny = 10;
+    public const int Small = 12;
+    public const int Body = 14;
     public const int Head = 16;
     public const int Large = 20;
 

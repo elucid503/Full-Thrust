@@ -8,7 +8,6 @@ namespace FullThrust.Game;
 public sealed partial class Planet : Node3D {
 
     private const float CloudAltitude = 10000.0f;
-    private const float AtmosphereDepth = 62000.0f;
 
     // The deck turns fractionally faster than the ground, so cloud shadows creep rather than lock.
     private const double CloudRotationRatio = 1.02;
@@ -34,6 +33,7 @@ public sealed partial class Planet : Node3D {
         _body = body;
 
         float radius = (float)body.Radius;
+        float atmosphereRadius = radius + (float)body.AtmosphereTop;
 
         Texture2D albedo = GD.Load<Texture2D>("res://Assets/Planet/albedo.jpg");
         Texture2D terrain = GD.Load<Texture2D>("res://Assets/Planet/terrain.png");
@@ -60,7 +60,7 @@ public sealed partial class Planet : Node3D {
         _atmosphere = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Atmosphere.gdshader") };
 
         _atmosphere.SetShaderParameter("planet_radius", radius);
-        _atmosphere.SetShaderParameter("atmosphere_radius", radius + AtmosphereDepth);
+        _atmosphere.SetShaderParameter("atmosphere_radius", atmosphereRadius);
         _atmosphere.SetShaderParameter("sun_direction", sunDirection);
         _atmosphere.RenderPriority = 2;
 
@@ -73,7 +73,12 @@ public sealed partial class Planet : Node3D {
         _ground.AddChild(Shell("Surface", radius, SurfaceSegments, SurfaceRings, _surface));
         _deck.AddChild(Shell("Clouds", radius + CloudAltitude, 384, 192, _clouds));
 
-        AddChild(Shell("Atmosphere", radius + AtmosphereDepth, 64, 32, _atmosphere));
+        if (body.HasAtmosphere) {
+
+            _atmosphere.SetShaderParameter("rayleigh_height", (float)body.Atmosphere.ScaleHeight);
+            AddChild(Shell("Atmosphere", atmosphereRadius, 64, 32, _atmosphere));
+
+        }
 
     }
 

@@ -55,6 +55,8 @@ public sealed partial class VesselView : Node3D {
 
     public static VesselView Active { get; private set; }
 
+    public void MakeActive() => Active = this;
+
     /// <summary>One stage's geometry, and the handful of things about it that have to be driven
     /// every frame. It travels intact from the stack's view to a view of its own.</summary>
     private sealed class Piece {

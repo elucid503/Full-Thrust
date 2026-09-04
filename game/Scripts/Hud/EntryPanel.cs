@@ -10,12 +10,12 @@ namespace FullThrust.Game;
 /// air to fly through, so the resting interface never carries a row of zeroes.</summary>
 public sealed partial class EntryPanel : Control {
 
-    private const float PanelWidth = 272.0f;
+    private const float PanelWidth = 336.0f;
 
-    private const float Margin = 10.0f;
-    private const float RowHeight = 17.0f;
+    private const float Margin = 12.0f;
+    private const float RowHeight = 22.0f;
 
-    private const float LabelWidth = 62.0f;
+    private const float ColumnGap = 18.0f;
 
     private const int Rows = 2;
     private const int Columns = 2;
@@ -27,7 +27,7 @@ public sealed partial class EntryPanel : Control {
     // above it the one hue the interface keeps for trouble.
     private const float Warm = 0.72f;
 
-    private static readonly float Cell = (PanelWidth - Margin * 2.0f) / Columns;
+    private static readonly float Cell = (PanelWidth - Margin * 2.0f - ColumnGap) / Columns;
 
     public static readonly float Height = Margin * 2.0f + Rows * RowHeight + GaugeGap + Gauge + RowHeight;
 
@@ -73,10 +73,13 @@ public sealed partial class EntryPanel : Control {
 
         DrawStyleBox(HudTheme.Panel(0.0f), new Rect2(Vector2.Zero, Extent));
 
-        Cellule(0, 0, "MACH", $"{air.Mach:F2}");
-        Cellule(1, 0, "DYN PR", $"{air.DynamicPressure / 1000.0:F1} kPa");
+        string pressure = air.DynamicPressure >= 1_000_000.0 ? $"{air.DynamicPressure / 1_000_000.0:F2} MPa"
+            : air.DynamicPressure >= 1000.0 ? $"{air.DynamicPressure / 1000.0:F1} kPa" : $"{air.DynamicPressure:F0} Pa";
 
-        Cellule(0, 1, "LOAD", $"{air.Force.Length / vessel.Mass / _flight.Body.SurfaceGravity:F1} g");
+        Cellule(0, 0, "Mach", $"{air.Mach:F2}");
+        Cellule(1, 0, "Pressure", pressure);
+
+        Cellule(0, 1, "Load", $"{air.Force.Length / vessel.Mass / _flight.Body.SurfaceGravity:F1} g");
         Cellule(1, 1, "AoA", $"{Incidence(air) * 180.0 / Math.PI:F0}°");
 
         Heat(vessel);
@@ -93,11 +96,17 @@ public sealed partial class EntryPanel : Control {
 
     private void Cellule(int column, int row, string label, string value) {
 
-        Rect2 box = new Rect2(Margin + Cell * column, Margin + RowHeight * row, Cell, RowHeight);
+        Rect2 box = new Rect2(Margin + (Cell + ColumnGap) * column, Margin + RowHeight * row, Cell, RowHeight);
+        Reading(box, label, value, HudTheme.Ink);
 
-        HudTheme.WriteIn(this, HudTheme.Label, HudTheme.Small, box, label, HudTheme.Faint, HorizontalAlignment.Left);
+    }
 
-        HudTheme.WriteIn(this, HudTheme.Numeral, HudTheme.Small, new Rect2(box.Position.X + LabelWidth, box.Position.Y, box.Size.X - LabelWidth - 12.0f, box.Size.Y), value, HudTheme.Ink, HorizontalAlignment.Right);
+    private void Reading(Rect2 box, string label, string value, Color ink) {
+
+        float baseline = box.Position.Y + (box.Size.Y + HudTheme.Numeral.GetAscent(HudTheme.Small) - HudTheme.Numeral.GetDescent(HudTheme.Small)) * 0.5f;
+        float width = HudTheme.Width(HudTheme.Numeral, HudTheme.Small, value);
+        HudTheme.Write(this, HudTheme.Label, HudTheme.Small, new Vector2(box.Position.X, baseline), label, HudTheme.Dim);
+        HudTheme.Write(this, HudTheme.Numeral, HudTheme.Small, new Vector2(box.End.X - width, baseline), value, ink);
 
     }
 
@@ -113,9 +122,7 @@ public sealed partial class EntryPanel : Control {
 
         Rect2 caption = new Rect2(Margin, Margin + RowHeight * Rows + GaugeGap - 2.0f, Extent.X - Margin * 2.0f, RowHeight);
 
-        HudTheme.WriteIn(this, HudTheme.Label, HudTheme.Small, caption, "SKIN", HudTheme.Faint, HorizontalAlignment.Left);
-
-        HudTheme.WriteIn(this, HudTheme.Numeral, HudTheme.Small, caption, $"{vessel.SkinTemperature:N0} / {vessel.SkinLimit:N0} K", ink, HorizontalAlignment.Right);
+        Reading(caption, "Skin Temperature", $"{vessel.SkinTemperature:N0} / {vessel.SkinLimit:N0} K", ink);
 
         Rect2 track = new Rect2(Margin, caption.End.Y + 2.0f, Extent.X - Margin * 2.0f, Gauge);
 

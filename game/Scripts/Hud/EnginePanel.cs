@@ -25,6 +25,7 @@ public sealed partial class EnginePanel : Control {
     public void Build(Vessel vessel) {
 
         _vessel = vessel;
+        _hovered = -1;
 
         MouseFilter = MouseFilterEnum.Stop;
         MouseDefaultCursorShape = CursorShape.PointingHand;

@@ -47,6 +47,8 @@ public sealed partial class PlanView : Control {
 
     private bool _placing;
 
+    public void CancelPlacement() => _placing = false;
+
     public void Build(Flight flight) {
 
         _flight = flight;
