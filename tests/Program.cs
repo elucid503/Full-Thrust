@@ -36,6 +36,7 @@ public static class Program {
         SkinHeating();
         Staging();
         Reentry();
+        NozzleExpansion();
 
         Console.WriteLine();
         Console.WriteLine($"{_checks - _failures}/{_checks} checks passed");
@@ -1164,6 +1165,94 @@ public static class Program {
             peakLoad = Math.Max(peakLoad, vessel.Aero.Force.Length / vessel.Mass / Home.SurfaceGravity);
 
         }
+
+    }
+
+    private static void NozzleExpansion() {
+
+        Section("nozzle expansion");
+
+        const double gamma = 1.22;
+
+        double areaRatio = Meridian.ExpansionRatio;
+
+        double exitMach = Nozzle.ExitMach(areaRatio, gamma);
+
+        Near("area ratio round-trips through the exit mach", Nozzle.AreaRatio(exitMach, gamma), areaRatio, 1e-9);
+        Expect("a 29:1 bell runs about mach four", exitMach > 3.8 && exitMach < 4.3, $"got {exitMach:F3}");
+
+        Near("the sonic throat has an area ratio of one", Nozzle.AreaRatio(1.0, gamma), 1.0, 1e-12);
+        Near("prandtl-meyer is zero at mach one", Nozzle.PrandtlMeyer(1.0, gamma), 0.0, 1e-12);
+
+        double limit = Math.PI * 0.5 * (Math.Sqrt((gamma + 1.0) / (gamma - 1.0)) - 1.0);
+
+        Near("the turning function converges to its limit", Nozzle.PrandtlMeyer(Nozzle.VacuumMach, gamma), limit, 0.2);
+
+        Atmosphere air = Home.Atmosphere;
+
+        Exhaust seaLevel = Nozzle.Expand(Meridian.ChamberPressure, areaRatio, gamma, 1.0, air.PressureAt(0.0), Meridian.EngineMouthRadius);
+        Exhaust vacuum = Nozzle.Expand(Meridian.ChamberPressure, areaRatio, gamma, 1.0, 0.0, Meridian.EngineMouthRadius);
+
+        Exhaust cached = Nozzle.ExpandFromMach(Meridian.ChamberPressure, exitMach, gamma, 1.0, air.PressureAt(0.0), Meridian.EngineMouthRadius);
+
+        Near("cached nozzle geometry preserves exit pressure", cached.ExitPressure, seaLevel.ExitPressure, 1e-9);
+        Near("cached nozzle geometry preserves separation", cached.Contraction, seaLevel.Contraction, 1e-12);
+
+        foreach (double ambient in new[] { 0.0, 0.01, 100.0, 10_000.0, 101_325.0 }) {
+
+            foreach (double setting in new[] { 0.0, 0.001, 0.1, 0.5, 1.0 }) {
+
+                Exhaust state = Nozzle.ExpandFromMach(Meridian.ChamberPressure, exitMach, gamma, setting, ambient, Meridian.EngineMouthRadius);
+                Expect("pressure/throttle sweep stays finite", double.IsFinite(state.TurnAngle) && double.IsFinite(state.Contraction)
+                    && double.IsFinite(state.ShockCellLength) && state.Contraction > 0.0 && state.Contraction <= 1.0,
+                    $"pressure {ambient}, throttle {setting}");
+
+            }
+
+        }
+
+        Near("exit pressure follows the isentropic relation", seaLevel.ExitPressure, Meridian.ChamberPressure * Nozzle.PressureRatio(exitMach, gamma), 1e-6);
+
+        Expect("the bell is over-expanded at sea level", seaLevel.PressureRatio < 1.0, $"got {seaLevel.PressureRatio:F3}");
+        Expect("and the flow has separated off the wall", seaLevel.IsSeparated && seaLevel.Contraction > 0.3, $"got {seaLevel.Contraction:F3}");
+        Expect("the jet necks in", seaLevel.TurnAngle < 0.0, $"got {seaLevel.TurnAngle:F3}");
+        Expect("with shock cells a few diameters apart", seaLevel.ShockCellLength > Meridian.EngineMouthRadius && seaLevel.ShockCellLength < Meridian.EngineMouthRadius * 12.0, $"got {seaLevel.ShockCellLength:F3}");
+
+        Expect("vacuum is infinitely under-expanded", double.IsPositiveInfinity(vacuum.PressureRatio), $"got {vacuum.PressureRatio}");
+        Expect("a vacuum plume turns past a right angle", vacuum.TurnAngle > Math.PI * 0.5 && vacuum.TurnAngle < Math.PI, $"got {vacuum.TurnAngle:F3}");
+        Expect("with no shock cells and no separation", vacuum.ShockCellLength == 0.0 && !vacuum.IsSeparated, $"got {vacuum.ShockCellLength}, {vacuum.Contraction}");
+
+        // The exit pressure is a quarter of an atmosphere, so the jet is ideal about where the air is.
+        double low = 0.0;
+        double high = air.Top;
+
+        for (int step = 0; step < 60; step++) {
+
+            double middle = (low + high) * 0.5;
+
+            if (air.PressureAt(middle) > seaLevel.ExitPressure) {
+
+                low = middle;
+
+            }
+            else {
+
+                high = middle;
+
+            }
+
+        }
+
+        double idealAltitude = (low + high) * 0.5;
+
+        Exhaust ideal = Nozzle.Expand(Meridian.ChamberPressure, areaRatio, gamma, 1.0, air.PressureAt(idealAltitude), Meridian.EngineMouthRadius);
+
+        Expect("the jet is near ideal where exit meets ambient", Math.Abs(ideal.PressureRatio - 1.0) < 0.25, $"got {ideal.PressureRatio:F3} at {idealAltitude:F0} m");
+        Expect("and turns through almost nothing there", Math.Abs(ideal.TurnAngle) < 0.15, $"got {ideal.TurnAngle:F3}");
+
+        Exhaust throttled = Nozzle.Expand(Meridian.ChamberPressure, areaRatio, gamma, 0.4, air.PressureAt(0.0), Meridian.EngineMouthRadius);
+
+        Expect("throttling back in thick air separates the flow further", throttled.Contraction < seaLevel.Contraction, $"got {throttled.Contraction:F3} against {seaLevel.Contraction:F3}");
 
     }
 

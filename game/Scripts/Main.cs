@@ -72,6 +72,7 @@ public sealed partial class Main : Node3D {
         _earthlight.AmbientMode = ReflectionProbe.AmbientModeEnum.Disabled;
         _earthlight.BoxProjection = false;
         _earthlight.EnableShadows = false;
+        _earthlight.CullMask = 1;
         _earthlight.Intensity = 1.0f;
 
         _environment.Environment = BuildEnvironment();

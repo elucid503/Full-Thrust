@@ -48,24 +48,6 @@ public sealed partial class VesselView : Node3D {
     private const float NozzleBase = 0.126f;
     private const float NozzleReach = 0.135f;
 
-    private const float PlumeLength = 18.0f;
-    private const float PlumeFlare = 3.6f;
-
-    private const int PlumeStations = 64;
-    private const int PlumeShells = 14;
-    private const int PlumeSegments = 72;
-    private const int PlumeLightRing = 4;
-
-    private const int SheathStations = 48;
-    private const int SheathShells = 10;
-    private const int SheathSegments = 48;
-
-    // The shock stands off the nose by a fraction of the body's width, and the wake runs back
-    // several times it. Both are in units of the body radius the mesh is built at.
-    private const float SheathStandoff = 0.40f;
-    private const float SheathWake = 8.0f;
-    private const float SheathFlare = 1.25f;
-
     // Where the skin starts to glow and where it is running white. Between them the emission and
     // its colour both ramp, which is the whole of the heat readout the eye gets.
     private const float GlowFloor = 700.0f;
@@ -83,6 +65,9 @@ public sealed partial class VesselView : Node3D {
         public MeshInstance3D Plume { get; set; }
         public ShaderMaterial PlumeMaterial { get; set; }
 
+        public float BellRadius { get; set; }
+
+        public readonly List<Jet> Jets = new List<Jet>();
         public readonly List<OmniLight3D> Lights = new List<OmniLight3D>();
         public readonly List<StandardMaterial3D> Skins = new List<StandardMaterial3D>();
 
@@ -147,6 +132,9 @@ public sealed partial class VesselView : Node3D {
 
         _body.RemoveChild(piece.Node);
 
+        // What is left is a shorter stack, and the plasma has to wrap that one.
+        BakeProfile();
+
         VesselView view = new VesselView { Name = debris.Name };
 
         view.Take(debris, piece);
@@ -202,51 +190,6 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    private void SyncPlume() {
-
-        _thrust = Mathf.Lerp(_thrust, (float)_vessel.ThrustSetting, 0.35f);
-
-        bool lit = _thrust > 0.002f;
-
-        foreach (Piece piece in _pieces) {
-
-            if (piece.Plume == null) {
-
-                continue;
-
-            }
-
-            bool burning = lit && piece.Stage == _vessel.Active;
-
-            piece.Plume.Visible = burning;
-
-            foreach (OmniLight3D light in piece.Lights) {
-
-                light.Visible = burning;
-
-            }
-
-            if (!burning) {
-
-                continue;
-
-            }
-
-            piece.PlumeMaterial.SetShaderParameter("throttle", _thrust);
-
-            // A throttled engine runs a shorter, narrower plume rather than a dimmer one of the same size.
-            piece.Plume.Scale = new Vector3(0.55f + 0.45f * _thrust, 0.35f + 0.65f * _thrust, 0.55f + 0.45f * _thrust);
-
-            foreach (OmniLight3D light in piece.Lights) {
-
-                light.LightEnergy = light.OmniRange * 0.13f * _thrust;
-
-            }
-
-        }
-
-    }
-
     // Only the stage taking the flow gets hot, and only its skin lights up. A stack's upper stage
     // is in the wake of the one below it and stays the colour it was painted.
     private void SyncHeat() {
@@ -280,54 +223,6 @@ public sealed partial class VesselView : Node3D {
             }
 
         }
-
-    }
-
-    private void SyncSheath() {
-
-        AeroForces air = _vessel.Aero;
-
-        // The sheath follows the heat rather than the air: it is the shock that is glowing, and a
-        // vehicle low and slow is deep in air with nothing to show for it.
-        float wanted = air.InAir ? Mathf.Clamp((float)(air.HeatFlux / 150_000.0), 0.0f, 1.3f) : 0.0f;
-
-        _sheathHeat = Mathf.Lerp(_sheathHeat, wanted, 0.12f);
-
-        bool burning = _sheathHeat > 0.01f;
-
-        _sheath.Visible = burning;
-
-        if (!burning) {
-
-            return;
-
-        }
-
-        Vector3d relative = _vessel.Velocity - Flight.Active.Body.AirVelocityAt(_vessel.Position);
-
-        Vector3 flow = Frames.Direction(_vessel.Orientation.Conjugate.Rotate(relative).Normalized);
-
-        if (flow.LengthSquared() <= 0.0f) {
-
-            return;
-
-        }
-
-        // How far the leading end stands ahead of the centre of mass, which is where the shock has
-        // to sit. Along the axis it is exact, and off it the vehicle is a body of revolution anyway.
-        AeroProfile profile = _vessel.Profile;
-
-        float lead = (float)(air.AngleOfAttack > Math.PI * 0.5
-            ? _vessel.CentreOfMassZ - profile.Base
-            : profile.Tip - _vessel.CentreOfMassZ);
-
-        Vector3 side = flow.Cross(Mathf.Abs(flow.Y) > 0.95f ? Vector3.Right : Vector3.Up).Normalized();
-
-        _sheath.Basis = new Basis(side, flow, side.Cross(flow).Normalized()).Scaled(Vector3.One * (float)profile.MaxRadius * 1.04f);
-        _sheath.Position = flow * lead;
-
-        _sheathMaterial.SetShaderParameter("intensity", Mathf.Min(_sheathHeat, 1.0f));
-        _sheathMaterial.SetShaderParameter("heat", Mathf.Clamp(_sheathHeat * 0.8f, 0.0f, 1.0f));
 
     }
 
@@ -396,6 +291,24 @@ public sealed partial class VesselView : Node3D {
         if (stage.Model != null) {
 
             Clad(node, piece, stage);
+            using TriangleMesh surface = JetSurface(node);
+
+            // The model brought its own thruster pods; only their exhaust is added here.
+            foreach (Part part in stage.Parts) {
+
+                if (part.Kind != PartKind.Thruster) {
+
+                    continue;
+
+                }
+
+                foreach ((Vector3 position, Vector3 axis, Vector3 side, float scale) in Mounts(stage, part)) {
+
+                    AttachJet(node, piece, position, axis, side, scale, surface);
+
+                }
+
+            }
 
         }
         else {
@@ -413,7 +326,7 @@ public sealed partial class VesselView : Node3D {
 
                 if (part.Kind == PartKind.Thruster) {
 
-                    AttachThrusters(node, stage, part);
+                    AttachThrusters(node, piece, stage, part);
 
                 }
 
@@ -1095,50 +1008,26 @@ public sealed partial class VesselView : Node3D {
 
     /// <summary>A cluster's nozzles, either recessed in a pocket cut through the wall or standing
     /// on it. Which one it is comes off the part's own depth, not off the stage it belongs to.</summary>
-    private void AttachThrusters(Node3D node, Stage stage, Part part) {
+    private void AttachThrusters(Node3D node, Piece piece, Stage stage, Part part) {
 
-        float gauge = (float)part.Extent;
+        ArrayMesh nozzle = BuildNozzleMesh((float)part.Extent);
 
-        ArrayMesh nozzle = BuildNozzleMesh(gauge);
+        int index = 0;
 
-        float height = (float)part.Centre;
+        foreach ((Vector3 position, Vector3 axis, Vector3 side, float scale) in Mounts(stage, part)) {
 
-        float scale = gauge / NozzleGauge;
+            node.AddChild(new MeshInstance3D {
 
-        float seat = part.Depth > 0.0
-            ? (float)(stage.Hull.RadiusAt(height) - part.Depth)
-            : (float)stage.Hull.RadiusAt(height);
+                Name = $"{part.Name}{index++}",
+                Mesh = nozzle,
 
-        // A pocket takes the pair further apart than a pod does, because each bell has to clear the
-        // sill and the lintel of the cut rather than just the skin.
-        float spread = part.Depth > 0.0 ? RcsOffset : (float)part.Length * 0.28f;
+                Transform = new Transform3D(new Basis(side, axis, side.Cross(axis).Normalized()), position),
 
-        for (int index = 0; index < part.Count; index++) {
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
 
-            float angle = Mathf.Tau * PortCentre(part.Count, index) / RadialSegments;
+            });
 
-            Vector3 outward = Surface(stage, angle, height);
-            Vector3 side = Vector3.Up.Cross(Radial(angle)).Normalized();
-
-            // One nozzle canted forward and one aft: a port that only fired radially could not pitch.
-            for (int sense = -1; sense <= 1; sense += 2) {
-
-                Vector3 axis = (outward * Mathf.Cos(RcsCant) + Vector3.Up * (Mathf.Sin(RcsCant) * sense)).Normalized();
-
-                node.AddChild(new MeshInstance3D {
-
-                    Name = $"{part.Name}{index}{(sense > 0 ? "Fore" : "Aft")}",
-                    Mesh = nozzle,
-
-                    Transform = new Transform3D(
-                        new Basis(side, axis, side.Cross(axis).Normalized()),
-                        Radial(angle) * seat + axis * (NozzleBase * scale) + Vector3.Up * (height + spread * sense)),
-
-                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-
-                });
-
-            }
+            AttachJet(node, piece, position, axis, side, scale);
 
         }
 
@@ -1323,212 +1212,6 @@ public sealed partial class VesselView : Node3D {
         }
 
         return total;
-
-    }
-
-    private static void AddPlumeLight(Node3D node, Piece piece, Vector3 position, float range) {
-
-        OmniLight3D light = new OmniLight3D {
-
-            LightColor = new Color(1.0f, 0.74f, 0.46f),
-
-            OmniRange = range,
-            OmniAttenuation = 0.7f,
-
-            ShadowEnabled = false,
-            Visible = false,
-
-        };
-
-        light.Position = position;
-
-        node.AddChild(light);
-
-        piece.Lights.Add(light);
-
-    }
-
-    private static void AttachPlume(Node3D node, Piece piece, float bellRadius, float bellPlane) {
-
-        ShaderMaterial material = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Plume.gdshader") };
-
-        material.RenderPriority = 3;
-
-        MeshInstance3D plume = new MeshInstance3D {
-
-            Name = "Plume",
-            Mesh = BuildPlumeMesh(bellRadius),
-
-            MaterialOverride = material,
-
-            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-            Visible = false,
-
-        };
-
-        plume.Position = new Vector3(0.0f, bellPlane, 0.0f);
-
-        node.AddChild(plume);
-
-        piece.Plume = plume;
-        piece.PlumeMaterial = material;
-
-        // One source at the throat lights the engine, and a ring out in the plume rakes the tank wall,
-        // which a light on the axis alone never can: the barrel's normals are perpendicular to it.
-        AddPlumeLight(node, piece, new Vector3(0.0f, bellPlane - 1.0f, 0.0f), 12.0f);
-
-        for (int index = 0; index < PlumeLightRing; index++) {
-
-            float angle = Mathf.Tau * index / PlumeLightRing;
-
-            AddPlumeLight(node, piece, new Vector3(Mathf.Cos(angle) * 1.5f, bellPlane - 4.5f, Mathf.Sin(angle) * 1.5f), 22.0f);
-
-        }
-
-    }
-
-    // An under-expanded vacuum plume: nested shells stand in for the volume, dense on the axis and soft at the rim.
-    private static ArrayMesh BuildPlumeMesh(float bell) {
-
-        SurfaceTool surface = new SurfaceTool();
-
-        surface.Begin(Mesh.PrimitiveType.Triangles);
-
-        for (int shell = 0; shell < PlumeShells; shell++) {
-
-            float radial = (shell + 0.5f) / PlumeShells;
-            float girth = 0.16f + 0.84f * radial;
-
-            for (int station = 0; station < PlumeStations; station++) {
-
-                float lowerT = (float)station / PlumeStations;
-                float upperT = (float)(station + 1) / PlumeStations;
-
-                float lowerR = girth * bell * (1.0f + PlumeFlare * Mathf.Pow(lowerT, 0.62f));
-                float upperR = girth * bell * (1.0f + PlumeFlare * Mathf.Pow(upperT, 0.62f));
-
-                float lowerY = -PlumeLength * lowerT;
-                float upperY = -PlumeLength * upperT;
-
-                for (int step = 0; step < PlumeSegments; step++) {
-
-                    float a = Mathf.Tau * step / PlumeSegments;
-                    float b = Mathf.Tau * (step + 1) / PlumeSegments;
-
-                    Volume(surface, lowerR, lowerY, a, lowerT, radial);
-                    Volume(surface, upperR, upperY, a, upperT, radial);
-                    Volume(surface, upperR, upperY, b, upperT, radial);
-
-                    Volume(surface, lowerR, lowerY, a, lowerT, radial);
-                    Volume(surface, upperR, upperY, b, upperT, radial);
-                    Volume(surface, lowerR, lowerY, b, lowerT, radial);
-
-                }
-
-            }
-
-        }
-
-        return surface.Commit();
-
-    }
-
-    private void AttachSheath() {
-
-        _sheathMaterial = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Entry.gdshader") };
-
-        _sheathMaterial.RenderPriority = 4;
-
-        _sheath = new MeshInstance3D {
-
-            Name = "Sheath",
-            Mesh = BuildSheathMesh(),
-
-            MaterialOverride = _sheathMaterial,
-
-            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-            Visible = false,
-
-        };
-
-        AddChild(_sheath);
-
-    }
-
-    /// <summary>The shock layer and the wake behind it, as one surface of revolution in units of the
-    /// body's own radius: a bowl standing off the leading face, opening out into a trail. Nested
-    /// shells the same way the plume is, because both are volumes being stood in for by surfaces.</summary>
-    private static ArrayMesh BuildSheathMesh() {
-
-        SurfaceTool surface = new SurfaceTool();
-
-        surface.Begin(Mesh.PrimitiveType.Triangles);
-
-        for (int shell = 0; shell < SheathShells; shell++) {
-
-            float radial = (shell + 0.5f) / SheathShells;
-            float girth = 0.34f + 0.66f * radial;
-
-            for (int station = 0; station < SheathStations; station++) {
-
-                float lower = (float)station / SheathStations;
-                float upper = (float)(station + 1) / SheathStations;
-
-                for (int step = 0; step < SheathSegments; step++) {
-
-                    float a = Mathf.Tau * step / SheathSegments;
-                    float b = Mathf.Tau * (step + 1) / SheathSegments;
-
-                    (float lowerR, float lowerY) = SheathStation(lower, girth);
-                    (float upperR, float upperY) = SheathStation(upper, girth);
-
-                    Volume(surface, lowerR, lowerY, a, lower, radial);
-                    Volume(surface, upperR, upperY, a, upper, radial);
-                    Volume(surface, upperR, upperY, b, upper, radial);
-
-                    Volume(surface, lowerR, lowerY, a, lower, radial);
-                    Volume(surface, upperR, upperY, b, upper, radial);
-                    Volume(surface, lowerR, lowerY, b, lower, radial);
-
-                }
-
-            }
-
-        }
-
-        return surface.Commit();
-
-    }
-
-    // The bow half is an ellipse standing off the face; the wake half opens out on a root curve so
-    // it widens fast where the flow is still turning and slowly a long way back.
-    private static (float Radius, float Height) SheathStation(float fraction, float girth) {
-
-        const float Bow = 0.22f;
-
-        if (fraction <= Bow) {
-
-            float angle = Mathf.Pi * 0.5f * (fraction / Bow);
-
-            return (girth * Mathf.Sin(angle), SheathStandoff * Mathf.Cos(angle));
-
-        }
-
-        float along = (fraction - Bow) / (1.0f - Bow);
-
-        return (girth * (1.0f + SheathFlare * Mathf.Pow(along, 0.55f)), -SheathWake * along);
-
-    }
-
-    private static void Volume(SurfaceTool surface, float radius, float y, float angle, float axial, float radial) {
-
-        float cosine = Mathf.Cos(angle);
-        float sine = Mathf.Sin(angle);
-
-        surface.SetNormal(new Vector3(cosine, 0.0f, sine));
-        surface.SetUV(new Vector2(axial, radial));
-
-        surface.AddVertex(new Vector3(radius * cosine, y, radius * sine));
 
     }
 

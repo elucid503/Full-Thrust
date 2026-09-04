@@ -33,6 +33,12 @@ public sealed class Stage {
     public double ThrustNewtons { get; init; }
     public double SpecificImpulse { get; init; }
 
+    /// <summary>Chamber pressure at full throttle, pascals, and the bell's exit-to-throat area
+    /// ratio. Between them they fix the exit pressure, and the exit pressure against the air is
+    /// what shapes the plume.</summary>
+    public double ChamberPressure { get; init; }
+    public double ExpansionRatio { get; init; }
+
     /// <summary>Oxidiser to fuel by mass; the two share one tank, so this only splits the readout.</summary>
     public double MixtureRatio { get; init; } = 2.56;
 
@@ -42,6 +48,10 @@ public sealed class Stage {
     /// <summary>Thrust of the whole cluster with every thruster firing, newtons.</summary>
     public double RcsThrustNewtons { get; init; }
     public double RcsSpecificImpulse { get; init; } = 220.0;
+
+    // A monopropellant thruster: a low-pressure catalyst bed behind a short bell.
+    public double RcsChamberPressure { get; init; } = 1_000_000.0;
+    public double RcsExpansionRatio { get; init; } = 8.4;
 
     /// <summary>Peak torque about any one body axis this stage's cluster can raise, newton-metres.</summary>
     public double ControlTorque { get; init; }

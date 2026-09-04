@@ -100,6 +100,12 @@ public static class Meridian {
     public const double ThrustNewtons = 180_000.0;
     public const double SpecificImpulse = 342.0;
 
+    // A gas-generator kerolox chamber. With the bell drawn above it, the exit pressure lands near a
+    // quarter of an atmosphere: separated at sea level, ideal near ten kilometres, a bulb in vacuum.
+    public const double ChamberPressure = 7_000_000.0;
+
+    public static readonly double ExpansionRatio = EngineMouthRadius * EngineMouthRadius / (EngineThroatRadius * EngineThroatRadius);
+
     public static Hull BuildHull() {
 
         Hull.Station[] stations = {
@@ -294,6 +300,9 @@ public static class Meridian {
 
             ThrustNewtons = ThrustNewtons,
             SpecificImpulse = SpecificImpulse,
+
+            ChamberPressure = ChamberPressure,
+            ExpansionRatio = ExpansionRatio,
 
             MixtureRatio = MixtureRatio,
 

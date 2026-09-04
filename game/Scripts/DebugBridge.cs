@@ -34,6 +34,8 @@ public sealed partial class DebugBridge : Node {
 
     public override void _Ready() {
 
+        RenderingServer.ViewportSetMeasureRenderTime(GetViewport().GetViewportRid(), true);
+
         string url = OS.GetEnvironment("FT_BRIDGE_URL");
 
         if (string.IsNullOrEmpty(url)) {
@@ -262,6 +264,35 @@ public sealed partial class DebugBridge : Node {
 
         }
 
+        if (double.TryParse(query["altitude"], out double altitude)) {
+
+            flight.Place(altitude, double.TryParse(query["speed"], out double speed) ? speed : flight.Vessel.Velocity.Length);
+
+        }
+
+        if (bool.TryParse(query["pause"], out bool pause)) {
+
+            flight.DebugPaused = pause;
+
+        }
+
+        if (double.TryParse(query["aoa"], out double aoa) || query["aim"] == "up") {
+
+            Vector3d up = flight.Vessel.Position.Normalized;
+            Vector3d along = (flight.Vessel.Velocity - flight.Body.AirVelocityAt(flight.Vessel.Position)).Normalized;
+            Vector3d nose = query["aim"] == "up" ? up
+                : along * Math.Cos(aoa * Math.PI / 180.0) + up * Math.Sin(aoa * Math.PI / 180.0);
+            flight.Vessel.Orientation = QuaternionD.LookAlong(nose, up);
+            flight.Vessel.AngularVelocity = Vector3d.Zero;
+
+        }
+
+        if (double.TryParse(query["rcsTorque"], out double torque)) {
+
+            flight.Vessel.ControlTorque = Vector3d.UnitX * (Math.Clamp(torque, -1.0, 1.0) * flight.Vessel.ControlTorqueLimit);
+
+        }
+
         if (query["restart"] != null) {
 
             flight.Restart();
@@ -452,6 +483,8 @@ public sealed partial class DebugBridge : Node {
         Dictionary<string, object> state = new Dictionary<string, object> {
 
             ["fps"] = Engine.GetFramesPerSecond(),
+            ["renderCpuMs"] = RenderingServer.ViewportGetMeasuredRenderTimeCpu(GetViewport().GetViewportRid()),
+            ["renderGpuMs"] = RenderingServer.ViewportGetMeasuredRenderTimeGpu(GetViewport().GetViewportRid()),
             ["frame"] = Engine.GetProcessFrames(),
             ["uptimeSeconds"] = Time.GetTicksMsec() / 1000.0,
 

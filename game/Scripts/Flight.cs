@@ -110,6 +110,8 @@ public sealed partial class Flight : Node {
 
     public bool Ended => !Vessel.Intact;
 
+    public bool DebugPaused { get; set; }
+
     public double AtmosphereTop => Body.AtmosphereTop;
 
     public bool InAtmosphere => Body.AirDensityAt(Vessel.Position) > 0.0;
@@ -143,6 +145,13 @@ public sealed partial class Flight : Node {
     }
 
     public void Advance(double delta) {
+
+        if (DebugPaused) {
+
+            Vessel.Aero = Aerodynamics.Compute(Vessel, Body);
+            return;
+
+        }
 
         if (Ended) {
 
@@ -309,6 +318,30 @@ public sealed partial class Flight : Node {
         Staged?.Invoke(spent);
 
         return true;
+
+    }
+
+    /// <summary>Drops the vehicle onto a level flight path at an altitude and airspeed, keeping its
+    /// heading. A debug entry point: an entry or a low burn otherwise costs a whole deorbit to reach.</summary>
+    public void Place(double altitude, double speed) {
+
+        Vector3d up = Vessel.Position.Normalized;
+        Vector3d along = (Vessel.Velocity - up * Vector3d.Dot(Vessel.Velocity, up)).Normalized;
+
+        if (along.LengthSquared < 1.0e-12) {
+
+            along = Vector3d.Cross(up, Math.Abs(up.Z) < 0.9 ? Vector3d.UnitZ : Vector3d.UnitX).Normalized;
+
+        }
+
+        Vessel.Position = up * (Body.Radius + Math.Max(altitude, 1.0));
+        Vessel.Velocity = along * speed + Body.AirVelocityAt(Vessel.Position);
+
+        Vessel.AngularVelocity = Vector3d.Zero;
+
+        Rerail();
+
+        Frames.Rebase(Vessel.Position);
 
     }
 
