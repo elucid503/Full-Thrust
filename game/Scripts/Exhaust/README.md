@@ -10,6 +10,13 @@ Kerosene, hydrogen, methane and decomposed hydrazine retain distinct emission co
 
 At the exit plane, emission and extinction taper to zero at the effective nozzle radius. The soft outer field widens over the first four exit radii downstream, keeping the luminous base inside the bell while retaining pressure-driven expansion farther out.
 
+A vehicle standing in the jet is sphere-traced against its own baked hull distance field. The trace
+returns a penumbra rather than a binary shadow, because the jet is a spreading cone and not a point
+source; fourteen marches suffice once the answer is soft. Gas the hull stops is not discarded. It is
+carried into a sheet that stays attached over the windward skin and past the shoulder, and separates
+into a recirculating, turbulent wake on the lee side, with the extinction it was carrying following
+it. The compressed layer against the windward skin remains the brightest part.
+
 Generated RCS emitters start at their bell lips. Imported vehicles instead intersect the fitted mesh along each jet axis at construction, so their built-in hardware does not receive an extra procedural nozzle offset.
 
 ## Entry
@@ -41,4 +48,4 @@ Build with dotnet build game/FullThrust.Game.csproj. Physics checks run with dot
 
 The existing localhost bridge now supports pause=true, aoa=<degrees>, aim=up and rcsTorque=<fraction>, alongside altitude and speed placement. Pause freezes flight state while allowing gas animation and camera control. Set pause=false to resume flight. /state exposes measured viewport render CPU/GPU milliseconds.
 
-Verification captures and timing records are in game/.artifacts/volumes. Tested states include vacuum and atmospheric burns, low throttle, crossflow, ground contact, RCS, staged and full-stack entry, 0/45/90/135/180-degree entry and cameras inside the volume.
+Verification captures and timing records are in game/.artifacts/volumes and game/.artifacts/plume-wrap. Tested states include vacuum and atmospheric burns, low throttle, crossflow, ground contact, RCS, staged and full-stack entry, 0/45/90/135/180-degree entry and cameras inside the volume.

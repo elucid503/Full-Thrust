@@ -69,17 +69,24 @@ float ship_visibility(vec3 point) {
     vec3 direction = offset / max(reach, 0.000001);
     vec2 interval = ship_interval(origin, direction, reach);
     float at = interval.x;
+    float grazing = max(exit_radius * 0.08, 0.006);
 
-    for (int step = 0; step < 24; step++) {
+    // The jet is a spreading cone rather than a point source, so its shadow carries a penumbra that
+    // widens downstream. Fewer marches are needed once the result is soft.
+    float softness = spread + 0.22;
+    float shade = 1.0;
 
-        if (at >= interval.y) { return 1.0; }
+    for (int step = 0; step < 14; step++) {
+
+        if (at >= interval.y) { break; }
         float distance = ship_sample(origin + direction * at).x;
-        if (distance < 0.008) { return 0.0; }
-        at += max(distance * 0.85, 0.004);
+        if (distance < grazing) { return 0.0; }
+        shade = min(shade, distance / max(at * softness, grazing));
+        at += max(distance * 0.95, grazing);
 
     }
 
-    return at >= interval.y ? 1.0 : 0.0;
+    return clamp(shade, 0.0, 1.0);
 
 }
 
@@ -155,16 +162,28 @@ vec4 exhaust_at(vec3 p) {
         vec3 radial_normal = vec3(point.x, 0.0, point.z) / max(length(point.xz), 0.00001);
         vec3 normal = radial_normal * surface.y + vec3(0.0, surface.z, 0.0);
         vec3 incoming = normalize(ship_from_plume[3].xyz - point);
-        float incidence = max(dot(normal, incoming), 0.0);
+        float incidence = dot(normal, incoming);
         float layer = max(exit_radius * 0.38, 0.018);
-        float wall = exp(-surface.x / layer) * incidence;
+        float wall = exp(-surface.x / layer) * max(incidence, 0.0);
         wall *= 1.0 - smoothstep(layer, layer * 2.0, surface.x);
-        vec3 tangent = incoming - normal * dot(normal, incoming);
+        vec3 tangent = incoming - normal * incidence;
         float turbulence = eddy(point / max(exit_radius * 2.0, 0.02) + tangent * effect_time * 4.0);
+        float churn = eddy(point / max(exit_radius * 6.0, 0.06) - normal * (effect_time * 1.7));
 
-        // An opaque hull removes the downstream stream; incident gas fans along the exposed skin.
+        // Gas the hull stops does not disappear: it stays attached as a sheet over the windward skin
+        // and past the shoulder, then separates into a recirculating wake on the lee side.
+        float blocked = 1.0 - visibility;
+        vec3 stopped = light * blocked;
+        float held = extinction * blocked;
+        float attached = smoothstep(-0.7, 0.15, incidence);
+        float sheet = exp(-surface.x / (layer * 3.5));
+        float wake = exp(-surface.x / (layer * 9.0)) * (1.0 - attached);
+
         light *= visibility;
         extinction *= visibility;
+        light += stopped * sheet * mix(0.30, 0.85, attached) * (0.30 + 1.7 * turbulence);
+        light += stopped * wake * (0.12 + 0.9 * churn) * 0.55;
+        extinction += held * sheet * 0.8;
         light += mix(light, core_colour * length(light), 0.35) * wall * (1.2 + 2.0 * turbulence);
 
     }
