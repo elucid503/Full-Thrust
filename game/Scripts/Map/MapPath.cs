@@ -317,13 +317,14 @@ public sealed partial class MapPath : Control {
 
         Vector3 world = Frames.Point(orbit.PositionAtTrueAnomaly(anomaly));
 
-        if (_map.Camera.IsPositionBehind(world)) {
+        // Same rule as the live conic's own marks: behind the body it goes, it does not dim.
+        if (_map.Camera.IsPositionBehind(world) || Behind(world)) {
 
             return;
 
         }
 
-        Emblem(kind, _map.Camera.UnprojectPosition(world), Behind(world) ? ink * Alpha(0.35f) : ink);
+        Emblem(kind, _map.Camera.UnprojectPosition(world), ink);
 
     }
 
@@ -377,9 +378,10 @@ public sealed partial class MapPath : Control {
 
         mark.Hidden = Behind(world);
 
-        // The line of nodes is a crossing, not a place. One the planet is standing in front of puts
-        // a label over a hemisphere the vessel is nowhere near, so it goes rather than dimming.
-        if (mark.Hidden && (kind == Kind.Ascending || kind == Kind.Descending)) {
+        // An apsis and a crossing are points on the conic, not places on the planet. One the body is
+        // standing in front of puts a label over a hemisphere the vessel is nowhere near, so it goes
+        // rather than dimming. The vessel and an impact stay: those two must never be lost track of.
+        if (mark.Hidden && kind != Kind.Vessel && kind != Kind.Impact) {
 
             mark.Live = false;
 

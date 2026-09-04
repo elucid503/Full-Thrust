@@ -24,8 +24,8 @@ public sealed partial class Popover : Control {
 
     private const float RowTop = 4.0f;
 
-    // Clears the action row off the bottom hairline. A button hard against the edge reads as a crop.
-    private const float Foot = 15.0f;
+    // Clears the action row off the bottom hairline without leaving a band of nothing under it.
+    private const float Foot = 10.0f;
 
     /// <summary>Fills the panel for whatever it is showing. Called every frame, so the figures are live.</summary>
     public delegate void Reader(List<(string Label, string Value)> rows, List<(string Label, Action Run)> actions);
