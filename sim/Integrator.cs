@@ -32,35 +32,50 @@ public static class Integrator {
 
     }
 
+    private readonly struct Rate {
+
+        public Vector3d Velocity { get; }
+        public Vector3d Acceleration { get; }
+        public double MassRate { get; }
+
+        public Rate(Vector3d velocity, Vector3d acceleration, double massRate) {
+
+            Velocity = velocity;
+            Acceleration = acceleration;
+            MassRate = massRate;
+
+        }
+
+    }
+
+    private static Rate Derive(Vector3d position, Vector3d velocity, double mass, double mu, Vector3d push, double flow) {
+
+        double radius = position.Length;
+
+        Vector3d gravity = position * (-mu / (radius * radius * radius));
+
+        return new Rate(velocity, gravity + push / mass, -flow);
+
+    }
+
     private static void StepTranslation(Vessel vessel, CelestialBody body, double dt) {
 
         double thrust = vessel.CurrentThrust;
         double flow = vessel.CurrentMassFlow;
 
-        Vector3d thrustAxis = vessel.Nose;
-        Vector3d translation = vessel.RcsForce;
+        Vector3d push = vessel.Nose * thrust + vessel.RcsForce;
 
         double mu = body.Mu;
 
-        (Vector3d Velocity, Vector3d Acceleration, double MassRate) Derive(Vector3d position, Vector3d velocity, double mass) {
-
-            double radius = position.Length;
-
-            Vector3d gravity = position * (-mu / (radius * radius * radius));
-            Vector3d acceleration = gravity + (thrustAxis * thrust + translation) / mass;
-
-            return (velocity, acceleration, -flow);
-
-        }
-
         Vector3d p0 = vessel.Position;
         Vector3d v0 = vessel.Velocity;
+
         double m0 = vessel.Mass;
 
-        var k1 = Derive(p0, v0, m0);
-        var k2 = Derive(p0 + k1.Velocity * (dt * 0.5), v0 + k1.Acceleration * (dt * 0.5), m0 + k1.MassRate * (dt * 0.5));
-        var k3 = Derive(p0 + k2.Velocity * (dt * 0.5), v0 + k2.Acceleration * (dt * 0.5), m0 + k2.MassRate * (dt * 0.5));
-        var k4 = Derive(p0 + k3.Velocity * dt, v0 + k3.Acceleration * dt, m0 + k3.MassRate * dt);
+        Rate k1 = Derive(p0, v0, m0, mu, push, flow);
+        Rate k2 = Derive(p0 + k1.Velocity * (dt * 0.5), v0 + k1.Acceleration * (dt * 0.5), m0 + k1.MassRate * (dt * 0.5), mu, push, flow);
+        Rate k3 = Derive(p0 + k2.Velocity * (dt * 0.5), v0 + k2.Acceleration * (dt * 0.5), m0 + k2.MassRate * (dt * 0.5), mu, push, flow);
+        Rate k4 = Derive(p0 + k3.Velocity * dt, v0 + k3.Acceleration * dt, m0 + k3.MassRate * dt, mu, push, flow);
 
         double sixth = dt / 6.0;
 

@@ -130,7 +130,10 @@ public sealed class Hull {
     /// <summary>Swept area of the mould line over a span; dry mass divides by this, so a run of it carries its share.</summary>
     public double ShellArea(double low, double high) => Sweep(Math.Max(low, Base), Math.Min(high, Tip), true).Measure;
 
+    /// <summary>Radius of the mould line at a station, linear between the two it falls between.</summary>
     public double RadiusAt(double z) {
+
+        int last = _stations.Length - 1;
 
         if (z <= _stations[0].Z) {
 
@@ -138,30 +141,43 @@ public sealed class Hull {
 
         }
 
-        for (int index = 1; index < _stations.Length; index++) {
+        if (z >= _stations[last].Z) {
 
-            Station lower = _stations[index - 1];
-            Station upper = _stations[index];
-
-            if (z > upper.Z) {
-
-                continue;
-
-            }
-
-            double span = upper.Z - lower.Z;
-
-            if (span <= 0.0) {
-
-                return upper.Radius;
-
-            }
-
-            return lower.Radius + (upper.Radius - lower.Radius) * ((z - lower.Z) / span);
+            return _stations[last].Radius;
 
         }
 
-        return _stations[_stations.Length - 1].Radius;
+        int low = 0;
+        int high = last;
+
+        // Bisection rather than a scan: the mass sweep and the aerodynamic panels both call this
+        // once per slice, and a hull carries dozens of stations.
+        while (high - low > 1) {
+
+            int middle = (low + high) >> 1;
+
+            if (_stations[middle].Z <= z) {
+
+                low = middle;
+
+            }
+            else {
+
+                high = middle;
+
+            }
+
+        }
+
+        double span = _stations[high].Z - _stations[low].Z;
+
+        if (span <= 0.0) {
+
+            return _stations[high].Radius;
+
+        }
+
+        return _stations[low].Radius + (_stations[high].Radius - _stations[low].Radius) * ((z - _stations[low].Z) / span);
 
     }
 
