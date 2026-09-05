@@ -20,11 +20,11 @@ public sealed partial class Ground : Node3D {
     // A patch splits once the eye is inside this many patch-edges of it. Straight distance rather
     // than a projected error: over a sphere the two agree to within a few percent, and this one
     // needs no bounding volume to be right before the patch has been built.
-    private const double SplitFactor = 3.2;
+    private const double SplitFactor = 2.4;
 
     // Merged back a little further out than it split, so a patch sitting on the boundary does not
     // build and free itself once a frame for as long as the camera hovers there.
-    private const double MergeFactor = 4.0;
+    private const double MergeFactor = 3.2;
 
     // Sixteen halvings of a two-thousand-kilometre face leaves a thirty-metre patch, and a vertex
     // every metre. Past that the detail spectrum has nothing left to say.
@@ -101,6 +101,8 @@ public sealed partial class Ground : Node3D {
         public double Edge;
         public double ActivatedAt = -1.0;
         public float Coarseness;
+        public float LastMorph = float.NaN;
+        public bool Visible;
 
         public Patch[] Children;
 
@@ -386,7 +388,12 @@ public sealed partial class Ground : Node3D {
 
         if (patch.Instance != null) {
 
-            patch.Instance.Visible = true;
+            if (!patch.Visible) {
+
+                patch.Instance.Visible = true;
+                patch.Visible = true;
+
+            }
 
             return;
 
@@ -441,9 +448,10 @@ public sealed partial class Ground : Node3D {
 
     private static void Hide(Patch patch) {
 
-        if (patch.Instance != null) {
+        if (patch.Instance != null && patch.Visible) {
 
             patch.Instance.Visible = false;
+            patch.Visible = false;
 
         }
 
@@ -497,6 +505,7 @@ public sealed partial class Ground : Node3D {
         return new MeshInstance3D {
 
             Mesh = mesh,
+            Visible = false,
 
             MaterialOverride = material,
 
@@ -512,13 +521,19 @@ public sealed partial class Ground : Node3D {
 
     private void Place(Patch patch, double time, Basis turn) {
 
-        if (patch.Instance != null && patch.Instance.Visible) {
+        if (patch.Instance != null && patch.Visible) {
 
             // Differenced against the floating origin in double and only then cut to float, so a
             // patch a million metres from the planet's centre still holds still under the camera.
             patch.Instance.Transform = new Transform3D(turn, Frames.Point(_body.ToInertial(patch.Anchor, time)));
             float arrival = patch.ActivatedAt < 0.0 ? 0.0f : (float)Math.Clamp(1.0 - (Time.GetTicksMsec() * 0.001 - patch.ActivatedAt) / 0.3, 0.0, 1.0);
-            patch.Instance.SetInstanceShaderParameter("lod_morph", Math.Max(arrival, patch.Coarseness));
+            float morph = Math.Max(arrival, patch.Coarseness);
+            if (morph != patch.LastMorph) {
+
+                patch.Instance.SetInstanceShaderParameter("lod_morph", morph);
+                patch.LastMorph = morph;
+
+            }
 
         }
 
@@ -583,7 +598,8 @@ public sealed partial class Ground : Node3D {
                 int index = row * side + column;
 
                 points[index] = direction * (radius + standing);
-                sounding[index] = Math.Max(-elevation, 0.0);
+                // Preserve both sides of sea level so the shoreline crosses triangles at zero height.
+                sounding[index] = -elevation;
 
             }
 
@@ -673,6 +689,7 @@ public sealed partial class Ground : Node3D {
                 parentOffsets[index * 4] = parentOffset.X;
                 parentOffsets[index * 4 + 1] = parentOffset.Y;
                 parentOffsets[index * 4 + 2] = parentOffset.Z;
+                parentOffsets[index * 4 + 3] = (float)-sounding[sample];
 
                 Vector3 axis = Frames.Direction(tangent);
 
@@ -688,7 +705,7 @@ public sealed partial class Ground : Node3D {
 
                 detail[index] = new Vector2((float)(radius * Math.Atan(u) - offsetS), (float)(-radius * Math.Atan(v) - offsetT));
 
-                depths[index] = new Color((float)Math.Sqrt(Math.Min(sounding[sample] / SoundingLimit, 1.0)), 0.0f, 0.0f, 1.0f);
+                depths[index] = new Color((float)Math.Sqrt(Math.Clamp(sounding[sample] / SoundingLimit, 0.0, 1.0)), 0.0f, 0.0f, 1.0f);
 
             }
 

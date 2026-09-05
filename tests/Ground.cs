@@ -83,8 +83,42 @@ public static partial class Program {
         Expect("flat ground still rolls", Math.Abs(rolled) is > 0.01 and < 24.0, $"{rolled:F2} m over 440 m");
 
         GroundSpectrum(terrain);
+        GroundRegions(terrain);
         GroundConcurrency(terrain);
         GroundContact(terrain);
+
+    }
+
+    private static void GroundRegions(Terrain terrain) {
+
+        Section("regional landscapes");
+        double Relief(double latitude, double longitude) {
+
+            double low = double.MaxValue;
+            double high = double.MinValue;
+            for (int y = -4; y <= 4; y++) {
+
+                for (int x = -4; x <= 4; x++) {
+
+                    double height = terrain.Elevation(Site(latitude + y * 0.02, longitude + x * 0.02));
+                    low = Math.Min(low, height);
+                    high = Math.Max(high, height);
+
+                }
+
+            }
+            return high - low;
+
+        }
+        double florida = Relief(28.6, -81.0);
+        double mountains = Relief(35.6, -83.4);
+        Expect("Florida stays low relief", florida < 35.0, $"{florida:F1} m of relief");
+        Expect("Appalachians rise above the coastal plain", mountains > florida * 3.0 && mountains > 70.0,
+            $"mountains {mountains:F1} m, Florida {florida:F1} m");
+        Near("longitude wraps continuously", terrain.Elevation(Site(40.0, -180.0)),
+            terrain.Elevation(Site(40.0, 180.0)), 1e-6);
+        Near("pole has one elevation", terrain.Elevation(Site(90.0, 0.0)),
+            terrain.Elevation(Site(90.0, 130.0)), 0.1);
 
     }
 

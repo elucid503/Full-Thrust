@@ -17,6 +17,7 @@ project/assembly_name="FullThrust.Game"
 [rendering]
 
 renderer/rendering_method="forward_plus"
+limits/global_shader_variables/buffer_size=262144
 textures/default_filters/anisotropic_filtering_level=4
 lights_and_shadows/directional_shadow/soft_shadow_filter_quality=4
 anti_aliasing/quality/msaa_3d=1

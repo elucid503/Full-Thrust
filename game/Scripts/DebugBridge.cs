@@ -648,6 +648,10 @@ public sealed partial class DebugBridge : Node {
             state["flightMs"] = (GetTree().CurrentScene as Main)?.FlightMilliseconds ?? 0.0;
             state["terrainWorkerFailures"] = Planet.Active?.WorkerFailures ?? 0;
             state["terrainPendingJobs"] = Planet.Active?.PendingJobs ?? 0;
+            state["trees"] = Planet.Active?.TreeCount ?? 0;
+            state["forestCells"] = Planet.Active?.ForestCells ?? 0;
+            state["forestPendingJobs"] = Planet.Active?.ForestPending ?? 0;
+            state["forestFailures"] = Planet.Active?.ForestFailures ?? 0;
             state["patchLevel"] = Planet.Active?.DeepestLevel ?? 0;
             state["speed"] = flight.Vessel.Velocity.Length;
             state["apoapsis"] = flight.Orbit.ApoapsisRadius - flight.Body.Radius;

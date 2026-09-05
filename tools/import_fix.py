@@ -29,6 +29,10 @@ for path in root.rglob("*.import"):
 
     wanted = dict(WANTED)
 
+    if path.name == "biomes.png.import":
+        wanted["compress/mode"] = "0"
+        wanted["process/fix_alpha_border"] = "false"
+
     # Left on Detect, a normal map imported headlessly lands as plain colour and its detail is gone.
     if "_normal" in path.name:
 

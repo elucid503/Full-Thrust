@@ -1,13 +1,13 @@
 shader_type spatial;
 render_mode specular_schlick_ggx;
 
-// One face of the cube-sphere. The imagery is the colour and everything finer than a texel of it is
-// synthesised: a detail material at a tile size chosen from the viewing distance, so the ground has
-// grain at four hundred kilometres and at four metres and never resolves into a flat photograph.
+// Geographic cover fractions select materials; body-fixed noise supplies the local landscape.
 
-uniform sampler2D surface_map : source_color, filter_linear_mipmap_anisotropic;
-uniform sampler2D climate_map : filter_linear_mipmap_anisotropic;
+uniform sampler2D biome_map : filter_linear_mipmap, repeat_enable;
+uniform sampler2D shoreline_map : filter_linear, repeat_enable;
 uniform sampler2D night_map : source_color, filter_linear_mipmap_anisotropic;
+uniform float camera_altitude = 0.0;
+uniform vec2 terrain_rotation = vec2(1.0, 0.0);
 
 
 uniform sampler2D rock_colour : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
@@ -30,9 +30,7 @@ uniform float planet_radius = 1274200.0;
 uniform float detail_fine = 4.0;
 uniform float detail_coarse = 64.0;
 
-// And a third, wide enough that it is still resolved from a few kilometres up. Without it the
-// ground between the imagery's four-hundred-metre texels is one flat colour with grain on it, which
-// is exactly what an aerial view of it looked like.
+// A third material scale carries surface variation into aerial views.
 uniform float detail_macro = 1024.0;
 
 // How much of the relief comes from the coarse tile. The fine one is grain; the coarse one is the
@@ -41,8 +39,7 @@ uniform float detail_balance : hint_range(0.0, 1.0) = 0.62;
 
 uniform float macro_contrast : hint_range(0.0, 1.0) = 0.38;
 
-// How much of the detail material's own colour is allowed through. The photograph is still the
-// ground's colour; this is the difference between rock and soil at a range no photograph resolves.
+// Material hue supplements the regional palette without overwhelming it.
 uniform float material_hue : hint_range(0.0, 1.0) = 0.12;
 
 // Detail is worth nothing once its tile is under a pixel. Both of these are metres of ground to a
@@ -100,9 +97,7 @@ uniform float cloud_shadow : hint_range(0.0, 1.0) = 0.48;
 
 uniform float snow_albedo : hint_range(0.4, 1.0) = 0.72;
 
-// The imagery is a satellite average over four hundred metres, taken through the whole atmosphere:
-// it is darker and flatter than the ground looks from a hundred metres up. Lifted as the detail
-// engages, which is exactly where the difference starts to show.
+// Optional close-range palette adjustment, neutral by default.
 uniform float close_lift : hint_range(0.5, 1.0) = 1.0;
 
 // A lit surface under air is filled by the whole sky as well as by the sun, and without it every
@@ -113,17 +108,43 @@ uniform float sky_fill : hint_range(0.0, 0.5) = 0.055;
 // it the whole night side carries a flat warm haze rather than only its cities.
 uniform float night_floor = 0.035;
 
-uniform float night_gain = 1.1;
+uniform float night_gain = 0.32;
 uniform float night_dusk = -0.02;
 uniform float night_dark = -0.20;
 
 varying vec3 world_position;
-instance uniform float lod_morph = 0.0;
+varying float surface_elevation;
+instance uniform float lod_morph : instance_index(0) = 0.0;
 
 void vertex() {
 
     VERTEX += CUSTOM0.xyz * lod_morph;
+    surface_elevation = CUSTOM0.w;
     world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+
+}
+
+float landscape_hash(vec3 p) {
+
+    // Integer lattice hashing keeps shared corners identical after GPU expression optimisation.
+    uvec3 cell = uvec3(ivec3(floor(p)));
+    uint hash = cell.x * 1597334677u ^ cell.y * 3812015801u ^ cell.z * 2798796415u;
+    hash = (hash ^ (hash >> 16u)) * 2246822519u;
+    hash = (hash ^ (hash >> 13u)) * 3266489917u;
+    hash ^= hash >> 16u;
+    return float(hash & 16777215u) / 16777216.0;
+
+}
+
+float landscape_noise(vec3 p) {
+
+    vec3 cell = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(landscape_hash(cell), landscape_hash(cell + vec3(1,0,0)), f.x),
+                   mix(landscape_hash(cell + vec3(0,1,0)), landscape_hash(cell + vec3(1,1,0)), f.x), f.y),
+               mix(mix(landscape_hash(cell + vec3(0,0,1)), landscape_hash(cell + vec3(1,0,1)), f.x),
+                   mix(landscape_hash(cell + vec3(0,1,1)), landscape_hash(cell + vec3(1,1,1)), f.x), f.y), f.z);
 
 }
 
@@ -144,24 +165,30 @@ float overcast(vec3 radial, vec3 up) {
 void fragment() {
 
     vec3 radial = world_position - planet_centre;
+    vec3 fixed_position = vec3(terrain_rotation.x * radial.x - terrain_rotation.y * radial.z,
+        radial.y, terrain_rotation.y * radial.x + terrain_rotation.x * radial.z);
 
     float height = length(radial);
 
     vec3 up = radial / height;
 
-    float elevation = height - planet_radius;
+    // Interpolated survey height avoids spherical chord sag and large-coordinate rounding.
+    float elevation = surface_elevation;
 
-    vec4 climate = texture(climate_map, UV);
+    vec3 fixed_up = normalize(fixed_position);
+    vec2 geography = vec2(atan(-fixed_up.z, fixed_up.x) / TAU + 0.5,
+        clamp(0.5 - asin(clamp(fixed_up.y, -1.0, 1.0)) / PI, 0.00025, 0.99975));
+    vec4 biome = texture(biome_map, geography);
+    vec4 climate = vec4(0.0, biome.a, biome.r, biome.b);
+    vec3 ground;
 
-    vec3 ground = texture(surface_map, UV).rgb;
-
-    // Depth arrives with the mesh rather than off the world position, which at a million metres
-    // from the planet's centre has lost the last decimetre and would fray the shoreline.
-    float depth = COLOR.r * COLOR.r * 1600.0;
-
-    // Widened to whatever a pixel of the mesh actually spans, so the coastline is one antialiased
-    // line at every altitude rather than a stair at some of them.
-    float sea = smoothstep(0.0, max(0.004, fwidth(COLOR.r)), COLOR.r);
+    vec2 coast_uv = vec2(geography.x, clamp(geography.y,
+        0.5 / float(textureSize(shoreline_map, 0).y), 1.0 - 0.5 / float(textureSize(shoreline_map, 0).y)));
+    float coast_elevation = texture(shoreline_map, coast_uv).r;
+    float depth = max(-coast_elevation, 0.0);
+    // Resolve the surveyed zero contour per pixel, including on distant coarse patches.
+    float coast_width = max(fwidth(coast_elevation), 0.02);
+    float sea = 1.0 - smoothstep(-coast_width, coast_width, coast_elevation);
 
     // Metres of ground under one pixel. Every fade below is driven off this rather than off the
     // range, so nothing steps at a fixed distance from the eye.
@@ -185,10 +212,28 @@ void fragment() {
     float regional_snow_line = mix(950.0, 80.0, smoothstep(0.3, 0.96, latitude));
     float snow = max(climate.g, smoothstep(regional_snow_line, regional_snow_line + snow_band, elevation))
         * (1.0 - smoothstep(0.12, 0.42, slope)) * (1.0 - sea);
-    float vegetation = climate.b * (1.0 - bare) * (1.0 - snow);
-    vec3 rock_tint = vec3(0.17, 0.15, 0.125);
-    ground = mix(ground, mix(ground * 0.65, rock_tint, 0.42), bare * 0.7);
-    ground *= mix(vec3(1.0), vec3(0.72, 0.86, 0.65), vegetation * 0.5);
+    float region = landscape_noise(fixed_position / 1800.0);
+    float mosaic = landscape_noise(fixed_position / 180.0 + region * 2.0);
+    float vegetation = smoothstep(0.18, 0.80, biome.r + (mosaic - 0.5) * 0.5)
+        * (1.0 - bare) * (1.0 - snow);
+    float forest = biome.g * vegetation;
+    float beach = (1.0 - smoothstep(1.0, 5.0, elevation)) * (1.0 - bare);
+    vec3 earth = mix(vec3(0.115, 0.082, 0.046), vec3(0.38, 0.265, 0.135), biome.b);
+    vec3 grass = mix(vec3(0.095, 0.135, 0.038), vec3(0.22, 0.20, 0.075), biome.b);
+    vec3 woodland = mix(vec3(0.035, 0.080, 0.030), vec3(0.065, 0.105, 0.032), region);
+    vec3 rock_tint = mix(vec3(0.20, 0.19, 0.17), vec3(0.32, 0.18, 0.105), biome.b * region);
+    ground = mix(earth, grass, vegetation);
+    ground = mix(ground, woodland, forest * 0.85);
+    ground = mix(ground, rock_tint, bare);
+    ground = mix(ground, vec3(0.40, 0.34, 0.22), beach * (1.0 - biome.a));
+    ground *= mix(0.78, 1.20, mosaic);
+    if (forest > 0.01 && footprint < 22.0) {
+
+        float canopy = landscape_noise(fixed_position / 12.0);
+        float resolved = 1.0 - smoothstep(6.0, 22.0, footprint);
+        ground *= 1.0 - forest * resolved * (0.12 + 0.35 * smoothstep(0.42, 0.70, canopy));
+
+    }
 
     vec3 relief = vec3(0.0, 0.0, 1.0);
 
@@ -216,8 +261,7 @@ void fragment() {
 
         vec3 material = mix(near_grain, far_grain, detail_balance);
 
-        // The imagery is still the colour: the luminance is taken as a modulation about the
-        // material's own mean, and only a fraction of its hue is let through on top of that.
+        // Keep the material's contrast while preserving the regional palette.
         float grain = dot(material, vec3(0.2126, 0.7152, 0.0722));
 
         vec3 tint = material / max(grain, 0.04);
@@ -292,7 +336,12 @@ void fragment() {
     NORMAL_MAP = normalize(perturbed) * 0.5 + 0.5;
     NORMAL_MAP_DEPTH = 1.0;
 
-    float lit = 1.0 - cloud_shadow * smoothstep(0.04, 0.92, overcast(radial, up));
+    float lit = 1.0;
+    if (dot(up, sun_direction) > 0.0) {
+
+        lit -= cloud_shadow * smoothstep(0.04, 0.92, overcast(radial, up));
+
+    }
 
     ALBEDO = (mix(ground, water, sea) + vec3(foam * 0.07)) * lit;
 
@@ -319,6 +368,25 @@ void fragment() {
     float dome = 0.5 + 0.5 * clamp(dot(world_normal, up), 0.0, 1.0);
 
     vec3 lights = max(texture(night_map, UV).rgb - night_floor, vec3(0.0)) / (1.0 - night_floor);
+    float ascent = smoothstep(350.0, 1800.0, camera_altitude);
+    if (night * ascent > 0.001) {
+
+        vec2 district = atan(UV * 2.0 - 1.0) * planet_radius / 128.0;
+        vec2 block = floor(district);
+        vec2 lamp = vec2(landscape_hash(vec3(block, 7.0)), landscape_hash(vec3(block, 19.0)));
+        float density = smoothstep(0.015, 0.25, dot(lights, vec3(0.2126, 0.7152, 0.0722)));
+        float ward = landscape_noise(fixed_position / 650.0);
+        float occupied = step(lamp.y, density * smoothstep(0.20, 0.65, ward + density * 0.30));
+        lamp = lamp.x < 0.5 ? vec2(0.10, lamp.y) : vec2(lamp.y, 0.10);
+        float radius = max(0.020, footprint / 128.0 * 0.65);
+        float point = exp(-dot(fract(district) - lamp, fract(district) - lamp) / (radius * radius));
+        point *= 0.008 / (radius * radius) * occupied;
+        float pattern = mix(point, 0.025 * density, smoothstep(24.0, 100.0, footprint));
+        vec3 warmth = mix(vec3(1.0, 0.48, 0.16), vec3(1.0, 0.85, 0.60), lamp.x);
+        lights = mix(lights * warmth * pattern * 32.0, lights, smoothstep(160.0, 500.0, footprint));
+
+    }
+    lights *= ascent;
 
     vec3 sky_irradiance = vec3(0.52, 0.68, 1.0) * sky_fill * daylight * dome;
 
@@ -328,7 +396,7 @@ void fragment() {
     float fresnel = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 5.0);
     vec3 sea_horizon = vec3(0.16, 0.29, 0.43) * fresnel * daylight * 0.18;
 
-    EMISSION = lights * night_gain * night * lit * (1.0 - sea * 0.85)
+    EMISSION = lights * night_gain * night * lit * (1.0 - sea)
         + ALBEDO * sky_irradiance * (1.0 - sea)
         + sea_horizon * sea;
 

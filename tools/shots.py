@@ -46,6 +46,8 @@ VIEWS = {
     # Coast, shallows and surf, looking out to sea from over the launch site.
     "cape": dict(latitude=28.52, longitude=-80.62, altitude=1_200.0, look=16.0, bearing=110.0, distance=180.0),
 
+    "coast-far": dict(latitude=28.52, longitude=-80.62, altitude=10_000.0, look=35.0, bearing=10.0, distance=180.0),
+
     # The vehicle where the flight actually starts, clamped and untouched. These two come before
     # anything that moves it, because moving it is what lets the clamps go.
     "clamped": dict(look=8.0, bearing=200.0, distance=48.0, hold=True),
@@ -54,6 +56,12 @@ VIEWS = {
 
     # Standing off the pad, looking down the range.
     "pad": dict(latitude=28.52, longitude=-80.62, altitude=45.0, look=3.0, bearing=90.0, distance=60.0),
+
+    "forest": dict(latitude=35.6, longitude=-83.4, altitude=80.0, look=12.0, bearing=40.0, distance=100.0),
+    "sahara": dict(latitude=25.0, longitude=15.0, altitude=250.0, look=12.0, bearing=90.0, distance=100.0),
+    "night-ground": dict(latitude=35.7, longitude=139.7, altitude=40.0, look=25.0, bearing=0.0, distance=60.0),
+    "night-ascent": dict(latitude=35.7, longitude=139.7, altitude=3000.0, look=40.0, bearing=0.0, distance=100.0),
+    "night-city": dict(latitude=35.7, longitude=139.7, altitude=20000.0, look=50.0, bearing=0.0, distance=100.0),
 
     # The antisolar point: nothing here should be lit by anything but its own cities.
     "night": dict(latitude=-11.5, longitude=161.6, altitude=250_000.0, look=40.0, bearing=90.0, distance=110.0),
@@ -88,7 +96,7 @@ def settle(rounds=SETTLE):
 
         steady = steady + 1 if state["patches"] == last else 0
 
-        if steady >= 3 and state.get("terrainPendingJobs", 0) == 0 and state["fps"] > 20:
+        if steady >= 3 and state.get("terrainPendingJobs", 0) == 0 and state.get("forestPendingJobs", 0) == 0 and state["fps"] > 20:
             return state
 
         last = state["patches"]

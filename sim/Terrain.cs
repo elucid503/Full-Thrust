@@ -67,6 +67,8 @@ public sealed class Terrain {
     private readonly double _floor;
 
     private readonly double _radius;
+    private readonly double _northPole;
+    private readonly double _southPole;
 
     private Plateau[] _plateaus = Array.Empty<Plateau>();
 
@@ -78,12 +80,35 @@ public sealed class Terrain {
         _step = step;
         _floor = floor;
         _radius = radius;
+        for (int column = 0; column < width; column++) {
+
+            _northPole += floor + counts[column] * step;
+            _southPole += floor + counts[(height - 1) * width + column] * step;
+
+        }
+        _northPole /= width;
+        _southPole /= width;
 
     }
 
     /// <summary>Lowest and highest the measured grid goes, metres. The renderer sizes its patch
     /// bounding volumes off these rather than guessing.</summary>
     public double Floor => _floor;
+
+    public int SurveyWidth => _width;
+    public int SurveyHeight => _height;
+
+    public double SurveyElevation(int column, int row) {
+
+        if ((uint)column >= _width || (uint)row >= _height) {
+
+            throw new ArgumentOutOfRangeException();
+
+        }
+
+        return _floor + _counts[row * _width + column] * _step;
+
+    }
 
     public double Ceiling => _floor + 65535.0 * _step + RidgeAmplitude + RollingAmplitude;
 
@@ -195,7 +220,7 @@ public sealed class Terrain {
 
         double measured = Sample(u, v);
 
-        double natural = PreserveCoast(measured, measured + Detail(unit, Ruggedness(u, v, latitude, measured), spacing));
+        double natural = PreserveCoast(measured, measured + Detail(unit, Ruggedness(u, v, latitude), spacing, measured));
 
         return Level(unit, natural);
 
@@ -219,7 +244,7 @@ public sealed class Terrain {
 
         double measured = Sample(u, v);
 
-        return PreserveCoast(measured, measured + Detail(unit, Ruggedness(u, v, latitude, measured), 0.0));
+        return PreserveCoast(measured, measured + Detail(unit, Ruggedness(u, v, latitude), 0.0, measured));
 
     }
 
@@ -253,24 +278,24 @@ public sealed class Terrain {
     // already says there is relief, and stays a gentle roll where it says there is none. Taken over
     // two posts rather than the cell the sample landed in, so the mask is smooth and does not
     // terrace the detail at grid boundaries.
-    private double Ruggedness(double u, double v, double latitude, double measured) {
+    private double Ruggedness(double u, double v, double latitude) {
 
         double du = 2.0 / _width;
         double dv = 2.0 / _height;
 
-        double east = Sample(u + du, v);
-        double north = Sample(u, v - dv);
+        double east = Sample(u + du, v) - Sample(u - du, v);
+        double north = Sample(u, v - dv) - Sample(u, v + dv);
 
         double metresEast = Math.PI * 2.0 * _radius * Math.Max(Math.Cos(latitude), 0.05) * du;
         double metresNorth = Math.PI * _radius * dv;
 
-        double slope = Math.Sqrt(Square((east - measured) / metresEast) + Square((north - measured) / metresNorth));
+        double slope = Math.Sqrt(Square(east / (2.0 * metresEast)) + Square(north / (2.0 * metresNorth)));
 
         return Smoothstep(SmoothSlope, BrokenSlope, slope);
 
     }
 
-    private double Detail(Vector3d unit, double ruggedness, double spacing) {
+    private double Detail(Vector3d unit, double ruggedness, double spacing, double measured) {
 
         // Nyquist on the detail spectrum, with two octaves of headroom: an octave well under the
         // sample spacing is noise in the mesh rather than shape in it, and on a patch an orbital view
@@ -288,6 +313,7 @@ public sealed class Terrain {
         double rolling = rollingOctaves > 0.0
             ? Noise.Fractal(at.X, at.Y, at.Z, rollingOctaves, DetailGain) * RollingAmplitude
             : 0.0;
+        rolling *= 0.18 + 0.82 * Smoothstep(0.0, 18.0, Math.Abs(measured));
 
         double ridgeOctaves = Math.Clamp(resolved, 0.0, RidgeOctaves);
 
@@ -299,7 +325,8 @@ public sealed class Terrain {
 
         // Offset so the ridge field is not the same field as the rolling one read twice. Ridges only
         // ever stand up out of the survey's own relief; nothing here digs into it.
-        double ridged = Noise.Ridged(at.X + 91.7, at.Y - 43.1, at.Z + 17.9, ridgeOctaves, DetailGain);
+        double warp = Noise.Value(at.X * 0.6, at.Y * 0.6, at.Z * 0.6) * 0.65;
+        double ridged = Noise.Ridged(at.X + 91.7 + warp, at.Y - 43.1 - warp, at.Z + 17.9 + warp * 0.5, ridgeOctaves, DetailGain);
 
         // The ridged sum is normalised by its own octaves, so it does not thin as they are dropped.
         // Its amplitude is faded over the last one instead.
@@ -327,7 +354,15 @@ public sealed class Terrain {
         double upper = Count(left, top) + (Count(right, top) - Count(left, top)) * fx;
         double lower = Count(left, bottom) + (Count(right, bottom) - Count(left, bottom)) * fx;
 
-        return _floor + (upper + (lower - upper) * fy) * _step;
+        double sampled = _floor + (upper + (lower - upper) * fy) * _step;
+        double polar = Math.Min(v, 1.0 - v) * _height;
+        if (polar < 0.5) {
+
+            double pole = v < 0.5 ? _northPole : _southPole;
+            return pole + (sampled - pole) * Math.Max(0.0, polar * 2.0);
+
+        }
+        return sampled;
 
     }
 

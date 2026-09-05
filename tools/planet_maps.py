@@ -23,6 +23,8 @@ import struct
 import sys
 import urllib.request
 
+from landscapes import main as build_landscapes
+
 import numpy as np
 from PIL import Image
 
@@ -369,6 +371,7 @@ def main():
         "climate": build_climate,
         "night": build_night,
         "clouds": build_clouds,
+        "landscapes": build_landscapes,
 
     }
 

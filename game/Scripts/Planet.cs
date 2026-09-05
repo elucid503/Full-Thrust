@@ -1,3 +1,5 @@
+using System;
+
 using FullThrust.Sim;
 
 using Godot;
@@ -37,6 +39,7 @@ public sealed partial class Planet : Node3D {
     private CelestialBody _body;
 
     private Ground _ground;
+    private Forest _forest;
 
     private ShaderMaterial[] _faces;
     private ShaderMaterial _clouds;
@@ -55,6 +58,10 @@ public sealed partial class Planet : Node3D {
     public int PatchCount => _ground?.PatchCount ?? 0;
     public int DeepestLevel => _ground?.DeepestLevel ?? 0;
     public double GroundMilliseconds => _ground?.SyncMilliseconds ?? 0.0;
+    public int TreeCount => _forest?.TreeCount ?? 0;
+    public int ForestCells => _forest?.CellCount ?? 0;
+    public int ForestPending => _forest?.Pending ?? 0;
+    public int ForestFailures => _forest?.Failures ?? 0;
 
     public void Build(CelestialBody body, Vector3 sunDirection) {
 
@@ -77,6 +84,9 @@ public sealed partial class Planet : Node3D {
         AddChild(_ground);
 
         _ground.Build(body, _faces);
+        _forest = new Forest { Name = "Forest" };
+        AddChild(_forest);
+        _forest.Build(body, GD.Load<Texture2D>("res://Assets/Planet/biomes.png"));
 
         _atmosphere = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Atmosphere.gdshader") };
 
@@ -117,6 +127,29 @@ public sealed partial class Planet : Node3D {
 
     }
 
+    private static Texture2D Shoreline(Terrain terrain) {
+
+        int width = terrain.SurveyWidth;
+        int height = terrain.SurveyHeight;
+        byte[] pixels = new byte[width * height * 2];
+
+        for (int row = 0; row < height; row++) {
+
+            for (int column = 0; column < width; column++) {
+
+                Half elevation = (Half)terrain.SurveyElevation(column, row);
+                BitConverter.TryWriteBytes(pixels.AsSpan((row * width + column) * 2, 2), elevation);
+
+            }
+
+        }
+
+        // One shared half-float survey keeps coastlines independent of mesh LOD.
+        using Image image = Image.CreateFromData(width, height, false, Image.Format.Rh, pixels);
+        return ImageTexture.CreateFromImage(image);
+
+    }
+
     private void BuildFaces(float radius, Texture2D cloud, Vector3 sunDirection) {
 
         Shader shader = GD.Load<Shader>("res://Shaders/Ground.gdshader");
@@ -126,6 +159,8 @@ public sealed partial class Planet : Node3D {
         Texture2D soilColour = GD.Load<Texture2D>("res://Assets/Planet/soil_colour.jpg");
         Texture2D soilNormal = GD.Load<Texture2D>("res://Assets/Planet/soil_normal.jpg");
         Texture2D waveNormal = GD.Load<Texture2D>("res://Assets/Planet/wave_normal.png");
+        Texture2D biomes = GD.Load<Texture2D>("res://Assets/Planet/biomes.png");
+        Texture2D shoreline = Shoreline(_body.Terrain);
 
         _faces = new ShaderMaterial[6];
 
@@ -133,8 +168,8 @@ public sealed partial class Planet : Node3D {
 
             ShaderMaterial material = new ShaderMaterial { Shader = shader };
 
-            material.SetShaderParameter("surface_map", GD.Load<Texture2D>($"res://Assets/Planet/surface_{face}.jpg"));
-            material.SetShaderParameter("climate_map", GD.Load<Texture2D>($"res://Assets/Planet/climate_{face}.png"));
+            material.SetShaderParameter("biome_map", biomes);
+            material.SetShaderParameter("shoreline_map", shoreline);
             material.SetShaderParameter("night_map", GD.Load<Texture2D>($"res://Assets/Planet/night_{face}.jpg"));
             material.SetShaderParameter("cloud_map", cloud);
             material.SetShaderParameter("shape_noise", _cloudShape);
@@ -215,10 +250,16 @@ public sealed partial class Planet : Node3D {
         _ground.Sync(time, eye);
 
         float deck = (float)(_body.SpinAt(time) * CloudRotationRatio);
+        float altitude = (float)Math.Max(0.0, _body.HeightAboveGround(eye, time));
+        _forest.Sync(time, eye, altitude);
+        double spin = _body.SpinAt(time);
+        Vector2 rotation = new Vector2((float)Math.Cos(spin), (float)Math.Sin(spin));
 
         foreach (ShaderMaterial face in _faces) {
 
             face.SetShaderParameter("planet_centre", centre);
+            face.SetShaderParameter("camera_altitude", altitude);
+            face.SetShaderParameter("terrain_rotation", rotation);
             face.SetShaderParameter("cloud_spin", deck);
             face.SetShaderParameter("drift", (float)(time * CloudDrift));
 
