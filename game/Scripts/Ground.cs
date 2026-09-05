@@ -30,14 +30,15 @@ public sealed partial class Ground : Node3D {
     // every metre. Past that the detail spectrum has nothing left to say.
     private const int MaxLevel = 16;
 
-    // Mesh upload and render-server adoption happen on the main thread. Two completions per frame
-    // keep a fast camera move from turning a burst of finished worker jobs into a visible hitch;
-    // the workers continue building at full concurrency behind that pacing gate.
-    private const int BuildsPerFrame = 2;
+    // Mesh upload and render-server adoption happen on the main thread. A millisecond budget rather
+    // than a count: a descent from orbit finishes a burst of coarse patches at once, and taking two
+    // a frame left the ground crawling towards its resolution for seconds. One always gets through,
+    // so the tree can never stall behind a single slow mesh.
+    private const double AdoptionBudget = 2.5;
 
     // In flight at once. Held under the core count so the workers building patches cannot take
     // every thread the frame itself needs.
-    private static readonly int PendingLimit = Math.Clamp(System.Environment.ProcessorCount - 2, 2, 6);
+    private static readonly int PendingLimit = Math.Clamp(System.Environment.ProcessorCount - 2, 4, 12);
 
     // Skirts, not stitching. Neighbouring patches meet at different levels wherever the tree steps,
     // and a wall dropped from every border vertex covers the gap for a hundred lines less code.
@@ -149,6 +150,7 @@ public sealed partial class Ground : Node3D {
 
     private readonly List<Task<Surface>> _jobs = new();
     private int _adopted;
+    private long _adoptionDeadline;
     public int WorkerFailures { get; private set; }
     public int PendingJobs => _jobs.Count;
 
@@ -214,6 +216,8 @@ public sealed partial class Ground : Node3D {
     public void Sync(double time, Vector3d eye) {
 
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        _adoptionDeadline = started + (long)(AdoptionBudget * System.Diagnostics.Stopwatch.Frequency * 0.001);
 
         Vector3d local = _body.ToBodyFixed(eye, time);
 
@@ -373,7 +377,8 @@ public sealed partial class Ground : Node3D {
 
         }
 
-        if (patch.Job != null && patch.Job.IsCompletedSuccessfully && _adopted < BuildsPerFrame) {
+        if (patch.Job != null && patch.Job.IsCompletedSuccessfully
+            && (_adopted == 0 || System.Diagnostics.Stopwatch.GetTimestamp() < _adoptionDeadline)) {
 
             Adopt(patch);
 
@@ -542,6 +547,11 @@ public sealed partial class Ground : Node3D {
 
         int side = Grid + 3;
 
+        // What one quad of this patch covers on the ground. The terrain leaves off every detail
+        // octave finer than that, which is most of them on a patch an orbital view is built from
+        // and none of them once the vehicle is near enough to stand on one.
+        double spacing = span * Math.PI * 0.25 * radius / Grid;
+
         Vector3d[] points = _points ??= new Vector3d[side * side];
         double[] sounding = _sounding ??= new double[side * side];
 
@@ -560,7 +570,7 @@ public sealed partial class Ground : Node3D {
 
                 Vector3d direction = Direction(face, u, v);
 
-                double elevation = terrain.Elevation(direction);
+                double elevation = terrain.Elevation(direction, spacing);
 
                 // Clamped at the datum: below sea level the mesh is the water's own surface, which
                 // is what a vehicle touches and what the shader shades as sea. The depth is kept,

@@ -82,8 +82,41 @@ public static partial class Program {
 
         Expect("flat ground still rolls", Math.Abs(rolled) is > 0.01 and < 24.0, $"{rolled:F2} m over 440 m");
 
+        GroundSpectrum(terrain);
         GroundConcurrency(terrain);
         GroundContact(terrain);
+
+    }
+
+    // The renderer asks for the ground at the spacing it is about to place vertices at, and gets
+    // back only the octaves that spacing can carry. The physics asks for all of them.
+    private static void GroundSpectrum(Terrain terrain) {
+
+        Section("detail spectrum");
+
+        Vector3d site = Site(28.0, 86.9);
+
+        Expect("a metre of spacing is the whole field", terrain.Elevation(site, 1.0) == terrain.Elevation(site),
+            $"{terrain.Elevation(site, 1.0) - terrain.Elevation(site):F3} m apart");
+
+        double coarse = terrain.Elevation(site, 40_000.0);
+        double fine = terrain.Elevation(site);
+
+        Expect("orbital spacing drops the detail", Math.Abs(coarse - fine) > 1.0, $"{coarse - fine:F1} m apart");
+
+        // Nothing may pop as a patch splits: halving the spacing has to move the ground smoothly,
+        // and an octave that arrives at full amplitude is exactly what a visible seam is.
+        double worst = 0.0;
+
+        for (double spacing = 8.0; spacing < 40_000.0; spacing *= 1.6) {
+
+            Vector3d point = Site(28.0 + spacing * 1e-6, 86.9);
+
+            worst = Math.Max(worst, Math.Abs(terrain.Elevation(point, spacing) - terrain.Elevation(point, spacing * 0.999)));
+
+        }
+
+        Expect("the spectrum is continuous in spacing", worst < 0.5, $"{worst:F4} m step");
 
     }
 

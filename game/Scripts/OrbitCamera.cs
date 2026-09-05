@@ -75,8 +75,8 @@ public sealed partial class OrbitCamera : Node3D {
 
         if (@event is InputEventMouseMotion motion && _dragging) {
 
-            Yaw -= motion.Relative.X * LookSpeed;
-            Pitch = Mathf.Clamp(Pitch + motion.Relative.Y * LookSpeed, -PitchLimit, PitchLimit);
+            Yaw += motion.Relative.X * LookSpeed;
+            Pitch = Mathf.Clamp(Pitch - motion.Relative.Y * LookSpeed, -PitchLimit, PitchLimit);
 
         }
 
@@ -84,13 +84,29 @@ public sealed partial class OrbitCamera : Node3D {
 
     public void MakeCurrent() => _camera.Current = true;
 
-    /// <summary>Swings the arm so the camera looks along the given direction.</summary>
-    public void AimAt(Vector3 direction) {
+    // Yaw and pitch are measured about the local vertical rather than about the world's polar axis.
+    // The view is rolled to the local vertical, so an arm built on anything else swings a horizontal
+    // drag about an axis tilted off the screen by the vessel's own latitude - sixty degrees of it at
+    // the Cape, and straight over at the pole.
+    private static void Frame(Vector3 vertical, out Vector3 side, out Vector3 ahead) {
+
+        Vector3 reference = Mathf.Abs(vertical.Y) > 0.999f ? Vector3.Right : Vector3.Up;
+
+        side = reference.Cross(vertical).Normalized();
+        ahead = side.Cross(vertical);
+
+    }
+
+    /// <summary>Swings the arm so the camera looks along the given direction, with yaw and pitch
+    /// taken about the local vertical the view will be rolled to.</summary>
+    public void AimAt(Vector3 direction, Vector3 vertical) {
 
         Vector3 arm = -direction.Normalized();
 
-        Pitch = Mathf.Clamp(Mathf.Asin(arm.Y), -PitchLimit, PitchLimit);
-        Yaw = Mathf.Atan2(arm.X, arm.Z);
+        Frame(vertical, out Vector3 side, out Vector3 ahead);
+
+        Pitch = Mathf.Clamp(Mathf.Asin(Mathf.Clamp(arm.Dot(vertical), -1.0f, 1.0f)), -PitchLimit, PitchLimit);
+        Yaw = Mathf.Atan2(arm.Dot(side), arm.Dot(ahead));
 
     }
 
@@ -100,13 +116,11 @@ public sealed partial class OrbitCamera : Node3D {
 
         Vector3 vertical = (focus - centre).Normalized();
 
-        Vector3 arm = new Vector3(
+        Frame(vertical, out Vector3 side, out Vector3 ahead);
 
-            Mathf.Cos(Pitch) * Mathf.Sin(Yaw),
-            Mathf.Sin(Pitch),
-            Mathf.Cos(Pitch) * Mathf.Cos(Yaw)
-
-        );
+        Vector3 arm = side * (Mathf.Cos(Pitch) * Mathf.Sin(Yaw))
+            + vertical * Mathf.Sin(Pitch)
+            + ahead * (Mathf.Cos(Pitch) * Mathf.Cos(Yaw));
 
         Position = focus;
 

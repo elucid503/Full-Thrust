@@ -105,7 +105,7 @@ public sealed partial class Main : Node3D {
         Vector3 nadir = -Frames.Direction(_flight.Vessel.Position.Normalized);
         Vector3 prograde = Frames.Direction(_flight.Vessel.Velocity.Normalized);
 
-        _camera.AimAt((nadir * 0.52f + prograde * 0.86f).Normalized());
+        _camera.AimAt((nadir * 0.52f + prograde * 0.86f).Normalized(), -nadir);
 
         Step(0.0);
 

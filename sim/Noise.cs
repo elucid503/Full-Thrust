@@ -67,7 +67,10 @@ public static class Noise {
 
     /// <summary>Ridged fractal sum, zero in the valleys and one along the crests. Ridged octaves
     /// stack into ranges where a plain sum would only roll.</summary>
-    public static double Ridged(double x, double y, double z, int octaves, double gain) {
+    // The octave count is fractional. A caller that drops an octave as its sample spacing coarsens
+    // has to fade the last one out rather than switch it off, or the ground steps every time the
+    // renderer changes level.
+    public static double Ridged(double x, double y, double z, double octaves, double gain) {
 
         double sum = 0.0;
         double amplitude = 1.0;
@@ -75,7 +78,9 @@ public static class Noise {
         double weight = 1.0;
         double total = 0.0;
 
-        for (int octave = 0; octave < octaves; octave++) {
+        for (int octave = 0; octave < (int)Math.Ceiling(octaves); octave++) {
+
+            double share = Math.Min(octaves - octave, 1.0);
 
             double signal = 1.0 - Math.Abs(Value(x * frequency, y * frequency, z * frequency));
 
@@ -88,28 +93,28 @@ public static class Noise {
 
             weight = Math.Clamp(signal * 2.0, 0.0, 1.0);
 
-            sum += signal * amplitude;
-            total += amplitude;
+            sum += signal * amplitude * share;
+            total += amplitude * share;
 
             amplitude *= gain;
             frequency *= 2.0;
 
         }
 
-        return sum / total;
+        return total > 0.0 ? sum / total : 0.0;
 
     }
 
     /// <summary>Plain fractal sum, for ground that rolls rather than stands up.</summary>
-    public static double Fractal(double x, double y, double z, int octaves, double gain) {
+    public static double Fractal(double x, double y, double z, double octaves, double gain) {
 
         double sum = 0.0;
         double amplitude = 1.0;
         double frequency = 1.0;
 
-        for (int octave = 0; octave < octaves; octave++) {
+        for (int octave = 0; octave < (int)Math.Ceiling(octaves); octave++) {
 
-            sum += Value(x * frequency, y * frequency, z * frequency) * amplitude;
+            sum += Value(x * frequency, y * frequency, z * frequency) * amplitude * Math.Min(octaves - octave, 1.0);
 
             amplitude *= gain;
             frequency *= 2.0;

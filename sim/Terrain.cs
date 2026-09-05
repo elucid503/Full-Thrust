@@ -170,7 +170,12 @@ public sealed class Terrain {
 
     /// <summary>Height of the ground above the datum at a body-fixed direction, metres. Negative
     /// under the sea, where the datum is the water's own surface.</summary>
-    public double Elevation(Vector3d direction) {
+    public double Elevation(Vector3d direction) => Elevation(direction, 0.0);
+
+    /// <summary>Ground elevation with every detail octave finer than a sample spacing left off.
+    /// A mesh built at kilometre spacing cannot carry a fifteen-metre octave and pays for it on
+    /// every vertex it places; pass no spacing, as the physics does, to read the whole field.</summary>
+    public double Elevation(Vector3d direction, double spacing) {
 
         double length = direction.Length;
 
@@ -190,7 +195,7 @@ public sealed class Terrain {
 
         double measured = Sample(u, v);
 
-        double natural = PreserveCoast(measured, measured + Detail(unit, Ruggedness(u, v, latitude, measured)));
+        double natural = PreserveCoast(measured, measured + Detail(unit, Ruggedness(u, v, latitude, measured), spacing));
 
         return Level(unit, natural);
 
@@ -214,7 +219,7 @@ public sealed class Terrain {
 
         double measured = Sample(u, v);
 
-        return PreserveCoast(measured, measured + Detail(unit, Ruggedness(u, v, latitude, measured)));
+        return PreserveCoast(measured, measured + Detail(unit, Ruggedness(u, v, latitude, measured), 0.0));
 
     }
 
@@ -265,13 +270,28 @@ public sealed class Terrain {
 
     }
 
-    private double Detail(Vector3d unit, double ruggedness) {
+    private double Detail(Vector3d unit, double ruggedness, double spacing) {
+
+        // Nyquist on the detail spectrum, with two octaves of headroom: an octave well under the
+        // sample spacing is noise in the mesh rather than shape in it, and on a patch an orbital view
+        // is assembled from that is all but two or three of them. The headroom is what keeps the last
+        // octave to arrive from arriving at a level anyone is looking closely at. Fractional, so the
+        // ground changes continuously as the tree splits rather than growing relief in one step.
+        double resolved = spacing > 0.0
+            ? Math.Log2(DetailWavelength * 4.0 / Math.Max(spacing, 1.0))
+            : DetailOctaves;
 
         Vector3d at = unit * (_radius / DetailWavelength);
 
-        double rolling = Noise.Fractal(at.X, at.Y, at.Z, DetailOctaves, DetailGain) * RollingAmplitude;
+        double rollingOctaves = Math.Clamp(resolved, 0.0, DetailOctaves);
 
-        if (ruggedness <= 0.0) {
+        double rolling = rollingOctaves > 0.0
+            ? Noise.Fractal(at.X, at.Y, at.Z, rollingOctaves, DetailGain) * RollingAmplitude
+            : 0.0;
+
+        double ridgeOctaves = Math.Clamp(resolved, 0.0, RidgeOctaves);
+
+        if (ruggedness <= 0.0 || ridgeOctaves <= 0.0) {
 
             return rolling;
 
@@ -279,9 +299,11 @@ public sealed class Terrain {
 
         // Offset so the ridge field is not the same field as the rolling one read twice. Ridges only
         // ever stand up out of the survey's own relief; nothing here digs into it.
-        double ridged = Noise.Ridged(at.X + 91.7, at.Y - 43.1, at.Z + 17.9, RidgeOctaves, DetailGain);
+        double ridged = Noise.Ridged(at.X + 91.7, at.Y - 43.1, at.Z + 17.9, ridgeOctaves, DetailGain);
 
-        return rolling + ridged * RidgeAmplitude * ruggedness;
+        // The ridged sum is normalised by its own octaves, so it does not thin as they are dropped.
+        // Its amplitude is faded over the last one instead.
+        return rolling + ridged * RidgeAmplitude * ruggedness * Math.Min(ridgeOctaves, 1.0);
 
     }
 

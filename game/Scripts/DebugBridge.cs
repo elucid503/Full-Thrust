@@ -530,8 +530,7 @@ public sealed partial class DebugBridge : Node {
 
         }
 
-        // Yaw and pitch are measured off the world axes, which means the same pair frames a
-        // different scene at every latitude. A depression angle off the local horizon does not.
+        // A depression angle off the local horizon, which is the frame the arm itself is built in.
         if (double.TryParse(query["look"], out double depression) && Flight.Active != null) {
 
             Vessel vessel = Flight.Active.Vessel;
@@ -556,7 +555,8 @@ public sealed partial class DebugBridge : Node {
 
             double radians = depression * Math.PI / 180.0;
 
-            camera.AimAt(Frames.Direction((along.Normalized * Math.Cos(radians) - up * Math.Sin(radians)).Normalized));
+            camera.AimAt(Frames.Direction((along.Normalized * Math.Cos(radians) - up * Math.Sin(radians)).Normalized),
+                Frames.Direction(up));
 
         }
 

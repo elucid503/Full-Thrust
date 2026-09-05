@@ -45,9 +45,16 @@ uniform float macro_contrast : hint_range(0.0, 1.0) = 0.38;
 // ground's colour; this is the difference between rock and soil at a range no photograph resolves.
 uniform float material_hue : hint_range(0.0, 1.0) = 0.12;
 
-// Detail is worth nothing once a tile is under a pixel; past here the imagery carries it alone.
-uniform float detail_near = 12000.0;
-uniform float detail_far = 36000.0;
+// Detail is worth nothing once its tile is under a pixel. Both of these are metres of ground to a
+// pixel rather than metres of range: a range threshold is a cone drawn on the ground, plain to see
+// from the air and sliding about as the vehicle climbs, where a sampling threshold rides the same
+// footprint the mip chain is already fading on and cannot be picked out at all.
+uniform float detail_near = 3.0;
+uniform float detail_far = 14.0;
+
+// The widest tile is carried much further out than the other two, because from altitude it is the
+// only thing standing between the imagery and a flat wash.
+uniform float macro_far = 160.0;
 
 uniform float detail_relief : hint_range(0.0, 4.0) = 0.85;
 uniform float detail_contrast : hint_range(0.0, 1.0) = 0.32;
@@ -64,6 +71,13 @@ uniform vec3 deep_colour : source_color = vec3(0.003, 0.012, 0.029);
 
 uniform float shallow_depth = 52.0;
 uniform float foam_depth = 0.8;
+
+// How far the surf runs out from the waterline. Metres of ground, and the band comes out twice
+// this wide, because the sounding is carried as its own square root and the depth under a linear
+// interpolation of that rises as the square of the distance. The depth to cut it at is read off the
+// mesh rather than assumed - the mesh is the only thing that knows how fast its sea floor drops
+// away here - but the width is this and nothing else, at every level of the tree.
+uniform float foam_reach = 7.0;
 uniform float wave_tile = 32.0;
 uniform float wave_speed = 0.032;
 uniform float wave_relief : hint_range(0.0, 3.0) = 0.28;
@@ -72,10 +86,14 @@ uniform float wave_relief : hint_range(0.0, 3.0) = 0.28;
 // faded out over the same range the roughness comes up over, which is the same statement made twice:
 // what the normal map stops resolving is exactly what the roughness has to stand in for.
 uniform float sea_roughness_near = 0.18;
-uniform float sea_roughness_far = 0.24;
 
-uniform float swell_near = 1200.0;
-uniform float swell_far = 18000.0;
+// Once the swell is under a pixel the roughness is all that stands in for it, and a value this near
+// the mirror end turned the whole sea into one sun-coloured sheet on the way up. Open water scatters
+// over a mean square slope closer to this, and reads as water from orbit instead of as chrome.
+uniform float sea_roughness_far = 0.46;
+
+uniform float swell_near = 1.5;
+uniform float swell_far = 26.0;
 
 uniform float cloud_altitude = 9000.0;
 uniform float cloud_shadow : hint_range(0.0, 1.0) = 0.48;
@@ -141,19 +159,21 @@ void fragment() {
     // from the planet's centre has lost the last decimetre and would fray the shoreline.
     float depth = COLOR.r * COLOR.r * 1600.0;
 
-    float sea = smoothstep(0.0, 0.004, COLOR.r);
+    // Widened to whatever a pixel of the mesh actually spans, so the coastline is one antialiased
+    // line at every altitude rather than a stair at some of them.
+    float sea = smoothstep(0.0, max(0.004, fwidth(COLOR.r)), COLOR.r);
 
-    float range = length(VERTEX);
+    // Metres of ground under one pixel. Every fade below is driven off this rather than off the
+    // range, so nothing steps at a fixed distance from the eye.
+    float footprint = max(length(dFdx(UV2)), length(dFdy(UV2)));
 
     vec2 near_uv = UV2 / detail_fine;
     vec2 far_uv = UV2 / detail_coarse;
     vec2 wide_uv = UV2 / detail_macro;
 
-    float detail = 1.0 - smoothstep(detail_near, detail_far, range);
+    float detail = 1.0 - smoothstep(detail_near, detail_far, footprint);
 
-    // The widest tile is worth carrying much further out than the other two, because from altitude
-    // it is the only thing standing between the imagery and a flat wash.
-    float macro = 1.0 - smoothstep(detail_far, detail_far * 3.4, range);
+    float macro = 1.0 - smoothstep(detail_far, macro_far, footprint);
 
     vec3 world_normal = normalize(mat3(INV_VIEW_MATRIX) * NORMAL);
 
@@ -218,7 +238,7 @@ void fragment() {
     vec3 swell = vec3(0.0, 0.0, 1.0);
     float wave_variance = 0.0;
 
-    float swell_fade = 1.0 - smoothstep(swell_near, swell_far, range);
+    float swell_fade = 1.0 - smoothstep(swell_near, swell_far, footprint);
 
     if (sea > 0.001 && swell_fade > 0.001) {
 
@@ -228,7 +248,6 @@ void fragment() {
         vec3 second = texture(wave_normal, vec2(-UV2.y, UV2.x) / (wave_tile * 0.25) - wave_drift * 1.7).rgb * 2.0 - 1.0;
 
         vec3 long_wave = texture(wave_normal, UV2 / (wave_tile * 4.0) + wave_drift * 0.125).rgb * 2.0 - 1.0;
-        float footprint = max(length(dFdx(UV2)), length(dFdy(UV2)));
         float fine_resolved = 1.0 - smoothstep(0.6, 4.0, footprint);
         float chop_resolved = 1.0 - smoothstep(3.0, 16.0, footprint);
         swell = normalize(vec3(first.xy * chop_resolved + second.xy * 0.6 * fine_resolved + long_wave.xy * 0.7, 1.0));
@@ -236,9 +255,32 @@ void fragment() {
 
     }
 
-    float shallow = exp(-depth / shallow_depth);
-    float shore_pulse = 0.5 + 0.5 * sin(depth * 4.0 - TIME * 1.5);
-    float foam = sea * (1.0 - smoothstep(0.0, foam_depth, depth)) * detail * shore_pulse;
+    // Depth arrives as a vertex attribute, so a coarse patch spreads a metre of water over
+    // kilometres of ground: a band cut at a fixed depth is as wide as whatever patch happens to be
+    // under it, which is why the waterline swelled and shrank as the vehicle climbed. Cut it at the
+    // depth this mesh's own sea floor reaches a fixed distance out instead, and the surf is the same
+    // stretch of ground at every level of the tree.
+    float sounding_step = max(fwidth(depth), 0.0001);
+
+    float sea_floor = sounding_step / max(footprint, 0.001);
+
+    float surf = max(min(foam_depth, foam_reach * sea_floor), 0.0001);
+
+    // And gone once that stretch is a couple of pixels, rather than left to alias into a flicker.
+    // Surf is a thing seen from the beach: carrying it to the horizon is what made every coastline
+    // on the planet a painted ribbon.
+    float shore = 1.0 - smoothstep(foam_reach * 0.5, foam_reach * 3.0, footprint);
+
+    float shelf = 1.0 - smoothstep(shallow_depth * 0.5, shallow_depth * 3.0, sounding_step);
+
+    float shallow = exp(-depth / shallow_depth) * shelf;
+
+    // The phase runs across the band rather than over a fixed depth, so the surf sweeps up the beach
+    // the same way whatever the band is cut at, and carries a slow term off the face coordinate so
+    // that every coastline on the planet does not brighten and fade in step.
+    float shore_pulse = 0.5 + 0.5 * sin(depth / surf * 5.0 - TIME * 1.5 + fract(UV.x * 37.0 + UV.y * 29.0) * TAU);
+
+    float foam = sea * (1.0 - smoothstep(0.0, surf, depth)) * shore * shore_pulse;
 
     vec3 water = mix(deep_colour, shallow_colour, shallow * shallow);
 
@@ -252,7 +294,7 @@ void fragment() {
 
     float lit = 1.0 - cloud_shadow * smoothstep(0.04, 0.92, overcast(radial, up));
 
-    ALBEDO = (mix(ground, water, sea) + vec3(foam * 0.12)) * lit;
+    ALBEDO = (mix(ground, water, sea) + vec3(foam * 0.07)) * lit;
 
     METALLIC = 0.0;
 

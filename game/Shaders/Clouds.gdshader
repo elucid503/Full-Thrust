@@ -86,13 +86,24 @@ void fragment() {
 
     // Stratification decorrelates grazing rays; temporal AA integrates the sub-step samples.
     float jitter = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))) + frame_jitter);
-    float step_length = (finish - start) / 48.0;
+    // Steps grow along the ray. Even spacing over a span that can be two hundred kilometres of deck
+    // gave the cloud a hundred metres off the nose the same four-kilometre sample as the one on the
+    // horizon, which is what made a close cloud a smooth blob; bunched by how much longer the span is
+    // than its own start, the near end is walked in metres for the same forty-eight samples.
+    float span = finish - start;
+    float bunching = clamp(1.0 + 0.35 * log2(1.0 + span / max(start, 200.0)), 1.0, 2.6);
+
     float transmission = 1.0;
     vec3 radiance = vec3(0.0);
     float weighted_distance = 0.0;
     for (int i = 0; i < 48; i++) {
 
-        float distance = start + (float(i) + jitter) * step_length;
+        float low = pow(float(i) / 48.0, bunching);
+        float high = pow(float(i + 1) / 48.0, bunching);
+
+        float step_length = span * (high - low);
+        float distance = start + span * mix(low, high, jitter);
+
         vec3 p = origin + ray * distance;
         float density = density_at(p, step_length);
         if (density > 0.001) {
