@@ -13,7 +13,8 @@ uniform float frame_jitter = 0.0;
 vec2 sphere_span(vec3 origin, vec3 ray, float radius) {
 
     float b = dot(origin, ray);
-    float h = b * b - dot(origin, origin) + radius * radius;
+    float radial_distance = length(origin);
+    float h = b * b + (radius - radial_distance) * (radius + radial_distance);
     if (h < 0.0) { return vec2(1.0, -1.0); }
     return vec2(-b - sqrt(h), -b + sqrt(h));
 
@@ -37,7 +38,7 @@ vec3 illumination(vec3 p, vec3 ray, float density, float footprint) {
     float distance = 0.0;
     for (int i = 0; i < 3; i++) {
 
-        optical += density_at(p + sun_direction * (distance + stride * 0.5), max(footprint, stride)) * stride;
+        optical += density_at(p + sun_direction * (distance + stride * 0.5), max(footprint, max(stride, 1200.0))) * stride;
         distance += stride;
         stride *= 2.8;
 
@@ -93,13 +94,18 @@ void fragment() {
     float span = finish - start;
     float bunching = clamp(1.0 + 0.35 * log2(1.0 + span / max(start, 200.0)), 1.0, 2.6);
 
+    int steps = int(mix(32.0, 64.0, 1.0 - smoothstep(4000.0, 18000.0, start)));
     float transmission = 1.0;
     vec3 radiance = vec3(0.0);
     float weighted_distance = 0.0;
-    for (int i = 0; i < 48; i++) {
+    vec3 cached_light = vec3(0.0);
+    float cached_density = -1.0;
+    float cached_distance = -10000.0;
+    for (int i = 0; i < 64; i++) {
 
-        float low = pow(float(i) / 48.0, bunching);
-        float high = pow(float(i + 1) / 48.0, bunching);
+        if (i >= steps) { break; }
+        float low = pow(float(i) / float(steps), bunching);
+        float high = pow(float(i + 1) / float(steps), bunching);
 
         float step_length = span * (high - low);
         float distance = start + span * mix(low, high, jitter);
@@ -110,7 +116,15 @@ void fragment() {
 
             float opacity = 1.0 - exp(-density * extinction * step_length);
             float weight = transmission * opacity;
-            radiance += illumination(p, ray, density, step_length) * weight;
+            // Reuse slowly varying sunlight for one adjacent sample; density stays fully resolved.
+            if (i % 2 == 0 || abs(density - cached_density) > 0.12 || distance - cached_distance > 600.0) {
+
+                cached_light = illumination(p, ray, density, step_length);
+                cached_density = density;
+                cached_distance = distance;
+
+            }
+            radiance += cached_light * weight;
             weighted_distance += distance * weight;
             transmission *= 1.0 - opacity;
             if (transmission < 0.015) { break; }

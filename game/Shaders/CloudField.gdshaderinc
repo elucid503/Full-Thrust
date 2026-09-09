@@ -1,3 +1,5 @@
+#include "res://Shaders/EnvironmentField.gdshaderinc"
+
 uniform sampler2D cloud_map : filter_linear_mipmap, repeat_enable;
 uniform sampler3D shape_noise : filter_linear, repeat_enable;
 uniform sampler3D detail_noise : filter_linear, repeat_enable;
@@ -24,7 +26,7 @@ float density_at(vec3 p, float footprint) {
     vec2 uv = vec2(atan(-up.z, up.x) / TAU + 0.5, 0.5 - asin(clamp(up.y, -1.0, 1.0)) / PI);
     float cover = textureLod(cloud_map, uv, 3.0).r;
     vec3 wind = vec3(drift, drift * 0.18, drift * 0.43);
-    float weather = texture(shape_noise, fixed_p * 0.000007 + wind * 0.2).r;
+    float weather = textureLod(shape_noise, fixed_p * 0.000007 + wind * 0.2, 0.0).r;
     float convection = smoothstep(0.35, 0.7, weather);
     float ceiling = mix(0.25, 0.92, convection);
     float profile = smoothstep(0.0, 0.075, height) * (1.0 - smoothstep(ceiling * 0.48, ceiling, height));
@@ -37,10 +39,12 @@ float density_at(vec3 p, float footprint) {
     // because the weather sample is one this function has already paid for.
     vec3 warp = (weather - 0.5) * 11000.0 * vec3(0.63, -0.51, 0.58);
 
-    float shape = texture(shape_noise, (fixed_p + warp) * 0.000065 + wind).r;
-    float billow = texture(detail_noise, fixed_p * 0.00029 + wind * 1.7).r;
+    float shape = textureLod(shape_noise, (fixed_p + warp) * 0.000065 + wind, 0.0).r;
+
     float threshold = 1.0 - coverage * 0.8;
     float body = smoothstep(threshold - 0.09, threshold + 0.15, shape + profile * 0.16);
+    if (body < 0.001) { return 0.0; }
+    float billow = footprint < 1200.0 ? textureLod(detail_noise, fixed_p * 0.00029 + wind * 1.7, 0.0).r : 0.5;
     float erosion = mix(0.18, 0.045, smoothstep(250.0, 2400.0, footprint));
     body = max(body - billow * erosion * (1.0 - body), 0.0);
 
@@ -51,13 +55,35 @@ float density_at(vec3 p, float footprint) {
 
     if (close > 0.002) {
 
-        float fray = texture(detail_noise, fixed_p * 0.0016 + wind * 5.0).r;
+        float fray = textureLod(detail_noise, fixed_p * 0.0016 + wind * 5.0, 0.0).r;
 
         body = max(body - fray * 0.26 * close * (1.0 - body), 0.0);
 
     }
 
-    return body * profile * mix(0.65, 1.0, convection);
+    return body * profile * mix(0.65, 1.0, convection) * (1.0 - plume_clearance(p));
+
+}
+
+
+float cloud_transmittance(vec3 p, vec3 sun, float extinction_coefficient) {
+
+    float b = dot(p, sun);
+    float radial_distance = length(p);
+    float outer = b * b + (top_radius - radial_distance) * (top_radius + radial_distance);
+    if (outer <= 0.0) { return 1.0; }
+    float finish = -b + sqrt(outer);
+    float start = 0.0;
+    float inner = b * b + (base_radius - radial_distance) * (base_radius + radial_distance);
+    if (length(p) < base_radius && inner > 0.0) { start = max(0.0, -b + sqrt(inner)); }
+    float stride = max(finish - start, 0.0) / 6.0;
+    float optical = 0.0;
+    for (int i = 0; i < 6; i++) {
+
+        optical += density_at(p + sun * (start + (float(i) + 0.5) * stride), max(stride, 1200.0)) * stride;
+
+    }
+    return exp(-optical * extinction_coefficient);
 
 }
 

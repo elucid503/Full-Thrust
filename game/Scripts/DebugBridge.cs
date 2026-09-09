@@ -593,6 +593,12 @@ public sealed partial class DebugBridge : Node {
             ["current"] = camera.IsCurrent,
             ["eye"] = camera.Eye.ToString(),
             ["forward"] = camera.Forward.ToString(),
+
+            ["free"] = FreeCamera.Flying,
+            ["freeEye"] = FreeCamera.Active?.GlobalPosition.ToString(),
+            ["freeForward"] = FreeCamera.Active == null ? null : (-FreeCamera.Active.GlobalTransform.Basis.Z).ToString(),
+            ["freeSpeed"] = FreeCamera.Active?.Speed ?? 0.0f,
+
             ["near"] = camera.NearPlane,
             ["far"] = camera.FarPlane,
 

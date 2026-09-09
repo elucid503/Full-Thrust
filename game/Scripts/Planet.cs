@@ -248,9 +248,11 @@ public sealed partial class Planet : Node3D {
         }
 
         _ground.Sync(time, eye);
+        SyncEffects(time);
 
         float deck = (float)(_body.SpinAt(time) * CloudRotationRatio);
         float altitude = (float)Math.Max(0.0, _body.HeightAboveGround(eye, time));
+        float materialAltitude = (float)Math.Max(0.0, eye.Length - _body.Radius);
         _forest.Sync(time, eye, altitude);
         double spin = _body.SpinAt(time);
         Vector2 rotation = new Vector2((float)Math.Cos(spin), (float)Math.Sin(spin));
@@ -258,7 +260,7 @@ public sealed partial class Planet : Node3D {
         foreach (ShaderMaterial face in _faces) {
 
             face.SetShaderParameter("planet_centre", centre);
-            face.SetShaderParameter("camera_altitude", altitude);
+            face.SetShaderParameter("camera_altitude", materialAltitude);
             face.SetShaderParameter("terrain_rotation", rotation);
             face.SetShaderParameter("cloud_spin", deck);
             face.SetShaderParameter("drift", (float)(time * CloudDrift));

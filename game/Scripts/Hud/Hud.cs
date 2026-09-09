@@ -24,6 +24,9 @@ public sealed partial class Hud : CanvasLayer {
     private AttitudeMenu _menu;
     private LossPanel _loss;
 
+    /// <summary>Takes the interface down without taking anything else with it, for the debug panel.</summary>
+    public bool Hidden { get; set; }
+
     public void Build(Flight flight) {
 
         _flight = flight;
@@ -71,7 +74,7 @@ public sealed partial class Hud : CanvasLayer {
 
         // The map is its own mode with its own instruments. Nothing here reads on it, and the ball
         // alone would cost a raster a frame for a panel nobody is looking at.
-        if (MapView.Active != null && MapView.Active.Open) {
+        if (Hidden || (MapView.Active != null && MapView.Active.Open)) {
 
             if (Visible) {
 

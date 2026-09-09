@@ -27,6 +27,8 @@ public sealed partial class Main : Node3D {
     private MapView _map;
     private Hud _hud;
     private OrbitCamera _camera;
+    private FreeCamera _free;
+    private DebugPanel _debug;
 
     private DirectionalLight3D _sun;
     private DirectionalLight3D _earthshine;
@@ -46,6 +48,8 @@ public sealed partial class Main : Node3D {
         _map = GetNode<MapView>("Map");
         _hud = GetNode<Hud>("Hud");
         _camera = GetNode<OrbitCamera>("CameraRig");
+        _free = GetNode<FreeCamera>("FreeCamera");
+        _debug = GetNode<DebugPanel>("Debug");
 
         _sun = GetNode<DirectionalLight3D>("Sun");
         _earthshine = GetNode<DirectionalLight3D>("Earthshine");
@@ -97,6 +101,7 @@ public sealed partial class Main : Node3D {
         _complex.Build(_flight.Body, _flight.Site);
         _vessel.Build(_flight.Vessel);
         _hud.Build(_flight);
+        _debug.Build(this, _flight, _free, _camera, _hud);
 
         _flight.Staged += Release;
         _flight.Scrubbed += Scrub;
@@ -173,8 +178,6 @@ public sealed partial class Main : Node3D {
         _earthshine.LookAtFromPosition(Vector3.Zero, up, Mathf.Abs(up.Y) > 0.99f ? Vector3.Right : Vector3.Up);
         _earthshine.LightEnergy = EarthshineEnergy * Mathf.Max(up.Dot(SunDirection), 0.0f);
 
-        _sun.DirectionalShadowMaxDistance = _camera.Distance + ShadowSlack;
-
         Vector3 focus = Frames.Point(_flight.Vessel.Position);
 
         _vessel.Visible = _flight.Vessel.Intact;
@@ -191,10 +194,17 @@ public sealed partial class Main : Node3D {
 
         _camera.Sync(focus, Frames.Point(Vector3d.Zero), clearance);
 
+        _free.Fly(delta);
+
+        // The vehicle is the only shadow caster, so the cascade only has to reach from whichever
+        // camera is looking at it out to the vehicle itself.
+        _sun.DirectionalShadowMaxDistance = (FreeCamera.Flying ? _free.GlobalPosition.DistanceTo(focus) : _camera.Distance) + ShadowSlack;
+
         // The ground subdivides towards whoever is looking at it, and culls what is under their
         // horizon - so it has to be the camera actually rendering, or the map frames a whole planet
         // and gets back only the hemisphere the vehicle can see.
-        Vector3 viewpoint = _map.Open ? _map.Camera.GlobalPosition : _camera.Eye;
+        Vector3 viewpoint = _map.Open ? _map.Camera.GlobalPosition
+            : FreeCamera.Flying ? _free.GlobalPosition : _camera.Eye;
 
         Vector3d eye = Frames.Origin + Frames.Sim(viewpoint);
 
@@ -206,6 +216,8 @@ public sealed partial class Main : Node3D {
         _map.Sync(delta);
 
         _hud.Sync();
+
+        _debug.Sync();
 
     }
 

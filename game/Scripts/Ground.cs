@@ -439,6 +439,8 @@ public sealed partial class Ground : Node3D {
         patch.Bound = surface.Bound;
 
         patch.Instance = Assemble(surface, _materials[patch.Face]);
+        patch.Instance.ExtraCullMargin = 3.0f;
+        patch.Instance.SetInstanceShaderParameter("mesh_spacing", (float)(patch.Edge / Grid));
 
         AddChild(patch.Instance);
 

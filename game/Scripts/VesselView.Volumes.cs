@@ -363,6 +363,12 @@ public sealed partial class VesselView {
         float length = bellRadius * (jet ? 21.0f : 44.0f) * (0.45f + 0.55f * Mathf.Sqrt(throttle));
         float radius = (exit + length * spread) * 1.8f;
 
+        if (!jet && _vessel.Intact && air > 0.01f) {
+
+            Planet.Active?.Disturb(volume.GlobalPosition, -volume.GlobalBasis.Y, length, radius, throttle);
+
+        }
+
         float cells = pressure > 0.0f && exhaust.ShockCellLength > 0.0
             ? Mathf.Clamp((float)Math.Abs(Math.Log(exhaust.PressureRatio)), 0.0f, 1.0f) * (1.0f - vacuum) : 0.0f;
 

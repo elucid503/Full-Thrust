@@ -127,6 +127,16 @@ public sealed partial class Flight : Node {
 
     public bool DebugPaused { get; set; }
 
+    /// <summary>Debug cheats: the live tanks refill themselves every frame, and nothing the flight
+    /// does can end it.</summary>
+    public bool InfiniteFuel { get; set; }
+    public bool Invulnerable { get; set; }
+
+    private bool _stepOnce;
+
+    /// <summary>Runs a single frame while paused, for watching a contact or a separation happen.</summary>
+    public void StepFrame() => _stepOnce = true;
+
     /// <summary>True while the clamps still have hold of the vehicle.</summary>
     public bool Clamped { get; private set; } = true;
 
@@ -200,7 +210,7 @@ public sealed partial class Flight : Node {
 
     public void Advance(double delta) {
 
-        if (DebugPaused) {
+        if (DebugPaused && !_stepOnce) {
 
             foreach (Tracked track in _traffic) {
 
@@ -209,6 +219,14 @@ public sealed partial class Flight : Node {
             }
 
             return;
+
+        }
+
+        _stepOnce = false;
+
+        if (InfiniteFuel) {
+
+            Fill(Vessel);
 
         }
 
@@ -450,6 +468,17 @@ public sealed partial class Flight : Node {
     /// <summary>Whether a body is still flying, or has run out of sky or out of shield.</summary>
     private void Judge(Vessel vessel) {
 
+        // Tested before the vessel is asked whether it is still flying, so switching the cheat on
+        // over a smoking hole is what brings the vehicle back rather than only what saves the next one.
+        if (Invulnerable && vessel == Vessel) {
+
+            vessel.Fate = VesselFate.Flying;
+            vessel.SkinTemperature = Math.Min(vessel.SkinTemperature, vessel.SkinLimit);
+
+            return;
+
+        }
+
         if (!vessel.Intact) {
 
             return;
@@ -569,8 +598,11 @@ public sealed partial class Flight : Node {
     }
 
     /// <summary>Drops the vehicle onto a level flight path at an altitude and airspeed, keeping its
-    /// heading. A debug entry point: an entry or a low burn otherwise costs a whole deorbit to reach.</summary>
-    public void Place(double altitude, double speed) {
+    /// heading. A debug entry point: an entry or a low burn otherwise costs a whole deorbit to reach.
+    /// Above the air the speed is an inertial one instead - an orbit is a figure in the inertial
+    /// frame, and adding the ground's own eastward motion to a circular speed is what would leave a
+    /// hundred and fifty kilometre orbit with its apoapsis at three hundred.</summary>
+    public void Place(double altitude, double speed, bool inertial = false) {
 
         Vector3d up = Vessel.Position.Normalized;
         Vector3d along = (Vessel.Velocity - up * Vector3d.Dot(Vessel.Velocity, up)).Normalized;
@@ -582,7 +614,7 @@ public sealed partial class Flight : Node {
         }
 
         Vessel.Position = up * (Body.Radius + Math.Max(altitude, 1.0));
-        Vessel.Velocity = along * speed + Body.AirVelocityAt(Vessel.Position);
+        Vessel.Velocity = along * speed + (inertial ? Vector3d.Zero : Body.AirVelocityAt(Vessel.Position));
 
         Vessel.AngularVelocity = Vector3d.Zero;
 
@@ -643,6 +675,34 @@ public sealed partial class Flight : Node {
         Rerail();
         Frames.Rebase(Vessel.Position);
         return true;
+
+    }
+
+    /// <summary>Stops the vehicle dead over the ground at the height it is already at, so it hangs
+    /// there rather than falling on. A debug entry point.</summary>
+    public void Halt() {
+
+        Vessel.Velocity = Body.AirVelocityAt(Vessel.Position);
+        Vessel.AngularVelocity = Vector3d.Zero;
+        Vessel.ControlTorque = Vector3d.Zero;
+
+        Clamped = false;
+
+        Rerail();
+
+    }
+
+    /// <summary>Tops up every tank aboard, main and monopropellant alike.</summary>
+    public static void Fill(Vessel vessel) {
+
+        foreach (Stage stage in vessel.Stages) {
+
+            stage.PropellantMass = stage.PropellantCapacity;
+            stage.RcsPropellantMass = stage.RcsPropellantCapacity;
+
+        }
+
+        vessel.RecomputeMassProperties();
 
     }
 
@@ -885,6 +945,16 @@ public sealed partial class Flight : Node {
     }
 
     private void ReadControls(double delta) {
+
+        // The free camera flies on the same keys, so the vehicle lets go of them while it has the view.
+        if (FreeCamera.Flying) {
+
+            Autopilot.ManualCommand = Vector3d.Zero;
+            Vessel.TranslationCommand = Vector3d.Zero;
+
+            return;
+
+        }
 
         if (Input.IsKeyPressed(Key.Shift)) {
 

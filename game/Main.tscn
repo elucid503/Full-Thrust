@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://Scripts/Main.cs" id="1_main"]
 [ext_resource type="Script" path="res://Scripts/Flight.cs" id="2_flight"]
@@ -8,6 +8,8 @@
 [ext_resource type="Script" path="res://Scripts/VesselView.cs" id="5_vessel"]
 [ext_resource type="Script" path="res://Scripts/Map/MapView.cs" id="7_map"]
 [ext_resource type="Script" path="res://Scripts/Hud/Hud.cs" id="8_hud"]
+[ext_resource type="Script" path="res://Scripts/Debug/FreeCamera.cs" id="10_free"]
+[ext_resource type="Script" path="res://Scripts/Debug/DebugPanel.cs" id="11_debug"]
 
 [node name="Main" type="Node3D"]
 script = ExtResource("1_main")
@@ -42,3 +44,9 @@ script = ExtResource("7_map")
 
 [node name="Hud" type="CanvasLayer" parent="."]
 script = ExtResource("8_hud")
+
+[node name="FreeCamera" type="Camera3D" parent="."]
+script = ExtResource("10_free")
+
+[node name="Debug" type="CanvasLayer" parent="."]
+script = ExtResource("11_debug")

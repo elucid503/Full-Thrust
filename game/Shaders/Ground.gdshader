@@ -116,11 +116,30 @@ varying vec3 world_position;
 varying float surface_elevation;
 instance uniform float lod_morph : instance_index(0) = 0.0;
 
+#include "res://Shaders/CloudField.gdshaderinc"
+#include "res://Shaders/OceanField.gdshaderinc"
+
+instance uniform float mesh_spacing : instance_index(1) = 1.0;
+varying float ocean_room;
+
 void vertex() {
 
     VERTEX += CUSTOM0.xyz * lod_morph;
     surface_elevation = CUSTOM0.w;
     world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+    ocean_room = smoothstep(0.0, 4.0, -CUSTOM0.w);
+    float local = 1.0 - smoothstep(20000.0, 25000.0, camera_altitude);
+    vec3 radial = world_position - planet_centre;
+    vec3 fixed_vertex = vec3(terrain_rotation.x * radial.x - terrain_rotation.y * radial.z,
+        radial.y, terrain_rotation.y * radial.x + terrain_rotation.x * radial.z);
+    vec4 wave = ocean_wave(fixed_vertex, mesh_spacing);
+    vec3 up = normalize(world_position - planet_centre);
+    float displacement = wave.x * ocean_room * local;
+    float distance = length(world_position - planet_centre - water_impact.xyz);
+    float influence = exp(-distance / max(water_impact.w * 4.0, 1.0)) * impact_strength;
+    displacement += (sin(distance * 0.7 - environment_time * 5.0) * 0.25 - 0.4) * influence * ocean_room * local;
+    VERTEX += inverse(mat3(MODEL_MATRIX)) * up * displacement;
+    world_position += up * displacement;
 
 }
 
@@ -150,15 +169,11 @@ float landscape_noise(vec3 p) {
 
 // Offset the shadow sample sunward by deck height over the cosine of the solar zenith angle, so a
 // cloud shades the ground it is actually over rather than the ground directly beneath it.
-#include "res://Shaders/CloudField.gdshaderinc"
+
 
 float overcast(vec3 radial, vec3 up) {
 
-    float cosine = max(dot(sun_direction, up), 0.18);
-    vec3 first = radial + sun_direction * max(base_radius + 600.0 - length(radial), 0.0) / cosine;
-    vec3 second = radial + sun_direction * max(base_radius + 1500.0 - length(radial), 0.0) / cosine;
-    float density = density_at(first, 1200.0) + density_at(second, 1200.0);
-    return 1.0 - exp(-density * 2.8 / cosine);
+    return 1.0 - cloud_transmittance(radial, sun_direction, 0.0017);
 
 }
 
@@ -235,9 +250,11 @@ void fragment() {
 
     }
 
+    float procedural = 1.0 - smoothstep(20000.0, 25000.0, camera_altitude);
+    vec3 local_ground = ground;
     vec3 relief = vec3(0.0, 0.0, 1.0);
 
-    if (macro > 0.001) {
+    if (macro > 0.001 && procedural < 1.0) {
 
         // Broad blotching first: the same material read at a few hundred metres a tile, which is
         // the scale the imagery has already smoothed away.
@@ -249,7 +266,7 @@ void fragment() {
 
     }
 
-    if (detail > 0.001) {
+    if (detail > 0.001 && procedural < 1.0) {
 
         vec3 near_grain = mix(texture(soil_colour, near_uv).rgb, texture(rock_colour, near_uv).rgb, bare);
         vec3 far_grain = mix(texture(soil_colour, far_uv).rgb, texture(rock_colour, far_uv).rgb, bare);
@@ -271,6 +288,33 @@ void fragment() {
         lifted *= mix(vec3(1.0), tint, material_hue * (1.0 - snow) * (1.0 - sea));
 
         ground = mix(ground, lifted, detail);
+
+    }
+
+    if (procedural > 0.0 && sea < 0.999) {
+
+        float grain = 0.0;
+        float amplitude = 0.55;
+        float scale = 64.0;
+        for (int octave = 0; octave < 8; octave++) {
+
+            float resolved = 1.0 - smoothstep(scale * 0.2, scale * 0.7, footprint);
+            grain += (landscape_noise(fixed_position / scale) - 0.5) * amplitude * resolved;
+            scale *= 0.5;
+            amplitude *= 0.6;
+
+        }
+        ground = mix(ground, local_ground * (1.0 + grain * mix(0.65, 1.1, bare)), procedural);
+        vec3 dpdx = dFdx(world_position);
+        vec3 dpdy = dFdy(world_position);
+        vec3 r1 = cross(dpdy, world_normal);
+        vec3 r2 = cross(world_normal, dpdx);
+        float determinant = dot(dpdx, r1);
+        vec3 gradient = (dFdx(grain) * r1 + dFdy(grain) * r2) / max(abs(determinant), 0.000001) * sign(determinant);
+        vec3 normal = normalize(world_normal - gradient * 0.16);
+        vec3 tangent = normalize(mat3(INV_VIEW_MATRIX) * TANGENT);
+        vec3 bitangent = normalize(mat3(INV_VIEW_MATRIX) * BINORMAL);
+        relief = mix(relief, vec3(dot(normal, tangent), dot(normal, bitangent), dot(normal, world_normal)), procedural);
 
     }
 
@@ -299,6 +343,19 @@ void fragment() {
 
     }
 
+    vec4 geometric_wave = ocean_wave(fixed_position, max(footprint, mesh_spacing));
+    vec3 wave_gradient = vec3(terrain_rotation.x * geometric_wave.y + terrain_rotation.y * geometric_wave.w,
+        geometric_wave.z, -terrain_rotation.y * geometric_wave.y + terrain_rotation.x * geometric_wave.w);
+    vec2 wave_slope = vec2(dot(wave_gradient, normalize(mat3(INV_VIEW_MATRIX) * TANGENT)),
+        dot(wave_gradient, normalize(mat3(INV_VIEW_MATRIX) * BINORMAL)));
+    swell.xy -= wave_slope * ocean_room * procedural / max(wave_relief, 0.01);
+    vec3 impact_offset = radial - water_impact.xyz;
+    float impact_distance = length(impact_offset);
+    float impact = exp(-impact_distance / max(water_impact.w * 4.0, 1.0)) * impact_strength;
+    swell.xy += vec2(dot(impact_offset, normalize(mat3(INV_VIEW_MATRIX) * TANGENT)),
+        dot(impact_offset, normalize(mat3(INV_VIEW_MATRIX) * BINORMAL))) / max(impact_distance, 1.0)
+        * cos(impact_distance * 0.7 - environment_time * 5.0) * impact * 0.4;
+
     // Depth arrives as a vertex attribute, so a coarse patch spreads a metre of water over
     // kilometres of ground: a band cut at a fixed depth is as wide as whatever patch happens to be
     // under it, which is why the waterline swelled and shrank as the vehicle climbed. Cut it at the
@@ -325,6 +382,8 @@ void fragment() {
     float shore_pulse = 0.5 + 0.5 * sin(depth / surf * 5.0 - TIME * 1.5 + fract(UV.x * 37.0 + UV.y * 29.0) * TAU);
 
     float foam = sea * (1.0 - smoothstep(0.0, surf, depth)) * shore * shore_pulse;
+
+    foam += sea * impact * 0.65;
 
     vec3 water = mix(deep_colour, shallow_colour, shallow * shallow);
 
