@@ -135,9 +135,7 @@ void vertex() {
     vec4 wave = ocean_wave(fixed_vertex, mesh_spacing);
     vec3 up = normalize(world_position - planet_centre);
     float displacement = wave.x * ocean_room * local;
-    float distance = length(world_position - planet_centre - water_impact.xyz);
-    float influence = exp(-distance / max(water_impact.w * 4.0, 1.0)) * impact_strength;
-    displacement += (sin(distance * 0.7 - environment_time * 5.0) * 0.25 - 0.4) * influence * ocean_room * local;
+    displacement += surface_response(radial).x * ocean_room * local;
     VERTEX += inverse(mat3(MODEL_MATRIX)) * up * displacement;
     world_position += up * displacement;
 
@@ -266,7 +264,7 @@ void fragment() {
 
     }
 
-    if (detail > 0.001 && procedural < 1.0) {
+    if (detail > 0.001 && sea < 0.999) {
 
         vec3 near_grain = mix(texture(soil_colour, near_uv).rgb, texture(rock_colour, near_uv).rgb, bare);
         vec3 far_grain = mix(texture(soil_colour, far_uv).rgb, texture(rock_colour, far_uv).rgb, bare);
@@ -293,12 +291,14 @@ void fragment() {
 
     if (procedural > 0.0 && sea < 0.999) {
 
+        local_ground = ground;
         float grain = 0.0;
         float amplitude = 0.55;
         float scale = 64.0;
         for (int octave = 0; octave < 8; octave++) {
 
             float resolved = 1.0 - smoothstep(scale * 0.2, scale * 0.7, footprint);
+            if (resolved < 0.001) { break; }
             grain += (landscape_noise(fixed_position / scale) - 0.5) * amplitude * resolved;
             scale *= 0.5;
             amplitude *= 0.6;
@@ -314,7 +314,8 @@ void fragment() {
         vec3 normal = normalize(world_normal - gradient * 0.16);
         vec3 tangent = normalize(mat3(INV_VIEW_MATRIX) * TANGENT);
         vec3 bitangent = normalize(mat3(INV_VIEW_MATRIX) * BINORMAL);
-        relief = mix(relief, vec3(dot(normal, tangent), dot(normal, bitangent), dot(normal, world_normal)), procedural);
+        vec3 macro_normal = vec3(dot(normal, tangent), dot(normal, bitangent), dot(normal, world_normal));
+        relief = normalize(vec3(relief.xy + macro_normal.xy * procedural, relief.z));
 
     }
 
@@ -349,12 +350,18 @@ void fragment() {
     vec2 wave_slope = vec2(dot(wave_gradient, normalize(mat3(INV_VIEW_MATRIX) * TANGENT)),
         dot(wave_gradient, normalize(mat3(INV_VIEW_MATRIX) * BINORMAL)));
     swell.xy -= wave_slope * ocean_room * procedural / max(wave_relief, 0.01);
-    vec3 impact_offset = radial - water_impact.xyz;
-    float impact_distance = length(impact_offset);
-    float impact = exp(-impact_distance / max(water_impact.w * 4.0, 1.0)) * impact_strength;
-    swell.xy += vec2(dot(impact_offset, normalize(mat3(INV_VIEW_MATRIX) * TANGENT)),
-        dot(impact_offset, normalize(mat3(INV_VIEW_MATRIX) * BINORMAL))) / max(impact_distance, 1.0)
-        * cos(impact_distance * 0.7 - environment_time * 5.0) * impact * 0.4;
+    vec4 response = surface_response(radial);
+    float response_dx = dFdx(response.x);
+    float response_dy = dFdy(response.x);
+    vec3 surface_dx = dFdx(world_position);
+    vec3 surface_dy = dFdy(world_position);
+    vec3 gradient_x = cross(surface_dy, world_normal);
+    vec3 gradient_y = cross(world_normal, surface_dx);
+    float surface_determinant = dot(surface_dx, gradient_x);
+    vec3 response_gradient = (response_dx * gradient_x + response_dy * gradient_y)
+        * sign(surface_determinant) / max(abs(surface_determinant), 0.00001);
+    swell.xy -= vec2(dot(response_gradient, normalize(mat3(INV_VIEW_MATRIX) * TANGENT)),
+        dot(response_gradient, normalize(mat3(INV_VIEW_MATRIX) * BINORMAL))) / max(wave_relief, 0.01);
 
     // Depth arrives as a vertex attribute, so a coarse patch spreads a metre of water over
     // kilometres of ground: a band cut at a fixed depth is as wide as whatever patch happens to be
@@ -383,7 +390,7 @@ void fragment() {
 
     float foam = sea * (1.0 - smoothstep(0.0, surf, depth)) * shore * shore_pulse;
 
-    foam += sea * impact * 0.65;
+    foam += sea * clamp(response.a, 0.0, 1.0);
 
     vec3 water = mix(deep_colour, shallow_colour, shallow * shallow);
 
@@ -402,6 +409,7 @@ void fragment() {
 
     }
 
+    water = mix(water, vec3(0.42, 0.48, 0.49), clamp(response.a * 0.85, 0.0, 0.85));
     ALBEDO = (mix(ground, water, sea) + vec3(foam * 0.07)) * lit;
 
     METALLIC = 0.0;

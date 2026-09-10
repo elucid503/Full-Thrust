@@ -68,6 +68,16 @@ public sealed partial class VesselView : Node3D {
         public ShaderMaterial PlumeMaterial { get; set; }
 
         public float BellRadius { get; set; }
+        public float ClusterRadius { get; set; }
+        public Vector4[] Nozzles { get; set; }
+        public readonly Vector3[] NozzleAxes = new Vector3[32];
+        public readonly List<Node3D> EnginePivots = new List<Node3D>();
+        public float EngineDeck;
+        public float EngineReach;
+        public Quaternion Gimbal = Quaternion.Identity;
+        public readonly float[] Discharge = new float[32];
+        public float DischargeAge;
+        public int DischargeCursor;
 
         public readonly List<Jet> Jets = new List<Jet>();
         public readonly List<OmniLight3D> Lights = new List<OmniLight3D>();
@@ -186,9 +196,74 @@ public sealed partial class VesselView : Node3D {
         // the origin is a figure that changes as the tank empties rather than one baked in at build.
         _body.Position = new Vector3(0.0f, -(float)_vessel.CentreOfMassZ, 0.0f);
 
+        SyncGimbals();
         SyncPlume();
         SyncHeat();
         SyncSheath();
+
+    }
+
+    // Torque is in body axes. An aft-mounted engine tilts opposite the demanded rotation;
+    // roll does not deflect this parallel cluster. The actuator settles without frame-rate dependence.
+    private void SyncGimbals() {
+
+        float blend = 1.0f - Mathf.Exp(-(float)GetProcessDeltaTime() / 0.09f);
+        foreach (Piece piece in _pieces) {
+
+            if (piece.EnginePivots.Count == 0) { continue; }
+            Vector3 demand = Vector3.Zero;
+            if (piece.Stage == _vessel.Active && _vessel.CurrentThrust > 0.0 && _vessel.ControlTorqueLimit > 0.0) {
+
+                demand = Frames.Direction(_vessel.ControlTorque / _vessel.ControlTorqueLimit);
+                demand.Y = 0.0f;
+                demand = demand.LimitLength();
+
+            }
+            float magnitude = demand.Length();
+            Quaternion target = magnitude > 0.00001f
+                ? new Quaternion(-demand / magnitude, Mathf.Asin(magnitude * Mathf.Sin((float)piece.Stage.GimbalRange)))
+                : Quaternion.Identity;
+            piece.Gimbal = piece.Gimbal.Slerp(target, blend).Normalized();
+            Basis tilt = new Basis(piece.Gimbal);
+            for (int i = 0; i < piece.EnginePivots.Count; i++) {
+
+                float range = (float)(piece.Stage.GimbalRange * piece.Stage.GimbalLimit(i));
+                Quaternion individual = magnitude > 0.00001f && piece.Stage.IsEngineLit(i)
+                    ? new Quaternion(-demand / magnitude, Mathf.Asin(magnitude * Mathf.Sin(range)))
+                    : Quaternion.Identity;
+                Node3D pivot = piece.EnginePivots[i];
+                pivot.Quaternion = pivot.Quaternion.Slerp(individual, blend).Normalized();
+
+            }
+
+            // Each engine turns about its own fixed mount. Express those mounts in the common
+            // exhaust frame so the merged volume still leaves all six moving bell mouths.
+            piece.Plume.Transform = new Transform3D(tilt,
+                Vector3.Up * piece.EngineDeck + tilt * (Vector3.Down * piece.EngineReach));
+            for (int i = 0; i < piece.EnginePivots.Count; i++) {
+
+                Node3D pivot = piece.EnginePivots[i];
+                Vector3 mouth = pivot.Position + pivot.Basis * (Vector3.Down * piece.EngineReach);
+                Vector3 offset = tilt.Inverse() * (mouth - piece.Plume.Position);
+                piece.NozzleAxes[i] = tilt.Inverse() * -pivot.Basis.Y;
+                piece.Nozzles[i] = new Vector4(offset.X, offset.Y, offset.Z, piece.Nozzles[i].W);
+
+            }
+            foreach (OmniLight3D light in piece.Lights) {
+
+                light.Position = piece.Plume.Position + tilt * (Vector3.Down * piece.BellRadius);
+
+            }
+
+        }
+
+    }
+
+    public Vector3 EngineDirection(int index) {
+
+        Piece piece = Find(_vessel.Active);
+        return piece != null && index >= 0 && index < piece.EnginePivots.Count
+            ? -piece.EnginePivots[index].Basis.Y : Vector3.Down;
 
     }
 
@@ -1073,9 +1148,39 @@ public sealed partial class VesselView : Node3D {
 
         float bellPlane = engine.Position.Y - bounds.Size.Y * 0.5f;
 
-        node.AddChild(engine);
+        int count = Math.Clamp(piece.Stage.EngineCount, 1, 32);
+        float ring = count > 1 ? (part.RingRadius > 0.0 ? (float)part.RingRadius : bellRadius / Mathf.Sin(Mathf.Pi / count) * 1.15f) : 0.0f;
+        float available = (float)piece.Stage.Hull.RadiusAt(part.Top);
+        float fit = count > 1 ? Mathf.Min(1.0f, available / (ring + bellRadius * 1.2f)) : 1.0f;
+        engine.Scale *= fit;
+        bellRadius *= fit;
+        ring *= fit;
+        bellPlane = (float)part.Top - bounds.Size.Y * fit;
+        engine.Position = new Vector3(ring, (float)part.Top - bounds.Size.Y * fit * 0.5f, 0.0f);
+        piece.EngineDeck = (float)part.Top;
+        piece.EngineReach = bounds.Size.Y * fit;
+        piece.Nozzles = new Vector4[32];
+        for (int i = 0; i < count; i++) {
 
+            float angle = Mathf.Tau * i / count;
+            Vector3 offset = new Vector3(Mathf.Cos(angle) * ring, 0.0f, Mathf.Sin(angle) * ring);
+            Node3D pivot = new Node3D {
+
+                Name = $"EngineGimbal{i + 1}",
+                Position = offset + Vector3.Up * piece.EngineDeck,
+
+            };
+            Node3D model = i == 0 ? engine : (Node3D)engine.Duplicate();
+            model.Position = Vector3.Down * piece.EngineReach * 0.5f;
+            pivot.AddChild(model);
+            node.AddChild(pivot);
+            piece.EnginePivots.Add(pivot);
+            piece.Nozzles[i] = new Vector4(offset.X, 0.0f, offset.Z, 1.0f);
+
+        }
+        piece.ClusterRadius = ring;
         AttachPlume(node, piece, bellRadius, bellPlane);
+        piece.PlumeMaterial.SetShaderParameter("nozzle_count", count);
 
     }
 

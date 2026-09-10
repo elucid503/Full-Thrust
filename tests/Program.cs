@@ -39,6 +39,7 @@ public static partial class Program {
         NozzleExpansion();
         VesselContacts();
         GroundSurvey();
+        SurfaceFlowChecks();
 
         Console.WriteLine();
         Console.WriteLine($"{_checks - _failures}/{_checks} checks passed");
@@ -379,6 +380,23 @@ public static partial class Program {
 
         Stage booster = vessel.Active;
         Stage capsule = vessel.Forward;
+
+        Expect("six base engines are commissioned", booster.EngineCount == 6 && booster.EnginesLit == 6, $"{booster.EnginesLit}/{booster.EngineCount}");
+        Near("cluster retains its original total thrust", booster.ThrustNewtons * booster.ThrustFraction, 1_500_000.0, 1e-9);
+        booster.SetGimbalLimit(0, 0.0);
+        Near("locking a gimbal reduces available steering", booster.GimbalAuthority, Math.Sin(booster.GimbalRange) * 5.0 / 6.0, 1e-12);
+        booster.SetGimbalLimit(0, 0.5);
+        Near("partial gimbal range uses its actual angle", booster.GimbalAuthority, (5.0 * Math.Sin(booster.GimbalRange) + Math.Sin(booster.GimbalRange * 0.5)) / 6.0, 1e-12);
+        booster.SetGimbalLimit(0, double.NaN);
+        Near("invalid gimbal limits are ignored", booster.GimbalLimit(0), 0.5, 1e-12);
+        booster.SetGimbalLimit(0, 2.0);
+        Near("gimbals cannot exceed mechanical range", booster.GimbalLimit(0), 1.0, 1e-12);
+        double clusterMass = vessel.Mass;
+        booster.SetEngine(5, false);
+        Near("each engine supplies one sixth of the total", booster.ThrustNewtons * booster.ThrustFraction, 1_250_000.0, 1e-9);
+        Near("switching an engine does not change vessel mass", vessel.Mass, clusterMass, 1e-9);
+        booster.SetEngine(5, true);
+        Near("restoring all six restores thrust", booster.ThrustNewtons * booster.ThrustFraction, 1_500_000.0, 1e-9);
 
         Near("stack length", vessel.Length, Stack.CapsuleDatum + Aegis.Height, 1e-9);
         Near("tank capacity", vessel.PropellantCapacity, booster.Hull.TankVolume * Zenith.PropellantDensity, 1e-9);

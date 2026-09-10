@@ -94,6 +94,7 @@ public sealed class Stage {
     public double HeatCapacity { get; init; } = 1400.0;
 
     private bool[] _engines = Array.Empty<bool>();
+    private double[] _gimbalLimits = Array.Empty<double>();
 
     private MassProperties _structure;
     private double _structureMass = double.NaN;
@@ -156,6 +157,35 @@ public sealed class Stage {
 
     }
 
+    /// <summary>Per-engine fraction of the mechanical gimbal range; zero locks the mount.</summary>
+    public double GimbalLimit(int index) => index >= 0 && index < _gimbalLimits.Length ? _gimbalLimits[index] : 0.0;
+
+    public void SetGimbalLimit(int index, double fraction) {
+
+        if (index >= 0 && index < _gimbalLimits.Length && double.IsFinite(fraction)) {
+
+            _gimbalLimits[index] = Math.Clamp(fraction, 0.0, 1.0);
+
+        }
+
+    }
+
+    public double GimbalAuthority {
+
+        get {
+
+            double authority = 0.0;
+            for (int i = 0; i < _engines.Length; i++) {
+
+                if (_engines[i]) { authority += Math.Sin(GimbalRange * _gimbalLimits[i]); }
+
+            }
+            return EnginesLit > 0 ? authority / EnginesLit : 0.0;
+
+        }
+
+    }
+
     /// <summary>Whether this stage's thrusters can still raise anything.</summary>
     public bool HasReactionControl => ControlTorque > 0.0 && RcsPropellantMass > 0.0;
 
@@ -180,6 +210,8 @@ public sealed class Stage {
         _engines = new bool[count];
 
         Array.Fill(_engines, true);
+        _gimbalLimits = new double[count];
+        Array.Fill(_gimbalLimits, 1.0);
 
     }
 

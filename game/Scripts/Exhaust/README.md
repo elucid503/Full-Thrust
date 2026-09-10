@@ -4,7 +4,7 @@ The renderer integrates emission and extinction in local metres, clips rays agai
 
 ## Exhaust
 
-The simulation's nozzle exit Mach, pressure mismatch, wall separation and shock-cell spacing drive the field. Exit Mach is cached because it depends on fixed geometry and chemistry. Expanding gas thins with cross-sectional area; ambient density controls afterburning and shear mixing. Crossflow bends the centreline according to the ratio of ambient to jet momentum. Ground contact clips against the local planet tangent plane and adds a wall jet, integrated separately so its thin layer cannot be skipped by plume samples. The surface remains the game's spherical datum, not a terrain collision mesh.
+The simulation's nozzle exit Mach, pressure mismatch, wall separation and shock-cell spacing drive the field. Exit Mach is cached because it depends on fixed geometry and chemistry. Expanding gas thins with cross-sectional area; ambient density controls afterburning and shear mixing. Crossflow bends the centreline according to the ratio of ambient to jet momentum. Ground contact clips against the local planet tangent plane and adds a wall jet, integrated separately so its thin layer cannot be skipped by plume samples. The clipping plane uses terrain height under the nozzle. Surface dust and steam use bounded terrain ray tests.
 
 Kerosene, hydrogen, methane and decomposed hydrazine retain distinct emission colours and luminosities. RCS valves retain their chamber pressure as duty varies. The final RCS adjustment is 20% more luminosity and 17% more length; the main plume was lengthened by 16%.
 
@@ -49,3 +49,57 @@ Build with dotnet build game/FullThrust.Game.csproj. Physics checks run with dot
 The existing localhost bridge now supports pause=true, aoa=<degrees>, aim=up and rcsTorque=<fraction>, alongside altitude and speed placement. Pause freezes flight state while allowing gas animation and camera control. Set pause=false to resume flight. /state exposes measured viewport render CPU/GPU milliseconds.
 
 Verification captures and timing records are in game/.artifacts/volumes and game/.artifacts/plume-wrap. Tested states include vacuum and atmospheric burns, low throttle, crossflow, ground contact, RCS, staged and full-stack entry, 0/45/90/135/180-degree entry and cameras inside the volume.
+
+## September rendering review
+
+Axial relative airflow now limits jet penetration using diluted momentum versus ram pressure.
+Crossflow bends the centreline, and noise follows the curved stream in an expanding flow coordinate.
+The atmosphere supplies co-rotating air velocity; there is no meteorological wind/gust solver.
+Engine clusters (up to 32 nozzles in one engine group) share one march and noise evaluation per sample.
+Per-engine density contributions overlap into a common field, with live engine switches masking each
+source. This is an emissive volume approximation, not pressure-coupled fluid dynamics. Existing hull
+obstacle displacement, cloud clearing, and water disturbances remain enabled.
+
+Bridge `/control?engineIndex=0&engineEnabled=false` switches a source. Screenshot requests in a
+headless/dummy renderer return an explicit error instead of waiting forever for a rendered frame.
+Use a hidden rendering-enabled instance for visual checks. `tools/render_review.py --bridge
+http://localhost:9082` captures low/high clouds, close ground, dust, crossflow, retrograde, water and
+vacuum. A temporary four-engine Zenith fixture was also checked with four and one engine burning;
+the stock craft was restored afterwards. Captures live in `game/.artifacts/review-*.png`.
+
+## Persistent flow refinement
+
+A 320 ms discharge history carries ignition and shutdown downstream at finite transport speed.
+The near-nozzle optical field retains shock cells and pressure expansion, while its entrained
+shear layer uses smaller convected eddies. Main-engine ground contact now shares the curved
+centreline intersection used by the surface response and computes a local terrain normal.
+Surface forcing uses diluted momentum flux and incidence, not throttle alone or a fixed ring size.
+
+The static steam shape and analytic impact ripple have been removed. See `../EnvironmentRendering.md`
+for the pressure-driven water grid, transported foam, moving spray/dust/vapour, budgets, and limits.
+
+
+## Photo-referenced clustered exhaust (September 2026)
+
+References inspected: NASA/Bill Ingalls, [GRACE-FO Rocket Flames](https://gracefo.jpl.nasa.gov/resources/82/rocket-flames/)
+and [Falcon 9 liftoff](https://www.nasa.gov/image-article/falcon-9-liftoff-from-historic-launch-pad/).
+The close-up resolves elongated luminous strands; the wider exposure clips the hot core to white.
+These are visual references, not calibrated radiometry. NASA's
+[plume thermochemistry overview](https://tfaws.nasa.gov/TFAWS01/NASA/09Spacecr/cCALH.PDF)
+and [cluster experiment record](https://ntrs.nasa.gov/citations/19690015557)
+provide context for afterburning and plume interaction.
+
+The previous nearest-nozzle radial field stamped coherent shock discs across the entire cluster.
+Each nozzle now owns its axial shock phase, radius and short mixing-damped potential core.
+Fuel concentration and hot-gas contributions add across nozzles with inverse-area dilution;
+a bounded mixture fraction drives an atmospheric afterburning approximation in the shared layer.
+Convected three-dimensional displacement folds that layer into elongated filaments. Cooling and
+nonlinear emission terminate visible flame before the volume boundary. A single noise evaluation
+and a single ray march are shared by the cluster. Per-nozzle discharge is normalized independently
+of the number of enabled engines so shutting neighbours does not dim surviving engines.
+
+This is a reduced optical/flow model: the isentropic exit state, relative-airflow bending, pressure
+expansion and individual gimbal directions are inputs. Turbulence, mixing, soot emission and cooling
+are parameterized, not a compressible reacting Navier-Stokes solve. No claim of quantitative CFD
+or spectral-radiation accuracy is made. It does not model a long-lived sunlit high-altitude exhaust
+cloud. Ground/water transport remains handled by the existing surface response.

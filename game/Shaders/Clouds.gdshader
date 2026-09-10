@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode unshaded, blend_premul_alpha, depth_draw_never, depth_test_disabled, cull_front;
+render_mode unshaded, blend_premul_alpha, depth_draw_never, depth_test_disabled, cull_front, fog_disabled;
 
 uniform sampler2D depth_buffer : hint_depth_texture, filter_nearest;
 uniform vec3 planet_centre = vec3(0.0);
@@ -69,10 +69,6 @@ void fragment() {
 
         start = max(start, inner.y);
 
-    } else if (inner.x > 0.0 && inner.y > inner.x) {
-
-        finish = min(finish, inner.x);
-
     }
     vec2 ground = sphere_span(origin, ray, planet_radius);
     if (ground.x > 0.0 && ground.y > ground.x) { finish = min(finish, ground.x); }
@@ -91,7 +87,12 @@ void fragment() {
     // gave the cloud a hundred metres off the nose the same four-kilometre sample as the one on the
     // horizon, which is what made a close cloud a smooth blob; bunched by how much longer the span is
     // than its own start, the near end is walked in metres for the same forty-eight samples.
-    float span = finish - start;
+    // Walk both sides of the deck when a grazing ray crosses the clear cavity.
+    float gap_start = inner.y > inner.x ? clamp(inner.x, start, finish) : finish;
+    float gap_end = inner.y > inner.x ? clamp(inner.y, start, finish) : finish;
+    float gap = max(gap_end - gap_start, 0.0);
+    float span = finish - start - gap;
+    if (span <= 0.0) { discard; }
     float bunching = clamp(1.0 + 0.35 * log2(1.0 + span / max(start, 200.0)), 1.0, 2.6);
 
     int steps = int(mix(32.0, 64.0, 1.0 - smoothstep(4000.0, 18000.0, start)));
@@ -109,6 +110,7 @@ void fragment() {
 
         float step_length = span * (high - low);
         float distance = start + span * mix(low, high, jitter);
+        if (distance >= gap_start) { distance += gap; }
 
         vec3 p = origin + ray * distance;
         float density = density_at(p, step_length);
@@ -147,7 +149,9 @@ void fragment() {
     vec3 air_transmission = exp(-vec3(5.8e-6, 1.35e-5, 3.31e-5) * air_depth);
     float day = smoothstep(-0.12, 0.08, dot(normalize(origin + ray * distance), sun_direction));
     vec3 haze = vec3(0.12, 0.24, 0.43) * day;
-    ALBEDO = radiance * air_transmission + haze * (1.0 - air_transmission) * alpha;
-    ALPHA = alpha;
+    // Unresolved distant condensate loses contrast into the foreground aerosol column.
+    float visibility = exp(-air_depth * 0.00002);
+    ALBEDO = (radiance * air_transmission + haze * (1.0 - air_transmission) * alpha) * visibility;
+    ALPHA = alpha * visibility;
 
 }

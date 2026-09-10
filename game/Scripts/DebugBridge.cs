@@ -262,6 +262,12 @@ public sealed partial class DebugBridge : Node {
 
         }
 
+        if (int.TryParse(query["engineIndex"], out int engineIndex) && bool.TryParse(query["engineEnabled"], out bool engineEnabled)) {
+
+            flight.Vessel.SetEngine(engineIndex, engineEnabled);
+
+        }
+
         if (Enum.TryParse(query["hold"], true, out AttitudeHold hold)) {
 
             flight.Autopilot.Hold = hold;
@@ -651,6 +657,10 @@ public sealed partial class DebugBridge : Node {
             state["dynamicPressure"] = flight.Vessel.Aero.DynamicPressure;
             state["patches"] = Planet.Active?.PatchCount ?? 0;
             state["groundMs"] = Planet.Active?.GroundMilliseconds ?? 0.0;
+            state["surfaceParcels"] = Planet.Active?.SurfaceParcels ?? 0;
+            state["surfaceWaveHeight"] = Planet.Active?.SurfaceWaveHeight ?? 0.0;
+            state["surfaceMs"] = Planet.Active?.SurfaceMilliseconds ?? 0.0;
+            state["surfaceFailures"] = Planet.Active?.SurfaceFailures ?? 0;
             state["flightMs"] = (GetTree().CurrentScene as Main)?.FlightMilliseconds ?? 0.0;
             state["terrainWorkerFailures"] = Planet.Active?.WorkerFailures ?? 0;
             state["terrainPendingJobs"] = Planet.Active?.PendingJobs ?? 0;
@@ -775,6 +785,13 @@ public sealed partial class DebugBridge : Node {
 
     // Capture must wait for a completed frame; the viewport texture is stale before FramePostDraw.
     private async System.Threading.Tasks.Task Capture(HttpListenerContext context, string requested) {
+
+        if (DisplayServer.GetName() == "headless") {
+
+            Respond(context, new Dictionary<string, object> { ["error"] = "Screenshots require a rendering display driver; headless uses the dummy renderer." }, 409);
+            return;
+
+        }
 
         await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
 

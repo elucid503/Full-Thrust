@@ -229,6 +229,12 @@ public sealed partial class TrajectoryPanel : Control {
         // which says the same thing as a rule along the bottom without drawing over the border.
         Color ink = _flight.Orbit.PeriapsisRadius < _flight.Body.Radius ? HudTheme.Caution : HudTheme.Ink;
 
+        // Keep the fill polygon simple when the clipped trace touches the baseline repeatedly.
+        for (int i = 0; i <= Samples; i++) {
+
+            under[i].Y = Math.Min(under[i].Y, _graph.End.Y - 0.05f);
+
+        }
         DrawColoredPolygon(under, ink * new Color(1.0f, 1.0f, 1.0f, 0.17f));
 
         DrawLine(ahead[0], new Vector2(ahead[0].X, _graph.End.Y), HudTheme.Ink * new Color(1.0f, 1.0f, 1.0f, 0.40f), 1.0f);

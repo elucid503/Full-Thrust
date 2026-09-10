@@ -313,7 +313,7 @@ public sealed class Vessel {
 
             }
 
-            return CurrentThrust * Math.Abs(CentreOfMassZ - stage.GimbalPlane) * Math.Sin(stage.GimbalRange);
+            return CurrentThrust * Math.Abs(CentreOfMassZ - stage.GimbalPlane) * stage.GimbalAuthority;
 
         }
 

@@ -29,7 +29,9 @@ float density_at(vec3 p, float footprint) {
     float weather = textureLod(shape_noise, fixed_p * 0.000007 + wind * 0.2, 0.0).r;
     float convection = smoothstep(0.35, 0.7, weather);
     float ceiling = mix(0.25, 0.92, convection);
-    float profile = smoothstep(0.0, 0.075, height) * (1.0 - smoothstep(ceiling * 0.48, ceiling, height));
+    float floor_height = 0.035 + 0.14 * weather;
+    float profile = smoothstep(floor_height, floor_height + 0.16, height)
+        * (1.0 - smoothstep(ceiling * 0.48, max(ceiling, floor_height + 0.20), height));
     float coverage = clamp((cover - 0.22) * 1.35 + (weather - 0.5) * 0.3, 0.0, 1.0);
     if (coverage < 0.015 || profile < 0.001) { return 0.0; }
 
@@ -41,6 +43,8 @@ float density_at(vec3 p, float footprint) {
 
     float shape = textureLod(shape_noise, (fixed_p + warp) * 0.000065 + wind, 0.0).r;
 
+    // Billows taper the underside as well as the silhouette.
+    profile *= smoothstep(0.0, 0.16, height - floor_height - (1.0 - shape) * 0.12);
     float threshold = 1.0 - coverage * 0.8;
     float body = smoothstep(threshold - 0.09, threshold + 0.15, shape + profile * 0.16);
     if (body < 0.001) { return 0.0; }

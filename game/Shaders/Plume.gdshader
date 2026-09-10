@@ -4,6 +4,11 @@ render_mode unshaded, blend_premul_alpha, cull_front, depth_draw_never, depth_te
 #include "res://Shaders/Volume.gdshaderinc"
 
 uniform float throttle = 0.0;
+uniform bool discharge_enabled = false;
+uniform float discharge[32];
+uniform int discharge_cursor = 0;
+uniform float transport_speed = 180.0;
+
 uniform float exit_radius = 0.6;
 uniform float plume_length = 20.0;
 uniform float spread = 0.3;
@@ -12,6 +17,9 @@ uniform float air = 0.0;
 uniform float cell_length = 0.0;
 uniform float cell_strength = 0.0;
 uniform vec3 crossflow = vec3(0.0);
+uniform int nozzle_count = 0;
+uniform vec4 nozzles[32];
+uniform vec3 nozzle_axes[32];
 
 uniform vec3 core_colour : source_color = vec3(1.0, 0.83, 0.62);
 uniform vec3 tail_colour : source_color = vec3(1.0, 0.38, 0.10);
@@ -33,6 +41,17 @@ uniform mat4 ship_from_plume;
 uniform vec4 ship_domain;
 uniform vec3 ship_min;
 uniform vec3 ship_max;
+
+float delivered(float x) {
+
+    if (!discharge_enabled) { return throttle; }
+    float delay = clamp(x / transport_speed * (1.0 + x * spread / max(exit_radius, 0.01) * 0.2) * 100.0, 0.0, 30.0);
+    int low = (discharge_cursor - int(floor(delay)) + 32) % 32;
+    int high = (low + 31) % 32;
+    return mix(discharge[low], discharge[high], fract(delay));
+
+}
+
 
 vec2 ship_interval(vec3 origin, vec3 direction, float reach) {
 
@@ -100,54 +119,82 @@ vec4 exhaust_at(vec3 p) {
 
     }
 
-    float x = -p.y;
-    float u = clamp(x / plume_length, 0.0, 1.0);
-    vec3 centre = crossflow * (u * u);
-    float r = length(p.xz - centre.xz);
-    float radius = exit_radius + max(x, 0.0) * spread;
-    float radial = r / radius;
-    float entrainment = smoothstep(0.0, exit_radius * 4.0, x);
-    float envelope = mix(1.0, 2.0, entrainment);
+    float x = max(-p.y, 0.0);
+    float width = exit_radius + x * spread;
+    float u = x / plume_length;
+    float entrainment = smoothstep(2.0, 22.0, x / exit_radius) * air;
+
+    // Convected eddies gently perturb the mixing layer without pulling the tail into strands.
+    // Coordinates are in texture periods, not metres.
+    float travel = log(1.0 + x * spread / exit_radius) / max(spread, 0.02);
+    vec3 flow = vec3(p.x / width, travel * 0.16 - effect_time * transport_speed / (exit_radius * 38.0), p.z / width) * 0.12;
+    vec4 eddies = flow_eddies(flow);
+    vec3 distortion = vec3(eddies.x - 0.5, (eddies.w - 0.5) * 0.25, eddies.y - 0.5);
+    vec3 sample_point = p + distortion * width * entrainment * 0.45;
+    float fuel_density = 0.0;
+    float hot_density = 0.0;
+    float shocks = 0.0;
+    int count = max(nozzle_count, 1);
+
+    for (int nozzle = 0; nozzle < count; nozzle++) {
+
+        vec3 origin = nozzle_count > 0 ? nozzles[nozzle].xyz : vec3(0.0);
+        vec3 axis = nozzle_count > 0 ? nozzle_axes[nozzle] : vec3(0.0, -1.0, 0.0);
+        float active = nozzle_count > 0 ? nozzles[nozzle].w : 1.0;
+        if (active < 0.001) { continue; }
+        vec3 relative = sample_point - origin;
+        float axial = dot(relative, axis);
+        if (axial < 0.0 || axial > plume_length) { continue; }
+        float along = axial / plume_length;
+        vec3 lateral = relative - axis * axial - crossflow * (along * along);
+        float jet_width = exit_radius + axial * spread;
+        float radial = length(lateral) / jet_width;
+        // Area dilution keeps overlapping jets additive, instead of clamping their density.
+        float dilution = exit_radius / jet_width;
+        float packet = delivered(axial) * active;
+        float scalar = exp(-2.0 * radial * radial) * dilution * dilution * packet;
+        fuel_density += scalar;
+        hot_density += scalar * exp(-axial / (exit_radius * mix(26.0, 7.0, vacuum)));
+
+        // A nozzle owns its shock cells. Their strength disappears as the potential core mixes;
+        // no coherent horizontal discs may be stamped across the already merged cluster.
+        float phase = axial / max(cell_length, exit_radius) * 6.2831853;
+        float damping = exp(-axial / max(exit_radius * 7.0, cell_length * 1.2));
+        float shock_radius = 0.48 + 0.28 * cos(phase);
+        shocks += scalar * cell_strength * damping
+            * (bell((radial - shock_radius) / 0.13) * 0.3
+            + pow(max(-cos(phase), 0.0), 10.0) * bell(radial * 4.0) * 0.45);
+
+    }
+
     vec3 light = vec3(0.0);
     float extinction = 0.0;
+    if (fuel_density > 0.00001) {
 
-    if (x >= 0.0 && x < plume_length && radial < envelope) {
+        // A bounded mixture fraction from the sum of jet concentrations. Closely spaced jets
+        // share a fuel-rich core; atmospheric oxygen burns along the folded outer mixing layer.
+        float concentration = fuel_density * mix(1.0, 0.85 + 0.30 * eddies.z, entrainment);
+        float mixture = 1.0 - exp(-concentration * 4.0);
+        float reaction = 4.0 * mixture * (1.0 - mixture) * afterburn * air;
+        reaction *= smoothstep(1.5, 9.0, x / exit_radius);
+        float intermittency = smoothstep(0.27, 0.65, eddies.z * 0.65 + eddies.w * 0.35);
+        reaction *= mix(1.0, 0.85 + 0.30 * intermittency, entrainment);
 
-        float end = 1.0 - smoothstep(0.65, 1.0, u);
-        // The soft outer field starts inside the physical aperture and opens only downstream.
-        float aperture = 1.0 - smoothstep(envelope - mix(0.10, 0.35, entrainment), envelope, radial);
-        float dilution = exit_radius / radius;
-        dilution *= dilution;
-
-        vec3 advect = vec3(p.x / radius, x / (exit_radius * 6.0) - effect_time * 5.0, p.z / radius);
-        vec4 eddies = flow_eddies(advect * vec3(0.65, 0.19, 0.65));
-        float n = eddies.x * 0.25 + eddies.z * 0.5 + eddies.w * 0.25;
-        float mixing = smoothstep(0.015, 0.38, u) * (1.0 - 0.45 * vacuum);
-        vec2 drift = (eddies.xy - vec2(0.5)) * mixing * 0.85;
-        float edge = length((p.xz - centre.xz) / radius + drift);
-        edge += (eddies.z - 0.5) * mixing * 0.45;
-        float core = exp(-2.5 * edge * edge) * dilution;
-        float stream = mix(0.78 + 0.40 * eddies.w, 0.12 + 2.05 * smoothstep(0.24, 0.76, n), mixing);
-
-        float phase = x / max(cell_length, exit_radius) * 6.2831853;
-        float cells = cell_strength * exp(-x / max(cell_length * 3.0, exit_radius));
-        float neck = 0.56 + 0.30 * cos(phase);
-        float diamond = bell((radial - neck) / 0.17) * cells;
-        float disc = pow(max(-cos(phase), 0.0), 12.0) * bell(radial * 3.5) * cells;
-
-        float temperature = exp(-x / (exit_radius * mix(10.0, 5.0, vacuum))) * (0.8 + 0.4 * eddies.z);
-        vec3 colour = mix(tail_colour, core_colour, temperature);
-        light = core * stream * colour * (1.5 + 1.8 * temperature);
-        light += (diamond * 0.28 + disc * 1.1) * dilution * core_colour;
-
-        // Combustion is confined to the mixing layer; ambient oxygen vanishes continuously with density.
-        float flame = bell((edge - 0.82) / 0.3) * afterburn * air;
-        flame *= smoothstep(0.01, 0.12, u) * exp(-u * 3.0) * stream * dilution;
-        light += flame * flame_colour * 2.4;
-        extinction = (core * 0.035 + flame * 0.07) * luminosity;
-
-        light *= aperture * end * luminosity * brightness * throttle;
-        extinction *= aperture * end * throttle;
+        // Hot soot radiates strongly while cool exhaust rapidly becomes invisible. The visual
+        // tail ends through cooling and local mixing, not a uniformly rounded opacity cap.
+        float hot_fraction = hot_density / max(fuel_density, 0.00001);
+        float cooling = exp(-pow(x / (exit_radius * 46.0), 2.0));
+        float heat = clamp(hot_fraction + reaction * 0.35 * cooling, 0.0, 1.0);
+        float radiance = heat * heat * heat * heat;
+        vec3 colour = mix(tail_colour, core_colour, smoothstep(0.15, 0.85, heat));
+        float filaments = mix(1.0, 0.90 + 0.20 * intermittency, entrainment);
+        light = colour * (concentration * radiance * 3.0 + reaction * radiance * 1.4) * filaments;
+        light += core_colour * shocks * 1.8;
+        extinction = concentration * (0.025 + afterburn * air * 0.10) * luminosity;
+        // Keep the finite volume boundary beyond the luminous flow, with a final safety fade.
+        float end = 1.0 - smoothstep(0.82, 1.0, u);
+        light *= end * luminosity * brightness;
+        extinction *= end;
 
     }
 
@@ -201,7 +248,10 @@ vec4 wall_at(vec3 p) {
     float wall_height = exit_radius * 0.18 + lateral * 0.045;
     float wall = exp(-h / wall_height) * exp(-lateral / max(ground_radius * 0.3, 0.001));
     wall *= 1.0 - smoothstep(ground_radius * 0.65, ground_radius, lateral);
-    float grain_wall = eddy(p / (exit_radius * 5.0) - ground_normal * effect_time * 1.5);
+    vec3 outward = from_impact - ground_normal * dot(from_impact, ground_normal);
+    float travel = lateral / max(exit_radius * 12.0, 1.0);
+    float grain_wall = eddy(vec3(outward.x, outward.y, outward.z) / (exit_radius * 2.5)
+        - outward / max(lateral, 0.01) * (effect_time * 3.0 - travel));
     wall *= (0.35 + 1.4 * grain_wall) * ground_strength;
 
     return vec4(wall * mix(tail_colour, flame_colour, air) * luminosity * throttle * 0.8, wall * air * 0.08) / exit_radius;

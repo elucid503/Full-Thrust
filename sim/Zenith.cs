@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace FullThrust.Sim;
 
-/// <summary>A 2.4 m kerolox first stage. One chamber, four verniers and an interstage deep enough
+/// <summary>A 2.4 m kerolox first stage. Six chambers, four verniers and an interstage deep enough
 /// to swallow the Meridian's bell. It exists to get the stack off the pad and out of the thick
 /// air; everything after staging is the Meridian's problem.</summary>
 public static class Zenith {
@@ -20,9 +20,11 @@ public static class Zenith {
 
     public const double DryMass = 3700.0;
 
-    // A single large chamber and its turbomachinery, carried where it sits rather than smeared over
+    // The complete engine cluster and its turbomachinery, carried where it sits rather than smeared over
     // the shell: on a stage this size the engine is nearly half the dry mass on the bottom metre.
     public const double EngineMass = 1500.0;
+
+    public const int EngineCount = 6;
 
     public const double ShellMass = DryMass - EngineMass;
 
@@ -190,7 +192,9 @@ public static class Zenith {
 
             new Part {
 
-                Name = "Main Engine",
+                Name = "Main Engines",
+
+                Count = EngineCount,
 
                 Kind = PartKind.Engine,
 
