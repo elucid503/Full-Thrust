@@ -184,19 +184,6 @@ public sealed class Vessel {
     public double FuelVolume => Active.FuelVolume;
     public double OxidiserVolume => Active.OxidiserVolume;
 
-    /// <summary>Share of the loaded volume that is oxidiser, which is where the bulkhead sits.</summary>
-    public double OxidiserVolumeFraction {
-
-        get {
-
-            double total = Active.FuelVolume + Active.OxidiserVolume;
-
-            return total > 0.0 ? Active.OxidiserVolume / total : 0.0;
-
-        }
-
-    }
-
     public IReadOnlyList<bool> Engines => Active.Engines;
 
     public int EngineCount => Active.EngineCount;

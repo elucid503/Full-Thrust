@@ -62,10 +62,8 @@ obstacle displacement, cloud clearing, and water disturbances remain enabled.
 
 Bridge `/control?engineIndex=0&engineEnabled=false` switches a source. Screenshot requests in a
 headless/dummy renderer return an explicit error instead of waiting forever for a rendered frame.
-Use a hidden rendering-enabled instance for visual checks. `tools/render_review.py --bridge
-http://localhost:9082` captures low/high clouds, close ground, dust, crossflow, retrograde, water and
-vacuum. A temporary four-engine Zenith fixture was also checked with four and one engine burning;
-the stock craft was restored afterwards. Captures live in `game/.artifacts/review-*.png`.
+Use a hidden rendering-enabled instance for visual checks. A temporary four-engine Zenith fixture
+was also checked with four and one engine burning; the stock craft was restored afterwards.
 
 ## Persistent flow refinement
 

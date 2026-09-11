@@ -8,8 +8,6 @@ public sealed class LaunchSite {
     /// <summary>Cape Meridian: a barrier cape on the eastern seaboard, with open water downrange.</summary>
     public static LaunchSite Home => new LaunchSite {
 
-        Name = "Cape Meridian",
-
         Latitude = 28.52 * Math.PI / 180.0,
         Longitude = -80.62 * Math.PI / 180.0,
 
@@ -28,8 +26,6 @@ public sealed class LaunchSite {
     /// <summary>Height of the launch mount's deck over the pad, metres. The vehicle's own datum
     /// stands on it, and the complex is drawn to it, so the two cannot part company.</summary>
     public const double MountHeight = 4.5;
-
-    public string Name { get; init; }
 
     public double Latitude { get; init; }
     public double Longitude { get; init; }
@@ -105,8 +101,5 @@ public sealed class LaunchSite {
         return QuaternionD.LookAlong(body.ToInertial(Up, time), body.ToInertial(Downrange, time));
 
     }
-
-    /// <summary>The velocity a body standing on the pad already has, from the planet's own spin.</summary>
-    public Vector3d VelocityAt(CelestialBody body, double time) => body.AirVelocityAt(PositionAt(body, time));
 
 }

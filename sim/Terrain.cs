@@ -110,8 +110,6 @@ public sealed class Terrain {
 
     }
 
-    public double Ceiling => _floor + 65535.0 * _step + RidgeAmplitude + RollingAmplitude;
-
     public IReadOnlyList<Plateau> Plateaus => Array.AsReadOnly(Volatile.Read(ref _plateaus));
 
     public void Add(Plateau plateau) {
@@ -132,7 +130,7 @@ public sealed class Terrain {
 
     }
 
-    /// <summary>Reads the packed grid written by tools/planet_maps.py.</summary>
+    /// <summary>Reads the packed elevation grid from Assets/Planet/elevation.r16.</summary>
     public static Terrain Load(Stream stream, double radius) {
 
         byte[] header = new byte[32];

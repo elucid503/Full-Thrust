@@ -42,8 +42,6 @@ public sealed class Orbit {
     public double MeanMotion => Math.Sqrt(Mu / Math.Abs(SemiMajorAxis * SemiMajorAxis * SemiMajorAxis));
     public double Period => IsClosed ? Tau / MeanMotion : double.PositiveInfinity;
 
-    public double SpecificEnergy => -Mu / (2.0 * SemiMajorAxis);
-
     public double SpeedAt(double radius) => Math.Sqrt(Mu * (2.0 / radius - 1.0 / SemiMajorAxis));
 
     /// <summary>Rotation carrying the perifocal frame onto the inertial one.</summary>

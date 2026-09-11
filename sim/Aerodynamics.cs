@@ -219,8 +219,6 @@ public readonly struct AeroForces {
 
     }
 
-    public double Drag => Force.Length;
-
     public bool InAir => Density > 0.0;
 
 }

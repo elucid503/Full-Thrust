@@ -54,7 +54,7 @@ public sealed partial class Ground : Node3D {
 
     /// <summary>Face basis: outward normal, then the axes the (s, t) span runs along. Right crossed
     /// into up is the normal on every one, so a patch is wound the same way whichever face it is on.
-    /// tools/planet_maps.py projects the imagery onto exactly these.</summary>
+    /// The cube-face imagery is projected onto exactly these.</summary>
     private static readonly Vector3d[,] Faces = {
 
         { new Vector3d(1.0, 0.0, 0.0), new Vector3d(0.0, 1.0, 0.0), new Vector3d(0.0, 0.0, 1.0) },
@@ -169,7 +169,7 @@ public sealed partial class Ground : Node3D {
     public void Build(CelestialBody body, ShaderMaterial[] materials) {
 
         _body = body;
-        _terrain = body.Terrain ?? throw new InvalidOperationException("no terrain survey; run tools/planet_maps.py heightfield");
+        _terrain = body.Terrain ?? throw new InvalidOperationException("no terrain survey; Assets/Planet/elevation.r16 is missing");
         _radius = body.Radius;
         _materials = materials;
 

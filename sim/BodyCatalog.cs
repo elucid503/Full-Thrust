@@ -13,8 +13,6 @@ public static class BodyCatalog {
 
     public static CelestialBody Home => Bodies["Terra"];
 
-    public static CelestialBody Get(string name) => Bodies[name];
-
     private static Dictionary<string, CelestialBody> Load() {
 
         Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(ResourceName);

@@ -52,19 +52,11 @@ surface-flow collision mesh. Existing hull-obstacle displacement and cloud clear
 
 ## Validation
 
-Build the game and run `tests/FullThrust.Sim.Tests.csproj`. Run a disposable game instance with
-`FT_BRIDGE_URL=http://localhost:9081/`, then execute `python tools/environment_checks.py`.
-The script pauses and relocates that instance, captures seven views under `game/.artifacts`,
-checks terrain/forest worker failures, and records whole-scene GPU timings. It leaves the instance
-paused in orbit. Inspect the images and Godot log for rendering defects; simulation tests alone
-cannot validate shader compilation or visual quality. Timings are observations, not a matched
-before/after benchmark or an FPS guarantee.
-
-`python tools/flow_sequence.py --bridge http://localhost:9082` checks ignition, sustained firing,
-shutdown, and settling with screenshots and state assertions. The bridge exposes `surfaceParcels`,
+Build the game and run `tests/FullThrust.Sim.Tests.csproj`. Simulation tests cover rest, outward
+momentum, symmetry, rebound, propagation, dissipation, dry-cell barriers, simultaneous sources,
+and interior water-volume conservation. Shader compilation and visual quality still need a running
+game instance; inspect the Godot log for worker failures. The debug bridge exposes `surfaceParcels`,
 `surfaceWaveHeight`, `surfaceMs`, and `surfaceFailures`. Visual state advances while flight is paused.
-Numerical tests cover rest, outward momentum, symmetry, rebound, propagation, dissipation, dry-cell
-barriers, simultaneous sources, and interior water-volume conservation.
 
 Background references: [Clawpack depth-averaged flow solvers](https://www.clawpack.org/sphinx-versioning/riemann/Shallow_water_Riemann_solvers.html)
 and [NASA plume/water interaction](https://www.nas.nasa.gov/SC21/research/project25.html).

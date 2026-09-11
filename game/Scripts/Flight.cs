@@ -182,8 +182,6 @@ public sealed partial class Flight : Node {
 
     }
 
-    public double AtmosphereTop => Body.AtmosphereTop;
-
     public bool InAtmosphere => Body.AirDensityAt(Vessel.Position) > 0.0;
 
     /// <summary>True while anything being tracked is in air. Warp propagates conics, and a conic is
@@ -1006,7 +1004,7 @@ public sealed partial class Flight : Node {
 
         if (file == null) {
 
-            GD.PushError("no elevation grid; run tools/planet_maps.py heightfield");
+            GD.PushError("no elevation grid; Assets/Planet/elevation.r16 is missing");
 
             return null;
 
