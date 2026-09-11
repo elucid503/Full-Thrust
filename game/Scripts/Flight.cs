@@ -285,9 +285,14 @@ public sealed partial class Flight : Node {
         Vessel vessel = track.Vessel;
 
         if (!vessel.Intact) {
-
+            if (vessel.Fate == VesselFate.Impacted) {
+                // A wreck remains attached to the rotating surface instead of drifting through it.
+                vessel.Position = Body.ToInertial(Body.ToBodyFixed(vessel.Position, Time - step), Time);
+                vessel.Orientation = QuaternionD.FromAxisAngle(Vector3d.UnitZ,
+                    Body.SpinAt(Time) - Body.SpinAt(Time - step)) * vessel.Orientation;
+                vessel.Velocity = Body.AirVelocityAt(vessel.Position);
+            }
             return;
-
         }
 
         if (track.Plan != null && Time > track.Plan.Time + 2.0) {
@@ -307,7 +312,8 @@ public sealed partial class Flight : Node {
 
         }
 
-        if (vessel.IsAccelerating || Body.AirDensityAt(vessel.Position) > 0.0) {
+        if (vessel.IsAccelerating || Body.AirDensityAt(vessel.Position) > 0.0
+            || Body.HeightAboveGround(vessel.Position, Time) < VesselCollision.Radius(vessel) + 64.0) {
 
             // Finish the frame's remainder so nearby coasting vessels never run ahead of this one.
             for (double remaining = step; remaining > 0.0;) {
@@ -315,7 +321,34 @@ public sealed partial class Flight : Node {
                 double interval = Math.Min(remaining, IntegrationStep);
 
                 track.Pilot.Update(vessel, interval);
+                Vector3d previous = vessel.Position;
+                QuaternionD orientation = vessel.Orientation;
                 Integrator.Step(vessel, Body, interval);
+                if (!(Clamped && vessel == Vessel)) {
+                    bool damage = !(Invulnerable && vessel == Vessel);
+                    bool contact = GroundCollision.Resolve(Body, vessel, previous, orientation,
+                        Time - remaining, Time - remaining + interval, damage);
+                    if (vessel.Intact && Planet.Active != null) {
+                        contact |= Planet.Active.ResolveScatter(vessel, previous, orientation,
+                            Time - remaining, Time - remaining + interval, damage);
+                    }
+                    if (contact) {
+                        ContactCount++;
+                        WarpStep = 0;
+                        WarpingToNode = false;
+                    }
+                    if (!vessel.Intact) {
+                        double contactTime = Time - remaining + interval;
+                        vessel.Position = Body.ToInertial(Body.ToBodyFixed(vessel.Position, contactTime), Time);
+                        vessel.Orientation = QuaternionD.FromAxisAngle(Vector3d.UnitZ,
+                            Body.SpinAt(Time) - Body.SpinAt(contactTime)) * vessel.Orientation;
+                        vessel.Velocity = Body.AirVelocityAt(vessel.Position);
+                        vessel.Throttle = 0;
+                        vessel.ControlTorque = Vector3d.Zero;
+                        vessel.AngularVelocity = Vector3d.Zero;
+                        break;
+                    }
+                }
 
                 remaining -= interval;
 

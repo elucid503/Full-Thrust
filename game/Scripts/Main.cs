@@ -17,7 +17,7 @@ public sealed partial class Main : Node3D {
     // Wide enough to hold the vessel and its plume; the probe is a mirror of the planet, not a room.
     private const float ProbeExtent = 48.0f;
 
-    // The vessel is the only shadow caster, so the cascade only has to cover the chase arm and a little slack.
+    // Keep nearby vegetation shadows bounded independently of a distant free camera.
     private const float ShadowSlack = 45.0f;
 
     private Flight _flight;
@@ -63,9 +63,9 @@ public sealed partial class Main : Node3D {
 
         // Godot's frustum culler goes degenerate over a planet-sized scene, so the cascade is kept to the vessel.
         _sun.ShadowEnabled = true;
-        _sun.DirectionalShadowMode = DirectionalLight3D.ShadowMode.Orthogonal;
-        _sun.DirectionalShadowBlendSplits = false;
-        _sun.DirectionalShadowFadeStart = 1.0f;
+        _sun.DirectionalShadowMode = DirectionalLight3D.ShadowMode.Parallel2Splits;
+        _sun.DirectionalShadowBlendSplits = true;
+        _sun.DirectionalShadowFadeStart = 0.85f;
         _sun.ShadowBias = 0.06f;
         _sun.ShadowNormalBias = 0.8f;
         _sun.ShadowBlur = 0.35f;
@@ -180,7 +180,7 @@ public sealed partial class Main : Node3D {
 
         Vector3 focus = Frames.Point(_flight.Vessel.Position);
 
-        _vessel.Visible = _flight.Vessel.Intact;
+        _vessel.Visible = _flight.Vessel.Fate != VesselFate.BurnedUp;
 
         _vessel.Sync(focus, Frames.Rotation(_flight.Vessel.Orientation));
 
@@ -196,9 +196,8 @@ public sealed partial class Main : Node3D {
 
         _free.Fly(delta);
 
-        // The vehicle is the only shadow caster, so the cascade only has to reach from whichever
-        // camera is looking at it out to the vehicle itself.
-        _sun.DirectionalShadowMaxDistance = (FreeCamera.Flying ? _free.GlobalPosition.DistanceTo(focus) : _camera.Distance) + ShadowSlack;
+        // Two bounded cascades retain trunk/rock contact shadows without covering kilometres of scatter.
+        _sun.DirectionalShadowMaxDistance = Mathf.Clamp(_camera.Distance + ShadowSlack, 180.0f, 300.0f);
 
         // The ground subdivides towards whoever is looking at it, and culls what is under their
         // horizon - so it has to be the camera actually rendering, or the map frames a whole planet

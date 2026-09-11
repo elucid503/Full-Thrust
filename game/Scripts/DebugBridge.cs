@@ -590,6 +590,12 @@ public sealed partial class DebugBridge : Node {
 
         }
 
+        if (bool.TryParse(query["free"], out bool free) && FreeCamera.Active != null) {
+
+            if (free) { FreeCamera.Active.Take(camera); }
+            else { FreeCamera.Active.Release(); }
+
+        }
         return new Dictionary<string, object> {
 
             ["yaw"] = camera.Yaw,
@@ -656,6 +662,12 @@ public sealed partial class DebugBridge : Node {
             state["clamped"] = flight.Clamped;
             state["dynamicPressure"] = flight.Vessel.Aero.DynamicPressure;
             state["patches"] = Planet.Active?.PatchCount ?? 0;
+            state["destroyedScatter"] = Planet.Active?.DestroyedScatter ?? 0;
+            state["scatterEffects"] = Planet.Active?.ScatterEffects ?? 0;
+            state["scatterCount"] = Planet.Active?.ScatterCount ?? 0;
+            state["scatterCells"] = Planet.Active?.ScatterCells ?? 0;
+            state["scatterPending"] = Planet.Active?.ScatterPending ?? 0;
+            state["scatterFailures"] = Planet.Active?.ScatterFailures ?? 0;
             state["groundMs"] = Planet.Active?.GroundMilliseconds ?? 0.0;
             state["flightMs"] = (GetTree().CurrentScene as Main)?.FlightMilliseconds ?? 0.0;
             state["terrainWorkerFailures"] = Planet.Active?.WorkerFailures ?? 0;

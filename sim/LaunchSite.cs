@@ -15,10 +15,9 @@ public sealed class LaunchSite {
 
     };
 
-    // The complex stands on this much dead-level ground, and the natural survey has fully returned
-    // this far out. Two kilometres of blend on flat coastal ground is invisible from the pad.
-    private const double LevelRadius = 420.0;
-    private const double BlendRadius = 2600.0;
+    // Only the mount needs level ground; restore the natural surface beyond its small footing.
+    private const double LevelRadius = 12.0;
+    private const double BlendRadius = 90.0;
 
     /// <summary>Standoff of the pad deck over the natural ground, metres.</summary>
     private const double Standoff = 3.0;

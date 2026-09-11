@@ -112,6 +112,7 @@ uniform float night_gain = 0.32;
 uniform float night_dusk = -0.02;
 uniform float night_dark = -0.20;
 
+varying float cloud_light;
 varying vec3 world_position;
 varying float surface_elevation;
 instance uniform float lod_morph : instance_index(0) = 0.0;
@@ -177,6 +178,8 @@ float overcast(vec3 radial, vec3 up) {
 
 }
 
+#include "res://Shaders/TerrainDetail.gdshaderinc"
+
 void fragment() {
 
     vec3 radial = world_position - planet_centre;
@@ -231,6 +234,32 @@ void fragment() {
     float mosaic = landscape_noise(fixed_position / 180.0 + region * 2.0);
     float vegetation = smoothstep(0.18, 0.80, biome.r + (mosaic - 0.5) * 0.5)
         * (1.0 - bare) * (1.0 - snow);
+    float close_detail = close_detail_strength * (1.0 - smoothstep(300.0, 1200.0, length(VERTEX)))
+        * (1.0 - smoothstep(0.12, 1.2, footprint)) * (1.0 - sea) * (1.0 - snow);
+    vec2 detail_dx = dFdx(near_uv);
+    vec2 detail_dy = dFdy(near_uv);
+    float cavity = 1.0;
+    float close_roughness = 0.85;
+    if (close_detail > 0.001) {
+
+        vec3 tangent_eye = vec3(dot(VIEW, normalize(TANGENT)), dot(VIEW, normalize(BINORMAL)), dot(VIEW, normalize(NORMAL)));
+        float grazing = smoothstep(0.06, 0.24, tangent_eye.z);
+        float depth_resolved = 1.0 - smoothstep(0.08, 0.5, footprint);
+        if (depth_resolved > 0.001) {
+
+            near_uv = terrain_parallax(near_uv, detail_dx, detail_dy, tangent_eye, bare,
+                close_detail * grazing * depth_resolved, detail_fine);
+
+        }
+        vec3 rock_data = textureGrad(rock_detail, near_uv, detail_dx, detail_dy).rgb;
+        vec3 soil_data = textureGrad(soil_detail, near_uv, detail_dx, detail_dy).rgb;
+        float rock_height_value = rock_data.r;
+        float soil_height_value = soil_data.r;
+        bare = mix(bare, smoothstep(-0.16, 0.16, bare * 2.0 - 1.0 + rock_height_value - soil_height_value), close_detail);
+        cavity = mix(soil_data.g, rock_data.g, bare);
+        close_roughness = mix(soil_data.b, rock_data.b, bare);
+
+    }
     float forest = biome.g * vegetation;
     float beach = (1.0 - smoothstep(1.0, 5.0, elevation)) * (1.0 - bare);
     vec3 earth = mix(vec3(0.115, 0.082, 0.046), vec3(0.38, 0.265, 0.135), biome.b);
@@ -242,6 +271,14 @@ void fragment() {
     ground = mix(ground, rock_tint, bare);
     ground = mix(ground, vec3(0.40, 0.34, 0.22), beach * (1.0 - biome.a));
     ground *= mix(0.78, 1.20, mosaic);
+    if (close_detail > 0.001) {
+
+        float patches = landscape_noise(fixed_position / 28.0 + region * 3.0);
+        float flecks = landscape_noise(fixed_position / 7.0 + mosaic * 2.0);
+        vec3 dry_tint = mix(vec3(0.78, 0.89, 0.69), vec3(1.22, 1.04, 0.78), patches);
+        ground *= mix(vec3(1.0), dry_tint * mix(0.85, 1.18, flecks), close_detail * 0.7);
+
+    }
     if (forest > 0.01 && footprint < 22.0) {
 
         float canopy = landscape_noise(fixed_position / 12.0);
@@ -268,15 +305,15 @@ void fragment() {
 
     if (detail > 0.001 && sea < 0.999) {
 
-        vec3 near_grain = mix(texture(soil_colour, near_uv).rgb, texture(rock_colour, near_uv).rgb, bare);
+        vec3 near_grain = mix(textureGrad(soil_colour, near_uv, detail_dx, detail_dy).rgb, textureGrad(rock_colour, near_uv, detail_dx, detail_dy).rgb, bare);
         vec3 far_grain = mix(texture(soil_colour, far_uv).rgb, texture(rock_colour, far_uv).rgb, bare);
 
-        vec3 near_bump = mix(texture(soil_normal, near_uv).rgb, texture(rock_normal, near_uv).rgb, bare);
+        vec3 near_bump = mix(textureGrad(soil_normal, near_uv, detail_dx, detail_dy).rgb, textureGrad(rock_normal, near_uv, detail_dx, detail_dy).rgb, bare);
         vec3 far_bump = mix(texture(soil_normal, far_uv).rgb, texture(rock_normal, far_uv).rgb, bare);
 
-        relief = mix(near_bump, far_bump, detail_balance) * 2.0 - 1.0;
+        relief = mix(near_bump, far_bump, mix(detail_balance, 0.18, close_detail)) * 2.0 - 1.0;
 
-        vec3 material = mix(near_grain, far_grain, detail_balance);
+        vec3 material = mix(near_grain, far_grain, mix(detail_balance, 0.18, close_detail));
 
         // Keep the material's contrast while preserving the regional palette.
         float grain = dot(material, vec3(0.2126, 0.7152, 0.0722));
@@ -405,7 +442,9 @@ void fragment() {
 
     }
 
-    ALBEDO = (mix(ground, water, sea) + vec3(foam * 0.07)) * lit;
+    // Cloud attenuation belongs to direct illumination, not the material reflectance.
+    cloud_light = lit;
+    ALBEDO = mix(ground, water, sea) + vec3(foam * 0.07);
 
     METALLIC = 0.0;
 
@@ -419,8 +458,11 @@ void fragment() {
     land_roughness = mix(land_roughness, 0.90, climate.b);
     land_roughness = mix(land_roughness, 0.76, snow);
 
+    land_roughness = mix(land_roughness, clamp(close_roughness, 0.55, 1.0), close_detail);
+    AO = mix(1.0, cavity, close_detail * 0.75);
+    AO_LIGHT_AFFECT = 0.0;
     ROUGHNESS = mix(land_roughness, swell_roughness, sea);
-    SPECULAR = mix(0.46, 0.25, sea) * lit;
+    SPECULAR = mix(0.38, 0.25, sea);
 
     float night = (1.0 - smoothstep(night_dark, night_dusk, dot(up, sun_direction)));
 
@@ -450,7 +492,9 @@ void fragment() {
     }
     lights *= ascent;
 
-    vec3 sky_irradiance = vec3(0.52, 0.68, 1.0) * sky_fill * daylight * dome;
+    float sky_day = smoothstep(-0.08, 0.22, dot(up, sun_direction));
+    vec3 sky_irradiance = mix(vec3(0.52, 0.68, 1.0), vec3(0.78, 0.82, 0.88), 1.0 - lit)
+        * sky_fill * sky_day * dome * AO;
 
     // The environment cubemap supplies the reflected sky to the sea. This small Fresnel fill keeps
     // the horizon physically readable while that low-resolution probe is filtering its brightest
@@ -462,4 +506,28 @@ void fragment() {
         + ALBEDO * sky_irradiance * (1.0 - sea)
         + sea_horizon * sea;
 
+}
+
+
+// Burley diffuse softens rough soil at grazing angles; a normalized GGX lobe retains water glints.
+// No additional texture reads or shadow rays: reuse the cloud sample from fragment().
+void light() {
+    float nl = max(dot(NORMAL, LIGHT), 0.0);
+    float nv = max(dot(NORMAL, VIEW), 0.001);
+    vec3 half_vector = normalize(LIGHT + VIEW);
+    float nh = max(dot(NORMAL, half_vector), 0.0);
+    float lh = max(dot(LIGHT, half_vector), 0.0);
+    float fd90 = 0.5 + 2.0 * ROUGHNESS * lh * lh;
+    float diffuse = (1.0 + (fd90 - 1.0) * pow(1.0 - nl, 5.0))
+        * (1.0 + (fd90 - 1.0) * pow(1.0 - nv, 5.0));
+    vec3 radiance = LIGHT_COLOR * ATTENUATION * cloud_light;
+    DIFFUSE_LIGHT += radiance * nl * diffuse / PI;
+    float alpha = max(ROUGHNESS * ROUGHNESS, 0.025);
+    float alpha2 = alpha * alpha;
+    float denominator = nh * nh * (alpha2 - 1.0) + 1.0;
+    float distribution = alpha2 / (PI * denominator * denominator);
+    float visibility = 0.5 / max(nl * sqrt(nv * nv * (1.0 - alpha2) + alpha2)
+        + nv * sqrt(nl * nl * (1.0 - alpha2) + alpha2), 0.001);
+    float fresnel = mix(0.025, 1.0, pow(1.0 - lh, 5.0));
+    SPECULAR_LIGHT += radiance * nl * distribution * visibility * fresnel;
 }

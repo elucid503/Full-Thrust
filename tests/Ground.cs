@@ -220,10 +220,12 @@ public static partial class Program {
         // What the pad is for: the ground under the complex reads one height, so the mesh the
         // renderer builds and the contact the physics tests are the same surface.
         double centre = terrain.Elevation(site.Up);
-        double offset = terrain.Elevation((site.Up * body.Radius + site.East * 300.0).Normalized);
+        double offset = terrain.Elevation((site.Up * body.Radius + site.East * 10.0).Normalized);
 
         Near("the pad is level", offset, centre, 0.01);
         Near("the pad deck is where the site says", centre, site.Height, 1e-9);
+        Vector3d outside = (site.Up * body.Radius + site.East * 100.0).Normalized;
+        Near("natural terrain resumes outside mount footing", terrain.Elevation(outside), terrain.NaturalElevation(outside), 1e-8);
 
         double away = terrain.Elevation((site.Up * body.Radius + site.East * 12_000.0).Normalized);
 

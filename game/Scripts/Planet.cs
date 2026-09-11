@@ -40,6 +40,8 @@ public sealed partial class Planet : Node3D {
 
     private Ground _ground;
     private Forest _forest;
+    private GroundScatter _scatter;
+    private GroundScatter _broadScatter;
 
     private ShaderMaterial[] _faces;
     private ShaderMaterial _clouds;
@@ -52,15 +54,44 @@ public sealed partial class Planet : Node3D {
     private MeshInstance3D _deck;
     private MeshInstance3D _air;
 
+    public override void _ExitTree() {
+        if (Active == this) { Active = null; }
+    }
+
     public int WorkerFailures => _ground?.WorkerFailures ?? 0;
     public int PendingJobs => _ground?.PendingJobs ?? 0;
 
     public int PatchCount => _ground?.PatchCount ?? 0;
     public int DeepestLevel => _ground?.DeepestLevel ?? 0;
     public double GroundMilliseconds => _ground?.SyncMilliseconds ?? 0.0;
+    public bool ResolveScatter(Vessel vessel, Vector3d previous, QuaternionD orientation, double start, double time, bool damage = false) {
+        double reach = VesselCollision.Radius(vessel) + 14.0;
+        if (Math.Min(_body.HeightAboveGround(previous, start), _body.HeightAboveGround(vessel.Position, time)) > reach) {
+            return false;
+        }
+        Vector3d from = _body.ToBodyFixed(previous, start);
+        Vector3d to = _body.ToBodyFixed(vessel.Position, time);
+        Vector3d centre = (from + to) * 0.5;
+        double sweptReach = reach + (to - from).Length * 0.5;
+        _forest.EnsureContacts(centre, sweptReach);
+        _scatter.EnsureContacts(centre, sweptReach);
+        _broadScatter.EnsureContacts(centre, sweptReach);
+        bool hit = _forest.Obstacles.Resolve(_body, vessel, previous, orientation, start, time, damage);
+        hit |= _scatter.Obstacles.Resolve(_body, vessel, previous, orientation, start, time, damage);
+        hit |= _broadScatter.Obstacles.Resolve(_body, vessel, previous, orientation, start, time, damage);
+        return hit;
+    }
+
+    public int DestroyedScatter => _forest.Obstacles.DestroyedCount + _scatter.Obstacles.DestroyedCount + _broadScatter.Obstacles.DestroyedCount;
+    public int ScatterEffects => _forest.Obstacles.EffectCount + _scatter.Obstacles.EffectCount + _broadScatter.Obstacles.EffectCount;
+
     public int TreeCount => _forest?.TreeCount ?? 0;
     public int ForestCells => _forest?.CellCount ?? 0;
     public int ForestPending => _forest?.Pending ?? 0;
+    public int ScatterCount => (_scatter?.ScatterCount ?? 0) + (_broadScatter?.ScatterCount ?? 0);
+    public int ScatterCells => (_scatter?.CellCount ?? 0) + (_broadScatter?.CellCount ?? 0);
+    public int ScatterPending => (_scatter?.Pending ?? 0) + (_broadScatter?.Pending ?? 0);
+    public int ScatterFailures => (_scatter?.Failures ?? 0) + (_broadScatter?.Failures ?? 0);
     public int ForestFailures => _forest?.Failures ?? 0;
 
     public void Build(CelestialBody body, Vector3 sunDirection) {
@@ -87,6 +118,13 @@ public sealed partial class Planet : Node3D {
         _forest = new Forest { Name = "Forest" };
         AddChild(_forest);
         _forest.Build(body, GD.Load<Texture2D>("res://Assets/Planet/biomes.png"));
+
+        _scatter = new GroundScatter { Name = "GroundScatter" };
+        AddChild(_scatter);
+        _scatter.Build(body, GD.Load<Texture2D>("res://Assets/Planet/biomes.png"));
+        _broadScatter = new GroundScatter { Name = "BroadScatter" };
+        AddChild(_broadScatter);
+        _broadScatter.Build(body, GD.Load<Texture2D>("res://Assets/Planet/biomes.png"), true);
 
         _atmosphere = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Atmosphere.gdshader") };
 
@@ -162,6 +200,13 @@ public sealed partial class Planet : Node3D {
         Texture2D biomes = GD.Load<Texture2D>("res://Assets/Planet/biomes.png");
         Texture2D shoreline = Shoreline(_body.Terrain);
 
+        Texture2D[] closeMaps = new Texture2D[2];
+        string[] closeNames = { "soil_detail", "rock_detail" };
+        for (int index = 0; index < closeNames.Length; index++) {
+
+            closeMaps[index] = GD.Load<Texture2D>($"res://Assets/Planet/{closeNames[index]}.png");
+
+        }
         _faces = new ShaderMaterial[6];
 
         for (int face = 0; face < 6; face++) {
@@ -177,6 +222,11 @@ public sealed partial class Planet : Node3D {
             material.SetShaderParameter("base_radius", radius + CloudBase);
             material.SetShaderParameter("top_radius", radius + CloudTop);
 
+            for (int index = 0; index < closeNames.Length; index++) {
+
+                material.SetShaderParameter(closeNames[index], closeMaps[index]);
+
+            }
             material.SetShaderParameter("rock_colour", rockColour);
             material.SetShaderParameter("rock_normal", rockNormal);
             material.SetShaderParameter("soil_colour", soilColour);
@@ -254,6 +304,8 @@ public sealed partial class Planet : Node3D {
         float altitude = (float)Math.Max(0.0, _body.HeightAboveGround(eye, time));
         float materialAltitude = (float)Math.Max(0.0, eye.Length - _body.Radius);
         _forest.Sync(time, eye, altitude);
+        _scatter.Sync(time, eye, altitude);
+        _broadScatter.Sync(time, eye, altitude);
         double spin = _body.SpinAt(time);
         Vector2 rotation = new Vector2((float)Math.Cos(spin), (float)Math.Sin(spin));
 

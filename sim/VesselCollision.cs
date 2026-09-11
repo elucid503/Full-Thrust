@@ -66,6 +66,8 @@ public static class VesselCollision {
 
     public static double Radius(Vessel vessel) => Geometry(vessel).Radius;
 
+    public static IReadOnlyList<Hull.Station> Stations(Vessel vessel) => Geometry(vessel).Rings;
+
     private static Vector3d Furthest(Vessel vessel, Vector3d direction) {
 
         Vector3d local = vessel.Orientation.Conjugate.Rotate(direction);

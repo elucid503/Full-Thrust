@@ -9,26 +9,28 @@ using Godot;
 
 namespace FullThrust.Game;
 
-public sealed partial class Forest : Node3D {
+public sealed partial class GroundScatter : Node3D {
 
-    private const double CellSize = 256.0;
-    private const double Reach = 1600.0;
-    private const int Samples = 14;
+    private double CellSize = 48.0;
+    private double Reach = 360.0;
+    private int Samples = 40;
+    private bool _broad;
 
-    private readonly record struct Key(int Row, int Column);
+    private readonly record struct Key(int Row, int Column, bool Grass);
 
     private sealed class Grove {
 
         public Key Key;
         public Vector3d Anchor;
-        public Transform3D[] Trees;
+        public Transform3D[] Transforms;
         public Color[] Colours;
-        public bool Conifer;
+        public bool Grass;
+        public ulong Born;
         public MultiMeshInstance3D Instance;
 
     }
 
-    public ScatterObstacles Obstacles { get; } = new(true);
+    public ScatterObstacles Obstacles { get; } = new(false);
 
     private CelestialBody _body;
     private byte[] _biomes;
@@ -48,13 +50,17 @@ public sealed partial class Forest : Node3D {
     private Vector3d? _physicsFocus;
     private bool _enabled;
 
-    public int TreeCount { get; private set; }
+    public int ScatterCount { get; private set; }
     public int CellCount => _groves.Count;
     public int Pending => _queue.Count + (_job == null ? 0 : 1);
     public int Failures { get; private set; }
 
-    public void Build(CelestialBody body, Texture2D biomes) {
+    public void Build(CelestialBody body, Texture2D biomes, bool broad = false) {
 
+        _broad = broad;
+        CellSize = broad ? 192.0 : 48.0;
+        Reach = broad ? 1280.0 : 360.0;
+        Samples = broad ? 16 : 40;
         _body = body;
         using Image image = biomes.GetImage();
         if (image.IsCompressed()) {
@@ -68,14 +74,12 @@ public sealed partial class Forest : Node3D {
         _biomes = image.GetData();
         _rows = (int)Math.Ceiling(Math.PI * body.Radius / CellSize);
         _latitudeStep = Math.PI / _rows;
-        ArrayMesh broadleaf = TreeAssets.Load("Tree_1", 0);
-        ArrayMesh pine = TreeAssets.Load("Pine_1", 1);
-        ArrayMesh birch = TreeAssets.Load("Birch_1", 2);
-        _meshes = new[] { broadleaf, pine, birch, pine, broadleaf, pine };
-        _material = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Trees.gdshader") };
-        _material.SetShaderParameter("broadleaf_map", GD.Load<Texture2D>("res://Assets/Trees/Tree_Leaves.png"));
-        _material.SetShaderParameter("pine_map", GD.Load<Texture2D>("res://Assets/Trees/Pine_Leaves.png"));
-        _material.SetShaderParameter("birch_map", GD.Load<Texture2D>("res://Assets/Trees/Birch_Leaves_Green.png"));
+        _meshes = new[] { RockMesh(0), GrassMesh(0), RockMesh(1), GrassMesh(1), RockMesh(2), GrassMesh(2) };
+        _material = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/GroundScatter.gdshader") };
+        _material.SetShaderParameter("grass_range", broad ? new Vector2(500, 850) : new Vector2(160, 290));
+        _material.SetShaderParameter("stone_range", broad ? new Vector2(800, 1200) : new Vector2(230, 330));
+        _material.SetShaderParameter("rock_colour", GD.Load<Texture2D>("res://Assets/Planet/rock_colour.jpg"));
+        _material.SetShaderParameter("rock_normal", GD.Load<Texture2D>("res://Assets/Planet/rock_normal.jpg"));
 
     }
 
@@ -94,7 +98,7 @@ public sealed partial class Forest : Node3D {
                 && (physics.Value - _physicsFocus.Value).LengthSquared > CellSize * CellSize * 0.0625);
         if (physicsMoved) { _physicsFocus = physics; }
         bool enabled = altitude < Reach;
-        if (physicsMoved || enabled != _enabled || (local - _lastEye).LengthSquared > 96.0 * 96.0) {
+        if (physicsMoved || enabled != _enabled || (local - _lastEye).LengthSquared > 16.0 * 16.0) {
 
             Select(local, enabled);
             _lastEye = local;
@@ -115,7 +119,7 @@ public sealed partial class Forest : Node3D {
             } else if (_job.IsFaulted) {
 
                 Failures++;
-                GD.PushError($"Forest generation failed: {_job.Exception.GetBaseException()}");
+                GD.PushError($"GroundScatter generation failed: {_job.Exception.GetBaseException()}");
 
             }
             _job = null;
@@ -140,6 +144,7 @@ public sealed partial class Forest : Node3D {
 
             if (grove.Instance != null) {
 
+                grove.Instance.SetInstanceShaderParameter("cell_fade", Mathf.Clamp((Time.GetTicksMsec() - grove.Born) / 450.0f, 0.0f, 1.0f));
                 grove.Instance.Transform = new Transform3D(turn, Frames.Point(_body.ToInertial(grove.Anchor, time)));
 
             }
@@ -164,7 +169,7 @@ public sealed partial class Forest : Node3D {
             int last = Math.Min(first + columns - 1,
                 (int)Math.Floor((longitude + span + Math.PI) / (Math.PI * 2) * columns));
             for (int c = first; c <= last; c++) {
-                Key key = new(r, ((c % columns) + columns) % columns);
+                Key key = new(r, ((c % columns) + columns) % columns, false);
                 if (_groves.ContainsKey(key)) { continue; }
                 _wanted.Add(key);
                 Adopt(Generate(key, _cancellation.Token));
@@ -188,25 +193,30 @@ public sealed partial class Forest : Node3D {
             double latitude = Math.Asin(eye.Normalized.Z);
             double longitude = Math.Atan2(eye.Y, eye.X);
             int row = (int)((latitude + Math.PI * 0.5) / _latitudeStep);
-            for (int r = Math.Max(0, row - 8); r <= Math.Min(_rows - 1, row + 8); r++) {
+            int rowReach = (int)Math.Ceiling(Reach / CellSize) + 2;
+            for (int r = Math.Max(0, row - rowReach); r <= Math.Min(_rows - 1, row + rowReach); r++) {
 
                 int columns = Columns(r);
                 int centre = (int)((longitude + Math.PI) / (Math.PI * 2.0) * columns);
                 // Longitude converges at the poles, where a whole ring can fit inside the view.
                 double poleDistance = (Math.PI * 0.5 - Math.Abs(latitude)) * _body.Radius;
-                int spread = poleDistance < Reach + CellSize ? columns : 9;
+                int spread = poleDistance < Reach + CellSize ? columns : rowReach + 1;
                 for (int c = centre - spread; c <= centre + spread; c++) {
 
-                    Key key = new Key(r, ((c % columns) + columns) % columns);
-                    Vector3d point = Centre(key) * _body.Radius;
-                    if ((point - eye.Normalized * _body.Radius).Length > Reach + CellSize) {
+                    for (int kind = 0; kind < 2; kind++) {
 
-                        continue;
+                        Key key = new Key(r, ((c % columns) + columns) % columns, kind == 1);
+                        Vector3d point = Centre(key) * _body.Radius;
+                        if ((point - eye.Normalized * _body.Radius).Length > Reach + CellSize) {
 
-                    }
-                    if (_wanted.Add(key) && !_groves.ContainsKey(key)) {
+                            continue;
 
-                        _queue.Add(key);
+                        }
+                        if (_wanted.Add(key) && !_groves.ContainsKey(key)) {
+
+                            _queue.Add(key);
+
+                        }
 
                     }
 
@@ -228,7 +238,7 @@ public sealed partial class Forest : Node3D {
                 int columns = Columns(r);
                 int centre = (int)((longitude + Math.PI) / (Math.PI * 2.0) * columns);
                 for (int c = centre - 1; c <= centre + 1; c++) {
-                    Key key = new(r, ((c % columns) + columns) % columns);
+                    Key key = new(r, ((c % columns) + columns) % columns, false);
                     _wanted.Add(key);
                     if (!_groves.ContainsKey(key)) {
                         _queue.Remove(key);
@@ -250,7 +260,7 @@ public sealed partial class Forest : Node3D {
         foreach (Key key in _remove) {
 
             Grove grove = _groves[key];
-            TreeCount -= grove.Trees.Length;
+            ScatterCount -= grove.Transforms.Length;
             Obstacles.Remove(key);
             grove.Instance?.QueueFree();
             _groves.Remove(key);
@@ -293,53 +303,69 @@ public sealed partial class Forest : Node3D {
 
         Vector3d centre = Centre(key);
         Vector3d anchor = centre * (_body.Radius + _body.Terrain.Elevation(centre));
-        List<Transform3D> trees = new();
+        List<Transform3D> transforms = new();
         List<Color> colours = new();
-        uint seed = unchecked((uint)(key.Row * 73856093) ^ (uint)(key.Column * 19349663));
-        bool conifer = Math.Abs(centre.Z) > 0.70 || anchor.Length - _body.Radius > 380.0;
-        for (int y = 0; y < Samples; y++) {
+        uint seed = unchecked((uint)(key.Row * 73856093) ^ (uint)(key.Column * 19349663) ^ (key.Grass ? 83492791u : 2971215073u));
+        int samples = key.Grass ? Samples : 7;
+        for (int y = 0; y < samples; y++) {
 
             cancellation.ThrowIfCancellationRequested();
-            for (int x = 0; x < Samples; x++) {
+            for (int x = 0; x < samples; x++) {
 
-                Vector3d direction = Direction(key, (x + 0.1 + Random(ref seed) * 0.8) / Samples,
-                    (y + 0.1 + Random(ref seed) * 0.8) / Samples);
+                Vector3d direction = Direction(key, (x + Random(ref seed)) / samples, (y + Random(ref seed)) / samples);
                 Color cover = Cover(direction);
                 double chance = Random(ref seed);
-                double scale = 0.75 + Random(ref seed) * 0.65;
+                double scale = key.Grass ? 0.35 + Math.Pow(Random(ref seed), 0.7) * 1.30 : 0.08 + Math.Pow(Random(ref seed), 2.0) * 0.90;
+                if (_broad) { scale = key.Grass ? 1.3 + scale : 0.6 + scale * 2.4; }
                 double rotation = Random(ref seed) * Math.PI * 2.0;
                 double variation = Random(ref seed);
-                if (chance > cover.G * 0.65 || cover.A > 0.15) {
+                Vector3d field = direction * (_body.Radius / 18.0);
+                double patch = 0.5 + 0.5 * FullThrust.Sim.Noise.Value(field.X, field.Y, field.Z);
+                Vector3d broadField = direction * (_body.Radius / 95.0);
+                double colony = 0.5 + 0.5 * FullThrust.Sim.Noise.Value(broadField.X + 17.0, broadField.Y, broadField.Z);
+                double clustered = Smooth(0.25, 0.72, patch * 0.55 + colony * 0.45);
+                double density = key.Grass ? cover.R * (1.0 - cover.B * 0.7) * (0.12 + clustered * 0.95)
+                    : (0.15 + cover.B * 0.3) * (0.35 + clustered * 1.3);
+                if (chance > density || cover.A > 0.15 || Cleared(direction)) {
 
                     continue;
 
                 }
                 double height = _body.Terrain.Elevation(direction);
                 double snowLine = 950.0 + (80.0 - 950.0) * Smooth(0.3, 0.96, Math.Abs(direction.Z));
-                if (height < 1.0 || height > snowLine - 50.0 || Cleared(direction)) {
+                if (height < 1.2 || (key.Grass && height > snowLine - 30.0)) {
 
                     continue;
 
                 }
                 Vector3d tangent = Vector3d.Cross(Math.Abs(direction.Z) < 0.9 ? Vector3d.UnitZ : Vector3d.UnitX, direction).Normalized;
                 Vector3d across = Vector3d.Cross(direction, tangent);
-                double east = _body.Terrain.Elevation((direction * _body.Radius + tangent * 12.0).Normalized);
-                double north = _body.Terrain.Elevation((direction * _body.Radius + across * 12.0).Normalized);
-                if (Math.Abs(east - height) + Math.Abs(north - height) > 9.0) {
+                double east = _body.Terrain.Elevation((direction * _body.Radius + tangent).Normalized);
+                double north = _body.Terrain.Elevation((direction * _body.Radius + across).Normalized);
+                double slope = Math.Sqrt((east - height) * (east - height) + (north - height) * (north - height));
+                if (slope > (key.Grass ? 0.55 : 1.4)) {
 
                     continue;
 
                 }
-                Vector3 up = Frames.Direction(direction);
+                Vector3 up = Frames.Direction((direction - tangent * (east - height) - across * (north - height)).Normalized);
                 Vector3 right = Frames.Direction(tangent);
-                Basis basis = new Basis(right, up, right.Cross(up)).Rotated(up, (float)rotation).Scaled(Vector3.One * (float)scale);
-                trees.Add(new Transform3D(basis, Frames.Direction(direction * (_body.Radius + height - 0.35) - anchor)));
-                colours.Add(new Color((float)(0.78 + variation * 0.25), (float)(0.85 + variation * 0.20), 0.80f, 1.0f));
+                right = (right - up * right.Dot(up)).Normalized();
+                Vector3 dimensions = key.Grass ? new Vector3((float)(0.55 + variation), (float)(0.7 + patch * 0.6), (float)(1.4 - variation * 0.7)) : new Vector3((float)(0.75 + variation * 0.5), (float)(0.65 + patch * 0.6), (float)(1.2 - variation * 0.4));
+                Basis basis = new Basis(right, up, right.Cross(up)).Rotated(up, (float)rotation) * Basis.FromScale(dimensions * (float)scale);
+                transforms.Add(new Transform3D(basis, Frames.Direction(direction * (_body.Radius + height - (key.Grass ? 0.07 : scale * 0.20)) - anchor)));
+                Color green = new Color(0.12f, 0.17f, 0.045f).Lerp(new Color(0.30f, 0.25f, 0.09f), cover.B);
+                Color stone = new Color(0.25f, 0.235f, 0.20f).Lerp(new Color(0.34f, 0.22f, 0.13f), cover.B);
+                green = green.Lerp(new Color(0.32f, 0.245f, 0.095f), (float)(Smooth(0.45, 0.8, colony) * 0.6));
+                stone = stone.Lerp(new Color(0.40f, 0.36f, 0.29f), (float)(variation * 0.45));
+                Color colour = (key.Grass ? green : stone) * (float)(0.65 + variation * 0.7);
+                colour.A = (float)variation;
+                colours.Add(colour);
 
             }
 
         }
-        return new Grove { Key = key, Anchor = anchor, Trees = trees.ToArray(), Colours = colours.ToArray(), Conifer = conifer };
+        return new Grove { Key = key, Anchor = anchor, Transforms = transforms.ToArray(), Colours = colours.ToArray(), Grass = key.Grass };
 
     }
 
@@ -347,7 +373,7 @@ public sealed partial class Forest : Node3D {
 
         foreach (Terrain.Plateau plateau in _body.Terrain.Plateaus) {
 
-            if ((direction - plateau.Centre).Length * _body.Radius < plateau.InnerRadius + 24.0) {
+            if ((direction - plateau.Centre).Length * _body.Radius < plateau.InnerRadius + 8.0) {
 
                 return true;
 
@@ -366,8 +392,8 @@ public sealed partial class Forest : Node3D {
 
         }
         _groves.Add(grove.Key, grove);
-        TreeCount += grove.Trees.Length;
-        if (grove.Trees.Length == 0) {
+        ScatterCount += grove.Transforms.Length;
+        if (grove.Transforms.Length == 0) {
 
             return;
 
@@ -376,13 +402,13 @@ public sealed partial class Forest : Node3D {
 
             TransformFormat = MultiMesh.TransformFormatEnum.Transform3D,
             UseColors = true,
-            Mesh = _meshes[Math.Abs((grove.Key.Row ^ grove.Key.Column) % 3) * 2 + (grove.Conifer ? 1 : 0)],
-            InstanceCount = grove.Trees.Length,
+            Mesh = _meshes[Math.Abs((grove.Key.Row ^ grove.Key.Column) % 3) * 2 + (grove.Grass ? 1 : 0)],
+            InstanceCount = grove.Transforms.Length,
 
         };
-        for (int index = 0; index < grove.Trees.Length; index++) {
+        for (int index = 0; index < grove.Transforms.Length; index++) {
 
-            multi.SetInstanceTransform(index, grove.Trees[index]);
+            multi.SetInstanceTransform(index, grove.Transforms[index]);
             multi.SetInstanceColor(index, grove.Colours[index]);
 
         }
@@ -392,11 +418,97 @@ public sealed partial class Forest : Node3D {
             MaterialOverride = _material,
             CastShadow = GeometryInstance3D.ShadowCastingSetting.On,
             GIMode = GeometryInstance3D.GIModeEnum.Disabled,
-            ExtraCullMargin = 15.0f,
+            ExtraCullMargin = 4.0f,
 
         };
+        grove.Born = Time.GetTicksMsec();
+        grove.Instance.SetInstanceShaderParameter("cell_fade", 0.0f);
         AddChild(grove.Instance);
-        Obstacles.Add(grove.Key, grove.Anchor, grove.Trees, multi, grove.Instance);
+        if (!grove.Grass) { Obstacles.Add(grove.Key, grove.Anchor, grove.Transforms, multi, grove.Instance); }
+
+    }
+
+    private static ArrayMesh GrassMesh(int variant) {
+
+        using SurfaceTool surface = new SurfaceTool();
+        surface.Begin(Mesh.PrimitiveType.Triangles);
+        uint seed = (uint)(7919 + variant * 104729);
+        for (int blade = 0; blade < 9 + variant * 3; blade++) {
+
+            float angle = (float)(Random(ref seed) * Math.PI * 2.0);
+            Vector3 side = new Vector3(Mathf.Cos(angle), 0, Mathf.Sin(angle));
+            Vector3 root = side * (float)(Random(ref seed) * 0.27);
+            float height = (float)(0.25 + Random(ref seed) * 0.48);
+            float width = (float)(0.013 + Random(ref seed) * 0.021);
+            Vector3 bend = side.Cross(Vector3.Up) * height * 0.32f;
+            Vector3 normal = side.Cross(Vector3.Up).Normalized();
+            void Vertex(Vector3 point, Vector2 uv) {
+
+                surface.SetNormal(normal);
+                surface.SetUV(uv);
+                surface.SetUV2(Vector2.One);
+                surface.AddVertex(point);
+
+            }
+            Vector3 middle = root + Vector3.Up * height * 0.55f + bend * 0.25f;
+            Vector3 tip = root + Vector3.Up * height + bend;
+            Vertex(root - side * width, new Vector2(0, 0));
+            Vertex(middle + side * width * 0.65f, new Vector2(1, 0.55f));
+            Vertex(root + side * width, new Vector2(1, 0));
+            Vertex(root - side * width, new Vector2(0, 0));
+            Vertex(middle - side * width * 0.65f, new Vector2(0, 0.55f));
+            Vertex(middle + side * width * 0.65f, new Vector2(1, 0.55f));
+            Vertex(middle - side * width * 0.65f, new Vector2(0, 0.55f));
+            Vertex(tip, new Vector2(0.5f, 1));
+            Vertex(middle + side * width * 0.65f, new Vector2(1, 0.55f));
+
+        }
+        return surface.Commit();
+
+    }
+
+    private static ArrayMesh RockMesh(int variant) {
+
+        using SurfaceTool surface = new SurfaceTool();
+        surface.Begin(Mesh.PrimitiveType.Triangles);
+        const int sides = 16;
+        const int rings = 8;
+        Vector3 Point(int ring, int side) {
+
+            double theta = Math.PI * ring / rings;
+            double phi = Math.PI * 2.0 * side / sides;
+            double radius = 1.0 + 0.16 * Math.Sin(phi * (3.0 + variant) + theta * 5.0 + variant * 1.7) + 0.08 * Math.Cos(phi * 5.0 - theta * 3.0);
+            return new Vector3((float)(Math.Sin(theta) * Math.Cos(phi) * radius),
+                (float)(0.43 + Math.Cos(theta) * 0.6), (float)(Math.Sin(theta) * Math.Sin(phi) * radius * 0.72));
+
+        }
+        void Triangle(Vector3 a, Vector3 b, Vector3 c) {
+
+            foreach (Vector3 point in new[] { a, b, c }) {
+
+                surface.SetNormal(((point - new Vector3(0, 0.43f, 0)) / new Vector3(1, 0.36f, 0.5184f)).Normalized());
+                surface.SetUV(new Vector2(point.X, point.Z));
+                surface.SetUV2(Vector2.Zero);
+                surface.AddVertex(point);
+
+            }
+
+        }
+        for (int ring = 0; ring < rings; ring++) {
+
+            for (int side = 0; side < sides; side++) {
+
+                Vector3 a = Point(ring, side);
+                Vector3 b = Point(ring + 1, side);
+                Vector3 c = Point(ring + 1, side + 1);
+                Vector3 d = Point(ring, side + 1);
+                if (ring > 0) { Triangle(a, d, b); }
+                if (ring < rings - 1) { Triangle(d, c, b); }
+
+            }
+
+        }
+        return surface.Commit();
 
     }
 
@@ -423,3 +535,4 @@ public sealed partial class Forest : Node3D {
     }
 
 }
+
