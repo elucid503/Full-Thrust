@@ -135,7 +135,9 @@ void vertex() {
     vec4 wave = ocean_wave(fixed_vertex, mesh_spacing);
     vec3 up = normalize(world_position - planet_centre);
     float displacement = wave.x * ocean_room * local;
-    displacement += surface_response(radial).x * ocean_room * local;
+    float distance = length(world_position - planet_centre - water_impact.xyz);
+    float influence = exp(-distance / max(water_impact.w * 4.0, 1.0)) * impact_strength;
+    displacement += (sin(distance * 0.7 - environment_time * 5.0) * 0.25 - 0.4) * influence * ocean_room * local;
     VERTEX += inverse(mat3(MODEL_MATRIX)) * up * displacement;
     world_position += up * displacement;
 
@@ -350,18 +352,12 @@ void fragment() {
     vec2 wave_slope = vec2(dot(wave_gradient, normalize(mat3(INV_VIEW_MATRIX) * TANGENT)),
         dot(wave_gradient, normalize(mat3(INV_VIEW_MATRIX) * BINORMAL)));
     swell.xy -= wave_slope * ocean_room * procedural / max(wave_relief, 0.01);
-    vec4 response = surface_response(radial);
-    float response_dx = dFdx(response.x);
-    float response_dy = dFdy(response.x);
-    vec3 surface_dx = dFdx(world_position);
-    vec3 surface_dy = dFdy(world_position);
-    vec3 gradient_x = cross(surface_dy, world_normal);
-    vec3 gradient_y = cross(world_normal, surface_dx);
-    float surface_determinant = dot(surface_dx, gradient_x);
-    vec3 response_gradient = (response_dx * gradient_x + response_dy * gradient_y)
-        * sign(surface_determinant) / max(abs(surface_determinant), 0.00001);
-    swell.xy -= vec2(dot(response_gradient, normalize(mat3(INV_VIEW_MATRIX) * TANGENT)),
-        dot(response_gradient, normalize(mat3(INV_VIEW_MATRIX) * BINORMAL))) / max(wave_relief, 0.01);
+    vec3 impact_offset = radial - water_impact.xyz;
+    float impact_distance = length(impact_offset);
+    float impact = exp(-impact_distance / max(water_impact.w * 4.0, 1.0)) * impact_strength;
+    swell.xy += vec2(dot(impact_offset, normalize(mat3(INV_VIEW_MATRIX) * TANGENT)),
+        dot(impact_offset, normalize(mat3(INV_VIEW_MATRIX) * BINORMAL))) / max(impact_distance, 1.0)
+        * cos(impact_distance * 0.7 - environment_time * 5.0) * impact * 0.4;
 
     // Depth arrives as a vertex attribute, so a coarse patch spreads a metre of water over
     // kilometres of ground: a band cut at a fixed depth is as wide as whatever patch happens to be
@@ -390,7 +386,7 @@ void fragment() {
 
     float foam = sea * (1.0 - smoothstep(0.0, surf, depth)) * shore * shore_pulse;
 
-    foam += sea * clamp(response.a, 0.0, 1.0);
+    foam += sea * impact * 0.65;
 
     vec3 water = mix(deep_colour, shallow_colour, shallow * shallow);
 
@@ -409,7 +405,6 @@ void fragment() {
 
     }
 
-    water = mix(water, vec3(0.42, 0.48, 0.49), clamp(response.a * 0.85, 0.0, 0.85));
     ALBEDO = (mix(ground, water, sea) + vec3(foam * 0.07)) * lit;
 
     METALLIC = 0.0;

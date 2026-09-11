@@ -657,10 +657,6 @@ public sealed partial class DebugBridge : Node {
             state["dynamicPressure"] = flight.Vessel.Aero.DynamicPressure;
             state["patches"] = Planet.Active?.PatchCount ?? 0;
             state["groundMs"] = Planet.Active?.GroundMilliseconds ?? 0.0;
-            state["surfaceParcels"] = Planet.Active?.SurfaceParcels ?? 0;
-            state["surfaceWaveHeight"] = Planet.Active?.SurfaceWaveHeight ?? 0.0;
-            state["surfaceMs"] = Planet.Active?.SurfaceMilliseconds ?? 0.0;
-            state["surfaceFailures"] = Planet.Active?.SurfaceFailures ?? 0;
             state["flightMs"] = (GetTree().CurrentScene as Main)?.FlightMilliseconds ?? 0.0;
             state["terrainWorkerFailures"] = Planet.Active?.WorkerFailures ?? 0;
             state["terrainPendingJobs"] = Planet.Active?.PendingJobs ?? 0;

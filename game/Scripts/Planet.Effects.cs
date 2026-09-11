@@ -17,123 +17,57 @@ public sealed partial class Planet {
     private readonly Vector4[] _wakeAxes = new Vector4[8];
     private int _wakeCursor;
     private double _lastWake = double.NegativeInfinity;
-    private readonly System.Collections.Generic.List<SurfaceFlow> _responses = new();
-    private double _environmentClock;
-    private double _lastSimulationTime;
-    private bool _responseBindingsDirty;
-    public int SurfaceParcels { get; private set; }
-    public double SurfaceWaveHeight { get; private set; }
-    public double SurfaceMilliseconds { get; private set; }
-    public int SurfaceFailures { get; private set; }
+    private Vector3d _impactPoint;
+    private double _impactTime = double.NegativeInfinity;
+    private float _impactRadius;
+    private float _impactPower;
+    private ShaderMaterial _steamMaterial;
+    private MeshInstance3D _steam;
 
-    public Vector3? Disturb(Vector3 nozzle, Vector3 axis, Vector3 bend, float length, float exit, float spread, float pressure, float power) {
+    public void Disturb(Vector3 nozzle, Vector3 axis, float length, float radius, float power) {
 
         double time = Flight.Active.Time;
         Vector3d point = Frames.Origin + Frames.Sim(nozzle);
         Vector3d direction = Frames.Sim(axis.Normalized());
-        Vector3d crossflow = Frames.Sim(bend);
         double altitude = point.Length - _body.Radius;
-        float radius = exit + length * spread;
-        if (altitude > CloudBase - length && altitude < CloudTop + length && _environmentClock - _lastWake >= 0.2) {
+        if (altitude > CloudBase - length && altitude < CloudTop + length && time - _lastWake >= 0.2) {
 
             int index = _wakeCursor++ % 8;
             _wakePoints[index] = _body.ToBodyFixed(point, time);
             _wakeDirections[index] = _body.ToBodyFixed(direction, time);
-            _wakeTimes[index] = _environmentClock;
+            _wakeTimes[index] = time;
             _wakeRadii[index] = radius * Mathf.Sqrt(power);
             _wakeLengths[index] = length;
-            _lastWake = _environmentClock;
+            _lastWake = time;
 
         }
-        float reach = length * 3.0f;
-        if (_body.HeightAboveGround(point, time) > reach + bend.Length() * 9.0f || Vector3d.Dot(point.Normalized, direction) > -0.02) { return null; }
-        Vector3d At(double distance) => point + direction * distance + crossflow * (distance * distance / (length * length));
-        double Clearance(double distance) {
 
-            Vector3d position = At(distance);
-            Vector3d fixedPosition = _body.ToBodyFixed(position, time);
-            double height = _body.HeightAboveGround(position, time);
-            foreach (SurfaceFlow flow in _responses) {
+        double b = Vector3d.Dot(point, direction);
+        double discriminant = b * b - point.LengthSquared + _body.Radius * _body.Radius;
+        if (b >= 0.0 || discriminant <= 0.0) { return; }
 
-                if (flow.Contains(fixedPosition)) { height -= flow.HeightOffset(fixedPosition); }
+        double distance = -b - Math.Sqrt(discriminant);
+        if (distance < 0.0 || distance > length * 2.0) { return; }
 
-            }
-            return height;
-
-        }
-        double low = 0.0;
-        double high = 0.0;
-        bool contact = false;
-        for (int i = 1; i <= 16; i++) {
-
-            high = reach * i / 16.0;
-            if (Clearance(high) <= 0.0) {
-
-                contact = true;
-                break;
-
-            }
-            low = high;
-
-        }
-        if (!contact) { return null; }
-        for (int i = 0; i < 7; i++) {
-
-            double middle = (low + high) * 0.5;
-            if (Clearance(middle) > 0.0) { low = middle; }
-            else { high = middle; }
-
-        }
-        double distance = (low + high) * 0.5;
-        Vector3d hit = At(distance);
+        Vector3d hit = point + direction * distance;
         Vector3d fixedHit = _body.ToBodyFixed(hit, time);
-        Vector3d arriving = (direction + crossflow * (2.0 * distance / (length * length))).Normalized;
-        float incidence = (float)Math.Max(0.0, -Vector3d.Dot(arriving, hit.Normalized));
-        float width = exit + (float)distance * spread + Math.Max((float)distance - length, 0.0f) * 0.18f;
-        float impactPressure = pressure * exit * exit / (width * width) * incidence * incidence
-            * (1.0f - Mathf.SmoothStep(reach * 0.7f, reach, (float)distance));
-        if (impactPressure < 30.0f) { return null; }
-        bool water = _body.Terrain.Elevation(fixedHit.Normalized) < -0.1;
-        SurfaceFlow response = _responses.Find(flow => flow.Contains(fixedHit));
-        if (response == null) {
+        if (_body.Terrain.Elevation(fixedHit.Normalized) >= -0.5) { return; }
 
-            if (_responses.Count == 3) {
-
-                _responses[0].QueueFree();
-                _responses.RemoveAt(0);
-
-            }
-            response = new SurfaceFlow();
-            AddChild(response);
-            response.Build(_body, fixedHit, _cloudDetail);
-            _responses.Add(response);
-            _responseBindingsDirty = true;
-
-        }
-        response.Strike(fixedHit, _body.ToBodyFixed(arriving, time), width, impactPressure, water);
-        return Frames.Point(hit);
+        _impactPoint = fixedHit;
+        _impactTime = time;
+        _impactRadius = Math.Max(radius + (float)distance * 0.12f, 2.0f);
+        _impactPower = power * (1.0f - (float)distance / (length * 2.0f));
 
     }
 
     private void SyncEffects(double time) {
 
-        if (time < _lastSimulationTime) {
-
-            foreach (SurfaceFlow response in _responses) { response.QueueFree(); }
-            _responses.Clear();
-            _responseBindingsDirty = true;
-            Array.Clear(_wakeRadii);
-            _lastWake = double.NegativeInfinity;
-
-        }
-        _lastSimulationTime = time;
-        float elapsed = Mathf.Min((float)GetProcessDeltaTime(), 0.1f);
-        _environmentClock += elapsed;
         int count = 0;
         for (int i = 0; i < 8; i++) {
 
-            double age = _environmentClock - _wakeTimes[i];
+            double age = time - _wakeTimes[i];
             if (_wakeRadii[i] <= 0.0f || age < 0.0 || age >= 4.0) { continue; }
+
             Vector3 point = Frames.Direction(_body.ToInertial(_wakePoints[i], time));
             Vector3 axis = Frames.Direction(_body.ToInertial(_wakeDirections[i], time));
             float recovery = (float)(1.0 - age / 4.0);
@@ -141,40 +75,60 @@ public sealed partial class Planet {
             _wakeAxes[count++] = new Vector4(axis.X, axis.Y, axis.Z, _wakeLengths[i]);
 
         }
-        SurfaceParcels = 0;
-        SurfaceWaveHeight = 0.0;
-        SurfaceMilliseconds = 0.0;
-        for (int i = _responses.Count - 1; i >= 0; i--) {
 
-            SurfaceFlow response = _responses[i];
-            response.Advance(elapsed, time);
-            if (response.SurveyFailed) { SurfaceFailures++; }
-            SurfaceParcels += response.ActiveParcels;
-            SurfaceWaveHeight = Math.Max(SurfaceWaveHeight, response.PeakWave);
-            SurfaceMilliseconds += response.Milliseconds;
-            if (response.Expired) {
+        float strength = time < _impactTime ? 0.0f : _impactPower * (float)Math.Exp(-(time - _impactTime) / 2.0);
+        Vector3 impact = Frames.Direction(_body.ToInertial(_impactPoint, time));
+        Vector4 water = new Vector4(impact.X, impact.Y, impact.Z, _impactRadius);
+        foreach (ShaderMaterial face in _faces) {
 
-                response.QueueFree();
-                _responses.RemoveAt(i);
-                _responseBindingsDirty = true;
-
-            }
+            SetEffects(face, time, count, water, strength);
 
         }
-        foreach (ShaderMaterial face in _faces) { SetEffects(face, time, count); }
-        SetEffects(_clouds, time, count);
-        _responseBindingsDirty = false;
+        SetEffects(_clouds, time, count, water, strength);
+
+        if (_steam == null) {
+
+            _steamMaterial = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Steam.gdshader"), RenderPriority = 3 };
+            _steamMaterial.SetShaderParameter("flow_noise", _cloudDetail);
+            _steam = new MeshInstance3D {
+
+                Mesh = new BoxMesh { Size = Vector3.One },
+                MaterialOverride = _steamMaterial,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                Layers = 2,
+
+            };
+            AddChild(_steam);
+
+        }
+
+        _steam.Visible = strength > 0.005f;
+        if (!_steam.Visible) { return; }
+
+        Vector3 up = impact.Normalized();
+        Frames.Horizon(up, out Vector3 side, out Vector3 ahead);
+        _steam.Transform = new Transform3D(new Basis(side, up, ahead), Frames.Point(_body.ToInertial(_impactPoint, time)));
+        float reach = _impactRadius * 5.0f;
+        Vector3 low = new Vector3(-reach, -1.0f, -reach);
+        Vector3 high = new Vector3(reach, reach * 2.0f, reach);
+        _steam.CustomAabb = new Aabb(low, high - low);
+        _steamMaterial.SetShaderParameter("bounds_min", low);
+        _steamMaterial.SetShaderParameter("bounds_max", high);
+        _steamMaterial.SetShaderParameter("effect_time", (float)time);
+        _steamMaterial.SetShaderParameter("strength", strength);
+        _steamMaterial.SetShaderParameter("radius", _impactRadius);
+        _steamMaterial.SetShaderParameter("daylight", Math.Max(up.Dot(Main.SunDirection), 0.0f));
 
     }
 
-    private void SetEffects(ShaderMaterial material, double time, int count) {
+    private void SetEffects(ShaderMaterial material, double time, int count, Vector4 water, float strength) {
 
-        material.SetShaderParameter("environment_time", (float)_environmentClock);
+        material.SetShaderParameter("environment_time", (float)time);
         material.SetShaderParameter("wake_count", count);
         material.SetShaderParameter("wake_centres", _wakeCentres);
         material.SetShaderParameter("wake_axes", _wakeAxes);
-        if (_responseBindingsDirty) { material.SetShaderParameter("response_count", _responses.Count); }
-        for (int i = 0; i < _responses.Count; i++) { _responses[i].Bind(material, i, time, _responseBindingsDirty); }
+        material.SetShaderParameter("water_impact", water);
+        material.SetShaderParameter("impact_strength", strength);
 
     }
 

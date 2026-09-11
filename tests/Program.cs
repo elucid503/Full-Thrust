@@ -39,7 +39,6 @@ public static partial class Program {
         NozzleExpansion();
         VesselContacts();
         GroundSurvey();
-        SurfaceFlowChecks();
 
         Console.WriteLine();
         Console.WriteLine($"{_checks - _failures}/{_checks} checks passed");

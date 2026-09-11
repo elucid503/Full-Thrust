@@ -2,7 +2,8 @@ uniform float environment_time = 0.0;
 uniform int wake_count = 0;
 uniform vec4 wake_centres[8];
 uniform vec4 wake_axes[8];
-#include "res://Shaders/SurfaceResponse.gdshaderinc"
+uniform vec4 water_impact = vec4(0.0);
+uniform float impact_strength = 0.0;
 
 float plume_clearance(vec3 p) {
 
