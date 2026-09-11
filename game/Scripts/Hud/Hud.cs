@@ -48,7 +48,7 @@ public sealed partial class Hud : CanvasLayer {
 
         _craft.Build(flight, _popover);
         _gauge.Build(flight.Vessel, _popover);
-        _engines.Build(flight.Vessel);
+        _engines.Build(flight.Vessel, _popover);
         _loss.Build(flight);
 
         _modes.Bind(flight, _menu);
@@ -62,7 +62,7 @@ public sealed partial class Hud : CanvasLayer {
 
     private void Restack() {
 
-        _engines.Build(_flight.Vessel);
+        _engines.Build(_flight.Vessel, _popover);
         _gauge.Build(_flight.Vessel, _popover);
 
         _popover.Dismiss();

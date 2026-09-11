@@ -6,8 +6,8 @@ using Godot;
 
 namespace FullThrust.Game;
 
-/// <summary>What the air is doing, and how hot the leading skin has got. Up only while there is
-/// air to fly through, so the resting interface never carries a row of zeroes.</summary>
+/// <summary>What the air is doing, and how hot the leading skin has got. Up only while falling
+/// through air, so an ascent never carries a reentry instrument.</summary>
 public sealed partial class EntryPanel : Control {
 
     private const float PanelWidth = 336.0f;
@@ -48,8 +48,8 @@ public sealed partial class EntryPanel : Control {
 
         _flight = flight;
 
-        // The panel is the air's own instrument. Out of the air it is not dimmed, it is gone.
-        Visible = flight.Vessel.Aero.InAir;
+        // The panel is the entry's own instrument. On the pad and on the way up it is gone.
+        Visible = !flight.Clamped && flight.Vessel.Aero.Entering;
 
         if (Visible) {
 

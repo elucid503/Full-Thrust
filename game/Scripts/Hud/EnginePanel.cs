@@ -16,24 +16,18 @@ public sealed partial class EnginePanel : Control {
     private const float Clearance = 1.16f;
 
     private readonly List<Vector2> _mounts = new List<Vector2>();
+    private readonly List<object> _subjects = new List<object>();
 
     private Vessel _vessel;
+    private Popover _popover;
 
     private int _hovered = -1;
-    private int _selected = -1;
-    private PopupPanel _popup;
-    private Label _stats;
-    private Label _limitLabel;
-    private HSlider _limit;
-    private Button _enabled;
-
 
     /// <summary>Builds the cluster from the switches fitted, so a restaged vessel redraws itself.</summary>
-    public void Build(Vessel vessel) {
+    public void Build(Vessel vessel, Popover popover) {
 
-        _popup?.Hide();
-        _selected = -1;
         _vessel = vessel;
+        _popover = popover;
         _hovered = -1;
 
         MouseFilter = MouseFilterEnum.Stop;
@@ -60,6 +54,7 @@ public sealed partial class EnginePanel : Control {
     private void Arrange(int count) {
 
         _mounts.Clear();
+        _subjects.Clear();
 
         if (count <= 0) {
 
@@ -70,6 +65,7 @@ public sealed partial class EnginePanel : Control {
         if (count == 1) {
 
             _mounts.Add(Vector2.Zero);
+            _subjects.Add(new object());
 
             return;
 
@@ -84,6 +80,7 @@ public sealed partial class EnginePanel : Control {
             float angle = Mathf.Tau * index / ring - Mathf.Pi * 0.5f;
 
             _mounts.Add(new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * radius);
+            _subjects.Add(new object());
 
         }
 
@@ -98,7 +95,6 @@ public sealed partial class EnginePanel : Control {
         if (Visible) {
 
             QueueRedraw();
-            if (_popup != null && _popup.Visible) { UpdateDetails(); }
 
         }
 
@@ -122,94 +118,15 @@ public sealed partial class EnginePanel : Control {
 
         }
 
-        if (@event is not InputEventMouseButton button || !button.Pressed || (button.ButtonIndex != MouseButton.Left && button.ButtonIndex != MouseButton.Right)) {
+        if (@event is not InputEventMouseButton button || !button.Pressed || button.ButtonIndex != MouseButton.Left) {
 
             return;
 
         }
 
-        int engine = At(button.Position);
-
-        if (engine >= 0) {
-
-            OpenDetails(engine);
-
-        }
+        Select(At(button.Position));
 
         AcceptEvent();
-
-    }
-
-    private Label TextLabel(string text) {
-
-        Label label = new Label { Text = text };
-        label.AddThemeFontOverride("font", HudTheme.Label);
-        label.AddThemeFontSizeOverride("font_size", HudTheme.Body);
-        label.AddThemeColorOverride("font_color", HudTheme.Ink);
-        return label;
-
-    }
-
-    private void OpenDetails(int engine) {
-
-        if (_popup == null) {
-
-            _popup = new PopupPanel { Name = "EngineDetails", Size = new Vector2I(300, 280) };
-            _popup.AddThemeStyleboxOverride("panel", HudTheme.Panel(14.0f));
-            AddChild(_popup);
-            VBoxContainer content = new VBoxContainer();
-            content.AddThemeConstantOverride("separation", 12);
-            _popup.AddChild(content);
-            _stats = TextLabel("");
-            content.AddChild(_stats);
-            _limitLabel = TextLabel("");
-            content.AddChild(_limitLabel);
-            _limit = new HSlider { MinValue = 0, MaxValue = 100, Step = 5, CustomMinimumSize = new Vector2(270, 28) };
-            _limit.TooltipText = "Fraction of the mechanical gimbal range. Zero locks this engine straight.";
-            _limit.ValueChanged += value => {
-
-                if (_selected >= 0) { _vessel.Active.SetGimbalLimit(_selected, value / 100.0); }
-                UpdateDetails();
-
-            };
-            content.AddChild(_limit);
-            content.AddChild(TextLabel("0% locks the mount · 100% full range"));
-            _enabled = HudTheme.Button("", new Vector2(270, 34));
-            _enabled.Pressed += () => {
-
-                if (_selected >= 0) { _vessel.SetEngine(_selected, !_vessel.IsEngineLit(_selected)); }
-                UpdateDetails();
-
-            };
-            content.AddChild(_enabled);
-            Button close = HudTheme.Button("Close", new Vector2(270, 30));
-            close.Pressed += () => _popup.Hide();
-            content.AddChild(close);
-
-        }
-        _selected = engine;
-        _limit.SetValueNoSignal(_vessel.Active.GimbalLimit(engine) * 100.0);
-        UpdateDetails();
-        Vector2 screen = GetViewportRect().Size;
-        Vector2 at = GlobalPosition - new Vector2(320, 170);
-        at = at.Clamp(Vector2.One * 8, (screen - new Vector2(320, 330)).Max(Vector2.One * 8));
-        _popup.Popup(new Rect2I((Vector2I)at, new Vector2I(310, 310)));
-
-    }
-
-    private void UpdateDetails() {
-
-        if (_selected < 0 || _stats == null || _selected >= _vessel.EngineCount) { return; }
-        Stage stage = _vessel.Active;
-        bool enabled = stage.IsEngineLit(_selected);
-        double thrust = enabled && stage.PropellantMass > 0.0
-            ? stage.ThrustNewtons / stage.EngineCount * Math.Clamp(_vessel.Throttle, 0.0, 1.0) : 0.0;
-        double flow = stage.SpecificImpulse > 0.0 ? thrust / (stage.SpecificImpulse * Vessel.StandardGravity) : 0.0;
-        Vector3 direction = VesselView.Active?.EngineDirection(_selected) ?? Vector3.Down;
-        float angle = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(-direction.Y, -1.0f, 1.0f)));
-        _stats.Text = $"ENGINE {_selected + 1}  ·  {(enabled ? (thrust > 0 ? "FIRING" : "READY") : "DISABLED")}\nThrust  {thrust / 1000.0:F1} kN\nPropellant  {flow:F1} kg/s\nSpecific impulse  {stage.SpecificImpulse:F0} s\nGimbal deflection  {angle:F1}°";
-        _limitLabel.Text = $"Gimbal limit  {stage.GimbalLimit(_selected) * 100:F0}%  /  {stage.GimbalRange * stage.GimbalLimit(_selected) * 180.0 / Math.PI:F1}°";
-        _enabled.Text = enabled ? "Disable engine" : "Enable engine";
 
     }
 
@@ -220,6 +137,63 @@ public sealed partial class EnginePanel : Control {
             _hovered = -1;
 
             QueueRedraw();
+
+        }
+
+    }
+
+    private void Select(int engine) {
+
+        if (engine < 0 || engine >= _subjects.Count || _popover.Shows(_subjects[engine])) {
+
+            _popover.Dismiss();
+
+            return;
+
+        }
+
+        Vector2 mount = Size * 0.5f + _mounts[engine];
+
+        _popover.Raise(_subjects[engine], $"ENGINE {engine + 1}", (rows, actions) => Read(engine, rows, actions), GlobalPosition + mount);
+
+    }
+
+    /// <summary>What one bell is doing. Only figures this mount carries, and only the two actions
+    /// it can take on its own: shut or arm, lock or free the gimbal.</summary>
+    private void Read(int engine, List<(string Label, string Value)> rows, List<(string Label, Action Run)> actions) {
+
+        if (engine < 0 || engine >= _vessel.EngineCount) {
+
+            return;
+
+        }
+
+        Stage stage = _vessel.Active;
+        bool lit = stage.IsEngineLit(engine);
+
+        double rating = stage.EngineCount > 0 ? stage.ThrustNewtons / stage.EngineCount : 0.0;
+        double thrust = lit && stage.PropellantMass > 0.0 ? rating * Math.Clamp(_vessel.Throttle, 0.0, 1.0) : 0.0;
+        double flow = stage.SpecificImpulse > 0.0 ? thrust / (stage.SpecificImpulse * Vessel.StandardGravity) : 0.0;
+
+        Vector3 direction = VesselView.Active?.EngineDirection(engine) ?? Vector3.Down;
+        float deflection = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(-direction.Y, -1.0f, 1.0f)));
+        double limit = stage.GimbalRange * stage.GimbalLimit(engine) * 180.0 / Math.PI;
+
+        string status = !lit ? "SHUT" : thrust > 0.0 ? "FIRING" : "READY";
+
+        rows.Add(("STATUS", status));
+        rows.Add(("THRUST", $"{thrust / 1000.0:F1} / {rating / 1000.0:F1} kN"));
+        rows.Add(("FLOW", $"{flow:F2} kg/s"));
+        rows.Add(("IMPULSE", $"{stage.SpecificImpulse:F0} s"));
+        rows.Add(("GIMBAL", limit <= 0.0 ? "LOCKED" : $"{deflection:F1}° / {limit:F1}°"));
+
+        actions.Add((lit ? "SHUT" : "ARM", () => _vessel.SetEngine(engine, !lit)));
+
+        if (stage.GimbalRange > 0.0) {
+
+            bool locked = stage.GimbalLimit(engine) <= 0.0;
+
+            actions.Add((locked ? "FREE" : "LOCK", () => stage.SetGimbalLimit(engine, locked ? 1.0 : 0.0)));
 
         }
 
@@ -264,14 +238,15 @@ public sealed partial class EnginePanel : Control {
             Vector2 movement = new Vector2(direction.Z, -direction.X) * 22.0f;
             Vector2 mount = centre + _mounts[index];
             Vector2 at = mount + movement;
+
             DrawCircle(mount, 1.4f, HudTheme.Faint);
 
-
             bool lit = _vessel.IsEngineLit(index);
+            bool picked = index == _hovered || (index < _subjects.Count && _popover.Shows(_subjects[index]));
 
             // Shut is the quiet state, armed is legible, burning is the loud one. A dry stage warns
             // whatever its switches say, because the switches are no longer what is stopping it.
-            Color ink = index == _hovered ? HudTheme.Ink
+            Color ink = picked ? HudTheme.Ink
                 : !lit ? HudTheme.Faint
                 : dry ? HudTheme.Caution
                 : burning ? HudTheme.Ink

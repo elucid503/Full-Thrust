@@ -966,7 +966,24 @@ public static partial class Program {
         Close("and it opposes the flow exactly", trimmed.Force.Normalized, -velocity.Normalized, 1e-9);
         Near("a trimmed capsule is raising no moment", trimmed.Torque.Length, 0.0, 1e-6);
 
-        Near("stagnation heating follows Sutton and Graves", trimmed.HeatFlux, Aerodynamics.SuttonGraves * Math.Sqrt(density / capsule.Profile.BaseCurvature) * Math.Pow(3000.0, 3.0), 1e-6);
+        Near("level flight raises no stagnation heating", trimmed.HeatFlux, 0.0, 1e-12);
+        Expect("and is not an entry", !trimmed.Entering, "reported a level pass as entering");
+
+        Vector3d settling = velocity + position.Normalized * -0.01;
+        Expect("a millimetre of sink is not an entry either", !Trimmed(capsule, position, settling).Entering, "reported pad noise as entering");
+
+        Vector3d climbing = velocity + position.Normalized * 200.0;
+        AeroForces ascent = Trimmed(capsule, position, climbing);
+
+        Near("ascent raises no stagnation heating either", ascent.HeatFlux, 0.0, 1e-12);
+        Expect("and an ascent through air is still not an entry", ascent.InAir && !ascent.Entering, "reported the climb as entering");
+
+        Vector3d falling = velocity + position.Normalized * -200.0;
+        AeroForces entering = Trimmed(capsule, position, falling);
+        double fallSpeed = falling.Length;
+
+        Near("stagnation heating follows Sutton and Graves on the way down", entering.HeatFlux, Aerodynamics.SuttonGraves * Math.Sqrt(density / capsule.Profile.BaseCurvature) * Math.Pow(fallSpeed, 3.0), 1e-6);
+        Expect("and falling through air is an entry", entering.Entering, "reported the fall as not entering");
 
         Near("drag goes as the square of speed", Trimmed(capsule, position, velocity * 2.0).Force.Length / trimmed.Force.Length, 4.0, 0.02);
 
@@ -974,6 +991,13 @@ public static partial class Program {
 
         Expect("shield first is restoring", Vector3d.Dot(Tilted(capsule, position, velocity, axis, 0.17, false), axis) < 0.0, "the moment ran with the upset");
         Expect("dome first is not", Vector3d.Dot(Tilted(capsule, position, velocity, axis, 0.17, true), axis) > 0.0, "the moment held it nose on");
+
+        Vector3d deck = new Vector3d(Home.Radius, 0.0, 0.0);
+        capsule.Position = deck;
+        capsule.Velocity = Home.AirVelocityAt(deck);
+        capsule.Orientation = QuaternionD.LookAlong(deck.Normalized, Vector3d.UnitZ);
+
+        Expect("sitting in the air is not an entry", !Aerodynamics.Compute(capsule, Home).Entering, "reported the pad as entering");
 
         // Above the air there is nothing to fly through, however fast the vessel is going.
         capsule.Position = new Vector3d(0.0, 0.0, Home.Radius + Home.AtmosphereTop + 1000.0);

@@ -198,10 +198,14 @@ public readonly struct AeroForces {
     /// <summary>Where the transverse load acts, on the same datum as the hull.</summary>
     public double CentreOfPressure { get; }
 
-    /// <summary>Convective heating at the stagnation point, watts per square metre.</summary>
+    /// <summary>Convective heating at the stagnation point, watts per square metre. Zero on the
+    /// way up: stagnation heating is an entry phenomenon, not a launch one.</summary>
     public double HeatFlux { get; }
 
-    public AeroForces(Vector3d force, Vector3d torque, double density, double airSpeed, double dynamicPressure, double mach, double angleOfAttack, double centreOfPressure, double heatFlux) {
+    /// <summary>Whether altitude is decreasing.</summary>
+    public bool Descending { get; }
+
+    public AeroForces(Vector3d force, Vector3d torque, double density, double airSpeed, double dynamicPressure, double mach, double angleOfAttack, double centreOfPressure, double heatFlux, bool descending) {
 
         Force = force;
         Torque = torque;
@@ -216,10 +220,14 @@ public readonly struct AeroForces {
         CentreOfPressure = centreOfPressure;
 
         HeatFlux = heatFlux;
+        Descending = descending;
 
     }
 
     public bool InAir => Density > 0.0;
+
+    /// <summary>In air and falling. The entry instrument waits for this; so does the skin's flux.</summary>
+    public bool Entering => InAir && Descending;
 
 }
 
@@ -241,6 +249,10 @@ public static class Aerodynamics {
     // rather than the other. Wide enough that a vehicle passing through side-on flight crosses
     // between the two curves smoothly instead of stepping.
     private const double EndBlend = 0.15;
+
+    // A body sitting in rotating air has a radial speed of a few femtometres a second from the
+    // triple product not quite cancelling. That is not a descent.
+    private const double DescentSpeed = 1.0;
 
     /// <summary>Axial drag on the frontal area with the pointed end into the flow: the subsonic
     /// floor, the transonic rise, and the supersonic tail.</summary>
@@ -394,7 +406,12 @@ public static class Aerodynamics {
 
         double bluntness = Mix(profile.BaseCurvature, profile.TipCurvature, forward);
 
-        double flux = SuttonGraves * Math.Sqrt(density / bluntness) * speed * speed * speed;
+        // Altitude rate is inertial: v · r̂. The same air on the way up is just atmosphere;
+        // lighting the skin for it would treat a launch as a reentry.
+        double radius = position.Length;
+        double climb = radius > 0.0 ? Vector3d.Dot(position, velocity) / radius : 0.0;
+        bool descending = climb < -DescentSpeed;
+        double flux = descending ? SuttonGraves * Math.Sqrt(density / bluntness) * speed * speed * speed : 0.0;
 
         double centreOfPressure = transverse > 0.0 ? moment / transverse : profile.PlanformCentre;
 
@@ -412,7 +429,8 @@ public static class Aerodynamics {
             datum.Alpha,
             centreOfPressure,
 
-            flux
+            flux,
+            descending
 
         );
 
