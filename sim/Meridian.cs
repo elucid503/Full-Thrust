@@ -65,10 +65,6 @@ public static class Meridian {
     public static readonly double PropellantDensity =
         (1.0 + MixtureRatio) / (1.0 / Fuel.Density + MixtureRatio / Oxidiser.Density);
 
-    // Four RCS quads on the forward tank, sized so the loaded stack slews a right angle in about
-    // fifteen seconds.
-    public const double ControlTorque = 7000.0;
-
     /// <summary>The bell swings on its mount, which is what steers the second half of an ascent.</summary>
     public const double GimbalRange = 5.0 * Math.PI / 180.0;
 
@@ -76,10 +72,13 @@ public static class Meridian {
     // craft diagram all read these, so none of them can place a nozzle the others disagree with.
     public const int RcsPorts = 4;
 
-    public const double RcsHeight = 6.90;
+    // One ring at each end of the stage rather than one amidships: couples act on the longest lever
+    // the stage has, and a pair of rings can translate as well as rotate. Both stand on the skin -
+    // letting them into the tank wall buys a little drag and costs a hole in a pressure vessel.
+    public const double RcsAftHeight = 0.55;
+    public const double RcsForwardHeight = 7.30;
     public const double RcsHalfHeight = 0.30;
     public const double RcsPortRadius = 0.18;
-    public const double RcsPocketDepth = 0.26;
 
     public const double EngineDeck = 0.36;
     public const double EngineLength = 2.55;
@@ -95,10 +94,20 @@ public static class Meridian {
 
     private const int BellStations = 12;
 
-    // Hydrazine monoprop in its own spherical bottle, enough for a few hundred slews before the stage is deaf.
-    public const double RcsThrustNewtons = 1_600.0;
+    // Hydrazine monoprop in its own spherical bottle, enough for a few hundred slews before the
+    // stage is deaf. Sized on trimming the whole stack rather than this stage alone: the booster
+    // below carries no thrusters, so between its shutdown and separation these are all there is.
+    public const double RcsThrustNewtons = 7_500.0;
     public const double RcsSpecificImpulse = 224.0;
-    public const double RcsPropellantMass = 120.0;
+    public const double RcsPropellantMass = 340.0;
+
+    /// <summary>Half the span between the two rings: the arm a couple acts on, and the whole reason
+    /// for putting them at the ends of the stage rather than one ring around its waist.</summary>
+    public static readonly double RcsLever = (RcsForwardHeight - RcsAftHeight) * 0.5;
+
+    /// <summary>What the two rings raise firing as a couple, rather than a figure declared beside
+    /// the geometry and free to disagree with it.</summary>
+    public static readonly double ControlTorque = RcsThrustNewtons * RcsLever;
 
     // Sized on what the stack weighs when the booster lets go rather than on the deorbit burn it
     // ends its mission with: a second stage that cannot hold its own altitude never reaches orbit,
@@ -188,23 +197,45 @@ public static class Meridian {
 
     }
 
-    /// <summary>A quad in section: one pocket in the tank wall with a nozzle mouth at each end of it.</summary>
-    private static Hull.Station[] BuildQuad(double datum) {
+    /// <summary>A quad in section: one pod standing on the skin with a nozzle mouth at each end of it.</summary>
+    private static Hull.Station[] BuildQuad(double datum, double height) {
 
-        double low = datum + RcsHeight - RcsHalfHeight;
-        double high = datum + RcsHeight + RcsHalfHeight;
+        double middle = datum + height;
+
+        double low = middle - RcsHalfHeight;
+        double high = middle + RcsHalfHeight;
 
         return new[] {
 
             new Hull.Station(low, RcsPortRadius * 0.55),
             new Hull.Station(low + 0.06, RcsPortRadius),
-            new Hull.Station(datum + RcsHeight - 0.06, RcsPortRadius),
+            new Hull.Station(middle - 0.06, RcsPortRadius),
 
-            new Hull.Station(datum + RcsHeight, RcsPortRadius * 0.42),
+            new Hull.Station(middle, RcsPortRadius * 0.42),
 
-            new Hull.Station(datum + RcsHeight + 0.06, RcsPortRadius),
+            new Hull.Station(middle + 0.06, RcsPortRadius),
             new Hull.Station(high - 0.06, RcsPortRadius),
             new Hull.Station(high, RcsPortRadius * 0.55),
+
+        };
+
+    }
+
+    private static Part BuildQuadRing(string name, double datum, double height) {
+
+        return new Part {
+
+            Name = name,
+
+            Kind = PartKind.Thruster,
+
+            Bottom = datum + height - RcsHalfHeight,
+            Top = datum + height + RcsHalfHeight,
+
+            Count = RcsPorts,
+            RingRadius = BodyRadius,
+
+            Profile = BuildQuad(datum, height),
 
         };
 
@@ -250,23 +281,9 @@ public static class Meridian {
 
             },
 
-            new Part {
+            BuildQuadRing("Aft RCS", datum, RcsAftHeight),
 
-                Name = "RCS Quad",
-
-                Kind = PartKind.Thruster,
-
-                Bottom = datum + RcsHeight - RcsHalfHeight,
-                Top = datum + RcsHeight + RcsHalfHeight,
-
-                Count = RcsPorts,
-                RingRadius = BodyRadius - RcsPortRadius,
-
-                Depth = RcsPocketDepth,
-
-                Profile = BuildQuad(datum),
-
-            },
+            BuildQuadRing("Forward RCS", datum, RcsForwardHeight),
 
             new Part {
 

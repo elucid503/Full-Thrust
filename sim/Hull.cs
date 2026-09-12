@@ -79,6 +79,17 @@ public sealed class Hull {
     /// diagram both draw the inner surface off it, so it is carried here rather than in either.</summary>
     public double WallThickness { get; init; } = 0.055;
 
+    /// <summary>Floor of an open bay at the forward end - an interstage the stage above stands its
+    /// bell inside. Zero means the stage is closed, and the lathe caps it with a bulkhead instead.</summary>
+    public double BayFloor { get; init; }
+
+    /// <summary>True when the forward end is open rather than decked over.</summary>
+    public bool HasBay => BayFloor > Base && BayFloor < Tip;
+
+    /// <summary>Clear radius inside the bay. Taken off the mould line rather than declared, so the
+    /// wall the collider stops a bell against is the wall the lathe draws.</summary>
+    public double BayRadius => HasBay ? RadiusAt((BayFloor + Tip) * 0.5) - WallThickness : 0.0;
+
     public Hull(Station[] stations, double tankBottom, double tankTop) {
 
         if (stations == null || stations.Length < 2) {

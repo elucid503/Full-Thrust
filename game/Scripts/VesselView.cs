@@ -68,6 +68,10 @@ public sealed partial class VesselView : Node3D {
         public readonly List<Engine> Engines = new List<Engine>();
 
         public readonly List<Jet> Jets = new List<Jet>();
+        public List<(Node3D Node, TriangleMesh Surface)> ExhaustSurfaces;
+        public double ExhaustRadius;
+        public EntryField SingleEntry;
+        public EntryField StackEntry;
         public readonly List<StandardMaterial3D> Skins = new List<StandardMaterial3D>();
 
     }
@@ -111,6 +115,7 @@ public sealed partial class VesselView : Node3D {
 
         }
 
+        PrepareEntryFields();
         AttachSheath();
 
     }
@@ -757,9 +762,9 @@ public sealed partial class VesselView : Node3D {
 
             // Drawn as a second run rather than a second surface: one sweep closes whichever ends
             // are open, and a stage with neither gets no interior at all.
-            float lining = tipRadius - (float)hull.WallThickness;
+            float lining = hull.HasBay ? (float)hull.BayRadius : tipRadius - (float)hull.WallThickness;
 
-            float deck = (float)hull.Tip - BulkheadInset;
+            float deck = hull.HasBay ? (float)hull.BayFloor : (float)hull.Tip - BulkheadInset;
 
             if (profile.Count > 0) {
 
@@ -767,7 +772,9 @@ public sealed partial class VesselView : Node3D {
 
             }
 
-            profile.Add(new Vector2(MountRadius, deck));
+            // An interstage is a tube standing on the tank dome, not a funnel: the wall goes up
+            // straight off the floor, so the bell inside it has the clearance the collider grants it.
+            profile.Add(new Vector2(hull.HasBay ? lining : MountRadius, deck));
             profile.Add(new Vector2(lining, (float)hull.Tip));
             profile.Add(new Vector2(tipRadius, (float)hull.Tip));
 

@@ -47,6 +47,7 @@ public sealed partial class Planet : Node3D {
     private ShaderMaterial _clouds;
     private Texture3D _cloudShape;
     private Texture3D _cloudDetail;
+    private Texture3D _smokeNoise;
     private ShaderMaterial _atmosphere;
 
     // The shells sit on the planet's centre; the quadtree places every patch on its own absolute
@@ -107,6 +108,7 @@ public sealed partial class Planet : Node3D {
 
         _cloudShape = Volume(128, 0.035f, 4);
         _cloudDetail = Billow(64, 0.075f, 3);
+        _smokeNoise = Worley(64, 0.055f);
 
         BuildFaces(radius, cloud, sunDirection);
 
@@ -333,6 +335,37 @@ public sealed partial class Planet : Node3D {
     // volume that never has to be built by a tool or carried in the repository.
     // Worley rather than value noise, and inverted: the cells read as the cauliflower a cloud
     // frays into, where a second field of the same smooth noise only ever softened its edges.
+    // A single unfractalised octave keeps the full normalised range; fBm of cellular distance collapses
+    // toward its mean, and averaging octaves in the shader narrows it further until erosion does nothing.
+    private static NoiseTexture3D Worley(int size, float frequency) {
+
+        FastNoiseLite noise = new FastNoiseLite {
+
+            NoiseType = FastNoiseLite.NoiseTypeEnum.Cellular,
+            CellularReturnType = FastNoiseLite.CellularReturnTypeEnum.Distance,
+            CellularDistanceFunction = FastNoiseLite.CellularDistanceFunctionEnum.Euclidean,
+
+            Frequency = frequency,
+
+            FractalType = FastNoiseLite.FractalTypeEnum.None,
+
+        };
+
+        return new NoiseTexture3D {
+
+            Noise = noise,
+
+            Width = size,
+            Height = size,
+            Depth = size,
+
+            Seamless = true,
+            Normalize = true,
+
+        };
+
+    }
+
     private static NoiseTexture3D Billow(int size, float frequency, int octaves) {
 
         FastNoiseLite noise = new FastNoiseLite {

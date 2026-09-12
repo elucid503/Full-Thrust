@@ -2,9 +2,10 @@ using System.Collections.Generic;
 
 namespace FullThrust.Sim;
 
-/// <summary>A 2.4 m kerolox first stage. Six chambers, four verniers and an interstage deep enough
-/// to swallow the Meridian's bell. It exists to get the stack off the pad and out of the thick
-/// air; everything after staging is the Meridian's problem.</summary>
+/// <summary>A 2.4 m kerolox first stage. Six gimballed chambers and an open interstage deep enough
+/// to swallow the Meridian's bell. It carries no thrusters of its own - the stack is trimmed from
+/// the stage above - and exists to get off the pad and out of the thick air; everything after
+/// staging is the Meridian's problem.</summary>
 public static class Zenith {
 
     public const double BodyRadius = 1.20;
@@ -42,25 +43,14 @@ public static class Zenith {
 
     public static readonly double PropellantDensity = Meridian.PropellantDensity;
 
-    // The chamber swings on its mount, which is what actually flies the ascent: at liftoff it is
-    // worth a moment thirty times what the verniers raise, and it costs nothing but the thrust that
-    // was already being made.
+    // The chamber swings on its mount, which is the whole of this stage's attitude control and what
+    // actually flies the ascent: it costs nothing but the thrust that was already being made. Once
+    // the engines are shut the stack is trimmed from the Meridian's rings alone.
     public const double GimbalRange = 6.0 * Math.PI / 180.0;
 
-    // Four verniers on the aft skirt for the coast between shutdown and separation, when the gimbal
-    // has nothing to swing.
-    public const double ControlTorque = 25_000.0;
-
-    public const int VernierCount = 4;
-
-    public const double VernierHeight = 1.30;
-    public const double VernierHalfHeight = 0.34;
-    public const double VernierPortRadius = 0.22;
-    public const double VernierPocketDepth = 0.30;
-
-    public const double RcsThrustNewtons = 24_000.0;
-    public const double RcsSpecificImpulse = 250.0;
-    public const double RcsPropellantMass = 700.0;
+    /// <summary>Wall of the interstage. It is what the Meridian's bell has to clear on its way out,
+    /// so the cavity the lathe draws and the cavity the collider uses both come off it.</summary>
+    public const double InterstageWall = 0.055;
 
     public const double EngineDeck = 0.62;
     public const double EngineLength = 3.50;
@@ -129,7 +119,15 @@ public static class Zenith {
 
         };
 
-        return new Hull(stations, SkirtTop, TankTop);
+        return new Hull(stations, SkirtTop, TankTop) {
+
+            WallThickness = InterstageWall,
+
+            // Open from the tank's forward dome to the separation plane: the Meridian's bell hangs
+            // in the cavity rather than resting on a deck, and can foul its wall on the way out.
+            BayFloor = TankTop,
+
+        };
 
     }
 
@@ -165,27 +163,6 @@ public static class Zenith {
 
     }
 
-    private static Hull.Station[] BuildVernier() {
-
-        double low = VernierHeight - VernierHalfHeight;
-        double high = VernierHeight + VernierHalfHeight;
-
-        return new[] {
-
-            new Hull.Station(low, VernierPortRadius * 0.55),
-            new Hull.Station(low + 0.07, VernierPortRadius),
-            new Hull.Station(VernierHeight - 0.07, VernierPortRadius),
-
-            new Hull.Station(VernierHeight, VernierPortRadius * 0.42),
-
-            new Hull.Station(VernierHeight + 0.07, VernierPortRadius),
-            new Hull.Station(high - 0.07, VernierPortRadius),
-            new Hull.Station(high, VernierPortRadius * 0.55),
-
-        };
-
-    }
-
     public static Part[] BuildParts() {
 
         return new[] {
@@ -213,24 +190,6 @@ public static class Zenith {
 
                 Bottom = 0.0,
                 Top = SkirtTop,
-
-            },
-
-            new Part {
-
-                Name = "Vernier",
-
-                Kind = PartKind.Thruster,
-
-                Bottom = VernierHeight - VernierHalfHeight,
-                Top = VernierHeight + VernierHalfHeight,
-
-                Count = VernierCount,
-                RingRadius = BodyRadius - VernierPortRadius,
-
-                Depth = VernierPocketDepth,
-
-                Profile = BuildVernier(),
 
             },
 
@@ -293,14 +252,7 @@ public static class Zenith {
             Fuel = Fuel,
             Oxidiser = Oxidiser,
 
-            RcsThrustNewtons = RcsThrustNewtons,
-            RcsSpecificImpulse = RcsSpecificImpulse,
-
-            ControlTorque = ControlTorque,
             GimbalRange = GimbalRange,
-
-            RcsPropellantMass = RcsPropellantMass,
-            RcsPropellantCapacity = RcsPropellantMass,
 
             HeatLimit = HeatLimit,
             HeatCapacity = HeatCapacity,

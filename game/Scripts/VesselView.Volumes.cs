@@ -15,6 +15,8 @@ public sealed partial class VesselView {
     private sealed class Engine {
 
         public int Index { get; init; }
+        public float Power { get; set; }
+        public float Transient { get; set; }
         public Node3D Pivot { get; init; }
 
         public MeshInstance3D Plume { get; init; }
@@ -31,6 +33,7 @@ public sealed partial class VesselView {
         public Vector3 Axis { get; init; }
         public float Radius { get; init; }
         public float Duty { get; set; }
+        public float Command { get; set; }
 
     }
 
@@ -129,8 +132,8 @@ public sealed partial class VesselView {
         OmniLight3D light = new OmniLight3D {
 
             Position = new Vector3(0.0f, -reach - bellRadius, 0.0f),
-            OmniRange = bellRadius * 12.0f,
-            OmniAttenuation = 1.3f,
+            OmniRange = bellRadius * 16.0f,
+            OmniAttenuation = 1.8f,
             ShadowEnabled = false,
             Visible = false,
 
@@ -276,9 +279,32 @@ public sealed partial class VesselView {
 
     }
 
+    private void PrepareEntryFields() {
+
+        for (int index = 0; index < _pieces.Count; index++) {
+
+            Piece piece = _pieces[index];
+            piece.SingleEntry = new EntryField(new Vessel(_vessel.Name, new[] { piece.Stage }));
+            if (index == _pieces.Count - 1) {
+
+                piece.StackEntry = piece.SingleEntry;
+                continue;
+
+            }
+
+            List<Stage> remaining = new();
+            for (int stage = index; stage < _pieces.Count; stage++) { remaining.Add(_pieces[stage].Stage); }
+            piece.StackEntry = new EntryField(new Vessel(_vessel.Name, remaining));
+
+        }
+
+    }
+
     private void BakeProfile() {
 
-        _entryField = new EntryField(_vessel);
+        Piece active = Find(_vessel.Active);
+        _entryField = _pieces.Count == 1 ? active.SingleEntry : active.StackEntry;
+        BakeExhaustSurfaces();
         Views[_vessel] = this;
 
         foreach (ShaderMaterial material in new[] { _sheathMaterial, _wakeMaterial }) {
@@ -309,10 +335,12 @@ public sealed partial class VesselView {
 
     private void SyncPlume() {
 
+        foreach (VesselView view in Views.Values) { view.PrepareExhaustColliders(); }
         PlumeObstacles = 0;
         _effectDelta = Mathf.Min((float)GetProcessDeltaTime(), 0.1f);
         _effectTime += _effectDelta;
-        _thrust = Mathf.Lerp(_thrust, (float)_vessel.ThrustSetting, 1.0f - Mathf.Exp(-_effectDelta / 0.065f));
+        float demand = _vessel.ThrustFraction > 0.0 ? (float)(_vessel.ThrustSetting / _vessel.ThrustFraction) : 0.0f;
+        _thrust = Mathf.Lerp(_thrust, demand, 1.0f - Mathf.Exp(-_effectDelta / 0.065f));
 
         (float pressure, float density) = Air();
 
@@ -330,21 +358,50 @@ public sealed partial class VesselView {
 
             foreach (Engine engine in piece.Engines) {
 
-                bool burning = armed && piece.Stage.IsEngineLit(engine.Index) && _thrust > 0.003f;
+                float wanted = armed && piece.Stage.IsEngineLit(engine.Index) ? _thrust : 0.0f;
+                float previous = engine.Power;
+                engine.Power = Mathf.Lerp(previous, wanted, 1.0f - Mathf.Exp(-_effectDelta / (wanted > previous ? 0.09f : 0.22f)));
+                engine.Transient = Mathf.Max(engine.Transient * Mathf.Exp(-_effectDelta / 0.45f), Mathf.Abs(wanted - previous));
+
+            }
+
+            foreach (Engine engine in piece.Engines) {
+
+                bool burning = engine.Power > 0.003f;
                 engine.Plume.Visible = burning;
                 engine.Light.Visible = burning;
+                if (!burning) { continue; }
 
-                if (!burning) {
+                Vector3 pull = Vector3.Zero;
+                float coupling = 0.0f;
+                float secondMoment = 0.0f;
+                float transient = engine.Transient;
+                foreach (Engine neighbour in piece.Engines) {
 
-                    continue;
+                    if (neighbour == engine) { continue; }
+                    Vector3 offset = engine.Plume.GlobalBasis.Inverse() * (neighbour.Plume.GlobalPosition - engine.Plume.GlobalPosition);
+                    float proximity = Mathf.Exp(-offset.LengthSquared() / (piece.BellRadius * piece.BellRadius * 100.0f));
+                    float weight = proximity * neighbour.Power;
+                    pull += new Vector3(offset.X, 0.0f, offset.Z) * weight;
+                    coupling += weight;
+                    secondMoment += (offset.X * offset.X + offset.Z * offset.Z) * weight;
+                    transient += proximity * neighbour.Transient;
 
                 }
 
+                float totalPower = Mathf.Max(engine.Power + coupling, 0.001f);
+                Vector3 clusterCentre = pull / totalPower;
+                float clusterRadius = Mathf.Sqrt(Mathf.Max(secondMoment / totalPower - clusterCentre.LengthSquared(), 0.0f));
+                engine.PlumeMaterial.SetShaderParameter("cluster_pull", clusterCentre);
+                engine.PlumeMaterial.SetShaderParameter("cluster_radius", clusterRadius);
+                engine.PlumeMaterial.SetShaderParameter("cluster_from_plume", DatumTransform(engine.Plume));
+                engine.PlumeMaterial.SetShaderParameter("cluster_mix", Mathf.Min(coupling, 2.0f));
+                engine.PlumeMaterial.SetShaderParameter("cluster_transient", Mathf.Min(transient, 2.0f));
                 DriveVolume(engine.Plume, engine.PlumeMaterial, piece.Stage.ChamberPressure, piece.Stage.ExpansionRatio,
-                    chemistry, _thrust, piece.BellRadius, pressure, density, false);
+                    chemistry, engine.Power, piece.BellRadius, pressure, density, false);
 
                 engine.Light.LightColor = chemistry.Core.Lerp(chemistry.Flame, air * chemistry.Afterburn);
-                engine.Light.LightEnergy = _thrust * chemistry.Luminosity * 1.6f;
+                engine.Light.LightEnergy = engine.Power * chemistry.Luminosity * 1.15f / Mathf.Sqrt(piece.Engines.Count);
 
             }
 
@@ -371,13 +428,13 @@ public sealed partial class VesselView {
         float vacuum = pressure > 0.0f ? Mathf.Clamp((float)Math.Log10(Math.Max(exhaust.PressureRatio, 1.0)) / 3.0f, 0.0f, 1.0f) : 1.0f;
         float air = Mathf.Clamp(density / 1.225f, 0.0f, 1.0f);
         float turn = Mathf.Max((float)exhaust.TurnAngle, 0.0f);
-        float spread = Mathf.Lerp(0.045f + air * 0.045f, Mathf.Tan(Mathf.Min(turn * 0.32f, 0.62f)), vacuum);
-        float length = bellRadius * (jet ? 21.0f : 44.0f) * (0.45f + 0.55f * Mathf.Sqrt(throttle));
-        float radius = (exit + length * spread) * 1.8f;
+        float spread = Mathf.Lerp(0.10f + air * 0.075f, Mathf.Tan(Mathf.Min(turn * 0.42f, 0.72f)), vacuum);
+        float length = bellRadius * (jet ? 28.0f : 112.0f) * (0.45f + 0.55f * Mathf.Sqrt(throttle));
+        float radius = (exit + length * spread) * 2.1f;
 
-        if (!jet && _vessel.Intact && air > 0.01f) {
+        if (!jet && _vessel.Intact) {
 
-            Planet.Active?.Disturb(volume.GlobalPosition, -volume.GlobalBasis.Y, length, radius, throttle);
+            Planet.Active?.Disturb(volume.GlobalPosition, -volume.GlobalBasis.Y, length, exit, throttle, spread);
 
         }
 
@@ -390,6 +447,7 @@ public sealed partial class VesselView {
         float bend = Mathf.Clamp(density * wind.LengthSquared() / Mathf.Max(momentum, 1.0f), 0.0f, 0.6f);
         Vector3 crossflow = wind.LengthSquared() > 0.001f ? wind.Normalized() * (length * bend) : Vector3.Zero;
 
+        material.SetShaderParameter("brightness", jet ? 1.15f : 1.25f);
         material.SetShaderParameter("throttle", throttle);
         material.SetShaderParameter("exit_radius", exit);
         material.SetShaderParameter("plume_length", length);
@@ -405,84 +463,9 @@ public sealed partial class VesselView {
         Vector3 high = new Vector3(radius, 0.0f, radius) + crossflow.Max(Vector3.Zero);
 
         Ground(volume, material, length, exit, ref low, ref high);
-        Obstacle(volume, material, length, exit, spread, ref low, ref high);
+        _exhaustShapes[volume] = (length, spread, exit);
+        MeshObstacle(volume, material, length, exit, spread);
         Bounds(volume, material, low, high);
-
-    }
-
-    private void Obstacle(MeshInstance3D volume, ShaderMaterial material, float length, float exit, float spread,
-        ref Vector3 low, ref Vector3 high) {
-
-        Vector3d nozzle = _vessel.Position + Frames.Sim(volume.GlobalPosition - GlobalPosition);
-        Basis inverse = volume.GlobalBasis.Inverse();
-        VesselView nearest = null;
-        float distance = float.PositiveInfinity;
-
-        foreach (VesselView view in Views.Values) {
-
-            if (view == this || !view._vessel.Intact) {
-
-                continue;
-
-            }
-
-            Vessel vessel = view._vessel;
-            float radius = (float)Math.Sqrt(vessel.Length * vessel.Length * 0.25 + vessel.Profile.MaxRadius * vessel.Profile.MaxRadius);
-            Vector3d centre = vessel.Position + vessel.Nose * ((vessel.Base + vessel.Tip) * 0.5 - vessel.CentreOfMassZ);
-            Vector3 offset = inverse * Frames.Direction(centre - nozzle);
-            float along = -offset.Y;
-            float width = exit + Mathf.Max(along, 0.0f) * spread * 2.0f;
-
-            if (along + radius < 0.0f || along - radius > length || new Vector2(offset.X, offset.Z).Length() > width + radius) {
-
-                continue;
-
-            }
-
-            if (offset.LengthSquared() < distance) {
-
-                nearest = view;
-                distance = offset.LengthSquared();
-
-            }
-
-        }
-
-        material.SetShaderParameter("ship_enabled", nearest != null);
-
-        if (nearest == null) {
-
-            return;
-
-        }
-
-        PlumeObstacles++;
-        Vessel target = nearest._vessel;
-        Basis rotation = new Basis(Frames.Rotation(target.Orientation)).Inverse() * volume.GlobalBasis;
-        Vector3 origin = Frames.Direction(target.Orientation.Conjugate.Rotate(nozzle - target.Position))
-            + Vector3.Up * (float)target.CentreOfMassZ;
-        Transform3D transform = new Transform3D(rotation, origin);
-        EntryField field = nearest._entryField;
-        Vector3 boxLow = new Vector3(-field.Radius, field.Base, -field.Radius);
-        Vector3 boxHigh = new Vector3(field.Radius, field.Tip, field.Radius);
-
-        material.SetShaderParameter("ship_from_plume", transform);
-        material.SetShaderParameter("ship_field", field.Distance);
-        material.SetShaderParameter("ship_domain", field.Domain);
-        material.SetShaderParameter("ship_min", boxLow);
-        material.SetShaderParameter("ship_max", boxHigh);
-
-        Transform3D toPlume = transform.AffineInverse();
-        float layer = Mathf.Max(exit * 0.7f, 0.03f);
-
-        for (int corner = 0; corner < 8; corner++) {
-
-            Vector3 point = toPlume * new Vector3((corner & 1) == 0 ? boxLow.X : boxHigh.X,
-                (corner & 2) == 0 ? boxLow.Y : boxHigh.Y, (corner & 4) == 0 ? boxLow.Z : boxHigh.Z);
-            low = low.Min(point - Vector3.One * layer);
-            high = high.Max(point + Vector3.One * layer);
-
-        }
 
     }
 
@@ -490,10 +473,12 @@ public sealed partial class VesselView {
 
         CelestialBody body = Flight.Active.Body;
         Vector3d nozzle = _vessel.Position + Frames.Sim(volume.GlobalPosition - GlobalPosition);
-        float altitude = (float)body.AltitudeOf(nozzle);
-        Vector3 up = (volume.GlobalBasis.Inverse() * Frames.Direction(nozzle.Normalized)).Normalized();
-        float impactDistance = up.Y > 0.02f ? altitude / up.Y : float.PositiveInfinity;
-        float strength = impactDistance >= 0.0f && impactDistance < length ? 1.0f - impactDistance / length : 0.0f;
+        var hit = ExhaustInteraction.Surface(body, nozzle, Frames.Sim(-volume.GlobalBasis.Y), length, Flight.Active.Time);
+        Vector3 up = volume.GlobalBasis.Inverse() * Frames.Direction(hit?.Normal ?? nozzle.Normalized);
+        float impactDistance = (float)(hit?.Distance ?? length);
+        float strength = hit.HasValue ? 1.0f - impactDistance / length : 0.0f;
+        float altitude = hit.HasValue ? up.Y * impactDistance : (float)body.HeightAboveGround(nozzle, Flight.Active.Time);
+        material.SetShaderParameter("ground_water", hit.HasValue && hit.Value.Water ? 1.0f : 0.0f);
 
         material.SetShaderParameter("ground_normal", up);
         material.SetShaderParameter("ground_offset", altitude);
@@ -544,6 +529,7 @@ public sealed partial class VesselView {
                 }
 
                 // RCS valves pulse at chamber pressure; duty changes emission, not the nozzle's pressure regime.
+                jet.Command = wanted;
                 jet.Duty = Mathf.Lerp(jet.Duty, wanted, 1.0f - Mathf.Exp(-_effectDelta / (wanted > jet.Duty ? 0.025f : 0.07f)));
                 jet.Volume.Visible = jet.Duty > 0.012f;
 

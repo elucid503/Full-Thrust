@@ -38,6 +38,7 @@ public static partial class Program {
         Reentry();
         NozzleExpansion();
         VesselContacts();
+        ExhaustContacts();
         GroundSurvey();
         ScatterSweeps();
         GroundHullContacts();
@@ -369,9 +370,9 @@ public static partial class Program {
 
     }
 
-    private static readonly double StackTorque = Zenith.ControlTorque + Meridian.ControlTorque + Aegis.ControlTorque;
+    private static readonly double StackTorque = Meridian.ControlTorque + Aegis.ControlTorque;
 
-    private static readonly double StackRcsThrust = Zenith.RcsThrustNewtons + Meridian.RcsThrustNewtons + Aegis.RcsThrustNewtons;
+    private static readonly double StackRcsThrust = Meridian.RcsThrustNewtons + Aegis.RcsThrustNewtons;
 
     private static void LaunchVehicle() {
 
@@ -432,7 +433,17 @@ public static partial class Program {
 
         Expect("burning off propellant moves the centre of mass forward", vessel.CentreOfMassZ > loadedCentre, $"{loadedCentre:F3} m to {vessel.CentreOfMassZ:F3} m");
 
-        Near("an empty stage is its shell, its engine and its bottle", booster.Mass, Zenith.DryMass + Zenith.RcsPropellantMass, 1e-9);
+        Near("an empty stage is its shell and its engine", booster.Mass, Zenith.DryMass, 1e-9);
+
+        // The bell hangs in the interstage rather than resting on a deck, so the cavity has to be
+        // wide enough to swallow it and still leave room to swing on the gimbal.
+        Expect("the interstage clears the upper stage bell",
+            booster.Hull.BayRadius > Meridian.EngineMouthRadius + 0.15,
+            $"{booster.Hull.BayRadius:F3} m around a {Meridian.EngineMouthRadius:F3} m mouth");
+
+        Expect("the bay swallows the whole bell",
+            Zenith.PayloadDatum + Meridian.EngineDeck - Meridian.EngineLength > booster.Hull.BayFloor,
+            $"mouth at {Zenith.PayloadDatum + Meridian.EngineDeck - Meridian.EngineLength:F2} m over a floor at {booster.Hull.BayFloor:F2} m");
         Near("the capsule carries no bulk propellant", capsule.PropellantMass, 0.0, 1e-12);
 
         // What the second stage has left once the booster has done its work is what M3 flew its
@@ -1119,7 +1130,8 @@ public static partial class Program {
 
         // Each piece carries its own everything: neither can reach into the other any more.
         Near("the upper stack keeps its own thrusters", stack.ThrusterTorqueLimit, Meridian.ControlTorque + Aegis.ControlTorque, 1e-9);
-        Near("and the spent stage keeps its own", spent.ThrusterTorqueLimit, Zenith.ControlTorque, 1e-9);
+        // The booster carries no thrusters at all, so once it is dropped it is on its gimbal or nothing.
+        Near("and the spent booster has none of its own", spent.ThrusterTorqueLimit, 0.0, 1e-12);
 
         Vessel capsule = Stack.Build();
 

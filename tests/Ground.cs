@@ -86,6 +86,7 @@ public static partial class Program {
         GroundRegions(terrain);
         GroundConcurrency(terrain);
         GroundContact(terrain);
+        ExhaustTerrain(terrain);
 
     }
 

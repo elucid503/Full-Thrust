@@ -655,6 +655,8 @@ public sealed partial class DebugBridge : Node {
             state["vesselCount"] = flight.VesselCount;
             state["contacts"] = flight.ContactCount;
             state["plumeObstacles"] = VesselView.Active?.PlumeObstacles ?? 0;
+            state["exhaustForce"] = flight.Vessel.ExhaustForce.Length;
+            state["exhaustTorque"] = flight.Vessel.ExhaustTorque.Length;
             state["position"] = flight.Vessel.Position.ToString();
             state["angularVelocity"] = flight.Vessel.AngularVelocity.ToString();
             state["altitude"] = flight.Altitude;
@@ -742,6 +744,8 @@ public sealed partial class DebugBridge : Node {
                     ["skinLimit"] = debris.Vessel.SkinLimit,
                     ["throttle"] = debris.Vessel.Throttle,
                     ["thrust"] = debris.Vessel.CurrentThrust,
+                    ["exhaustForce"] = debris.Vessel.ExhaustForce.Length,
+                    ["exhaustTorque"] = debris.Vessel.ExhaustTorque.Length,
                     ["rcsThrust"] = debris.Vessel.RcsForce.Length,
                     ["fuelMass"] = debris.Vessel.FuelMass,
                     ["hold"] = debris.Pilot.Hold.ToString(),

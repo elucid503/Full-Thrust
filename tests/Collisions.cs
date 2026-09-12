@@ -52,6 +52,47 @@ public static partial class Program {
 
         }
 
+        Interstage(origin);
+
+    }
+
+    // The booster is a solid to its tank dome and a tube above it. A convex hull over the whole
+    // stage would report the nested upper stage as two metres of overlap, so the first of these is
+    // what says the cavity is really empty and the second is what says its wall is really there.
+    private static void Interstage(Vector3d origin) {
+
+        Section("interstage cavity");
+
+        Hull bay = Zenith.BuildHull();
+        Vessel booster = new Vessel("booster", new[] { Zenith.BuildStage() });
+        Vessel upper = new Vessel("upper", new[] { Meridian.BuildStage() });
+
+        Vector3d seat = Vector3d.UnitZ * (Zenith.PayloadDatum - booster.CentreOfMassZ + upper.CentreOfMassZ);
+
+        booster.Position = origin;
+        upper.Position = origin + seat;
+
+        Near("a seated upper stage hangs clear of the interstage",
+            VesselCollision.Find(booster, upper, out _) ? 1.0 : 0.0, 0.0, 0.0);
+
+        double clearance = bay.BayRadius - Meridian.EngineMouthRadius;
+
+        upper.Position = origin + seat + Vector3d.UnitX * (clearance * 0.4);
+
+        Near("a small excursion still clears the wall",
+            VesselCollision.Find(booster, upper, out _) ? 1.0 : 0.0, 0.0, 0.0);
+
+        upper.Position = origin + seat + Vector3d.UnitX * (clearance + 0.08);
+
+        bool fouled = VesselCollision.Find(booster, upper, out VesselCollision.Contact wall);
+        Near("a bell driven sideways fouls the interstage wall", fouled ? 1.0 : 0.0, 1.0, 0.0);
+
+        if (fouled) {
+
+            Near("the wall pushes radially, not along the stack", Math.Abs(wall.Normal.Z), 0.0, 0.2);
+
+        }
+
     }
 
 }

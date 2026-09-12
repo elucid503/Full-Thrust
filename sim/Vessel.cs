@@ -56,6 +56,9 @@ public sealed class Vessel {
     /// by everything else; empty in vacuum.</summary>
     public AeroForces Aero { get; set; }
 
+    public Vector3d ExhaustForce { get; set; }
+    public Vector3d ExhaustTorque { get; set; }
+
     /// <summary>Temperature of the leading skin, kelvin.</summary>
     public double SkinTemperature { get; set; } = Thermal.AmbientTemperature;
 
@@ -459,7 +462,7 @@ public sealed class Vessel {
 
     }
 
-    public bool IsAccelerating => CurrentThrust > 0.0 || RcsForce.LengthSquared > 0.0;
+    public bool IsAccelerating => CurrentThrust > 0.0 || RcsForce.LengthSquared > 0.0 || ExhaustForce.LengthSquared > 0.0;
 
     /// <summary>The stage taking the flow. Which end of the stack is forward decides it, which is
     /// why a capsule keeps its shield's rating whichever way round it happens to be pointing.</summary>
