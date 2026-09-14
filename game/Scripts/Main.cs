@@ -36,6 +36,7 @@ public sealed partial class Main : Node3D {
     private WorldEnvironment _environment;
 
     private ShaderMaterial _starfield;
+    private ulong _nextSkyUpdate;
 
     private readonly Dictionary<Vessel, VesselView> _debris = new Dictionary<Vessel, VesselView>();
 
@@ -55,6 +56,7 @@ public sealed partial class Main : Node3D {
         _earthshine = GetNode<DirectionalLight3D>("Earthshine");
         _earthlight = GetNode<ReflectionProbe>("Earthlight");
         _environment = GetNode<WorldEnvironment>("WorldEnvironment");
+        _environment.Compositor = new Compositor { CompositorEffects = new Godot.Collections.Array<CompositorEffect> { new GeometryHistory() } };
 
         _sun.LookAtFromPosition(Vector3.Zero, -SunDirection, Vector3.Up);
 
@@ -77,7 +79,9 @@ public sealed partial class Main : Node3D {
         // planet is the brightest thing in the scene and belongs in the reflection, not just the diffuse.
         _earthlight.Size = new Vector3(ProbeExtent, ProbeExtent, ProbeExtent);
         _earthlight.MaxDistance = 0.0f;
-        _earthlight.UpdateMode = ReflectionProbe.UpdateModeEnum.Always;
+        // Amortize the six cubemap faces instead of redrawing the entire surrounding world each frame.
+        _earthlight.UpdateMode = ReflectionProbe.UpdateModeEnum.Once;
+        _earthlight.MeshLodThreshold = 4.0f;
         _earthlight.AmbientMode = ReflectionProbe.AmbientModeEnum.Disabled;
         _earthlight.BoxProjection = false;
         _earthlight.EnableShadows = false;
@@ -102,15 +106,17 @@ public sealed partial class Main : Node3D {
         _vessel.Build(_flight.Vessel);
         _hud.Build(_flight);
         _debug.Build(this, _flight, _free, _camera, _hud);
+        AddChild(new GraphicsOptions { Name = "GraphicsOptions" });
 
         _flight.Staged += Release;
         _flight.Scrubbed += Scrub;
         _flight.VesselChanged += SelectVessel;
 
-        Vector3 nadir = -Frames.Direction(_flight.Vessel.Position.Normalized);
-        Vector3 prograde = Frames.Direction(_flight.Vessel.Velocity.Normalized);
-
-        _camera.AimAt((nadir * 0.52f + prograde * 0.86f).Normalized(), -nadir);
+        Vector3 vertical = Frames.Direction(_flight.Site.UpAt(_flight.Body, _flight.Time));
+        double bearing = 295.0 * Math.PI / 180.0;
+        Vector3 along = Frames.Direction(_flight.Body.ToInertial(
+            _flight.Site.North * Math.Cos(bearing) + _flight.Site.East * Math.Sin(bearing), _flight.Time));
+        _camera.AimAt(along * Mathf.Cos(Mathf.DegToRad(12)) - vertical * Mathf.Sin(Mathf.DegToRad(12)), vertical);
 
         Step(0.0);
 
@@ -164,6 +170,10 @@ public sealed partial class Main : Node3D {
 
     /// <summary>Milliseconds the last simulation step took, for the debug bridge.</summary>
     public double FlightMilliseconds { get; private set; }
+    public double UpdateMilliseconds { get; private set; }
+    public double HudMilliseconds { get; private set; }
+    public double VesselMilliseconds { get; private set; }
+    public double PlanetMilliseconds { get; private set; }
 
     private void Step(double delta) {
 
@@ -182,9 +192,11 @@ public sealed partial class Main : Node3D {
 
         _vessel.Visible = _flight.Vessel.Fate != VesselFate.BurnedUp;
 
+        long vesselStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         _vessel.Sync(focus, Frames.Rotation(_flight.Vessel.Orientation));
 
         SyncDebris(focus);
+        VesselMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - vesselStarted) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 
         _earthlight.Position = focus;
 
@@ -195,6 +207,7 @@ public sealed partial class Main : Node3D {
         _camera.Sync(focus, Frames.Point(Vector3d.Zero), clearance);
 
         _free.Fly(delta);
+        _map.Sync(delta);
 
         // Two bounded cascades retain trunk/rock contact shadows without covering kilometres of scatter.
         _sun.DirectionalShadowMaxDistance = Mathf.Clamp(_camera.Distance + ShadowSlack, 180.0f, 300.0f);
@@ -209,14 +222,17 @@ public sealed partial class Main : Node3D {
 
         SyncSky(eye);
 
+        long planetStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         _planet.Sync(_flight.Time, eye);
+        PlanetMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - planetStarted) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
         _complex.Sync(_flight.Time, eye);
 
-        _map.Sync(delta);
-
+        long hudStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         _hud.Sync();
+        HudMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - hudStarted) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 
         _debug.Sync();
+        UpdateMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 
     }
 
@@ -250,6 +266,12 @@ public sealed partial class Main : Node3D {
 
         float air = 1.0f - SmoothRange(0.0f, (float)_flight.Body.AtmosphereTop, (float)altitude);
         float day = SmoothRange(-0.16f, 0.06f, up.Dot(SunDirection));
+        _environment.Environment.AmbientLightEnergy = Mathf.Lerp(0.045f, 0.26f, air * day);
+        ulong now = Time.GetTicksMsec();
+
+        // Sky radiance changes slowly; avoid regenerating the cubemap for subpixel horizon motion.
+        if (now < _nextSkyUpdate) { return; }
+        _nextSkyUpdate = now + 100;
 
         float lowerAtmosphere = 1.0f - SmoothRange((float)_flight.Body.AtmosphereTop * 0.75f,
             (float)_flight.Body.AtmosphereTop, (float)altitude);
@@ -295,6 +317,13 @@ public sealed partial class Main : Node3D {
             TonemapAgxWhite = 8.0f,
             TonemapAgxContrast = 1.08f,
             TonemapExposure = 1.0f,
+
+            SsaoEnabled = true,
+            SsaoRadius = 1.4f,
+            SsaoIntensity = 0.85f,
+            SsaoPower = 1.25f,
+            SsaoDetail = 0.5f,
+            SsaoLightAffect = 0.0f,
 
             GlowEnabled = true,
             GlowIntensity = 0.32f,

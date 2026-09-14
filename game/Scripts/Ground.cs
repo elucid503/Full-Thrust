@@ -76,6 +76,7 @@ public sealed partial class Ground : Node3D {
         public Color[] Depths;
         public int[] Indices;
         public float[] ParentOffsets;
+        public float[] CoastalHeights;
 
         public Vector3d Anchor;
 
@@ -486,7 +487,7 @@ public sealed partial class Ground : Node3D {
 
     private static MeshInstance3D Assemble(Surface surface, Material material) {
 
-        Godot.Collections.Array arrays = new Godot.Collections.Array();
+        using Godot.Collections.Array arrays = new Godot.Collections.Array();
 
         arrays.Resize((int)Mesh.ArrayType.Max);
 
@@ -498,10 +499,12 @@ public sealed partial class Ground : Node3D {
         arrays[(int)Mesh.ArrayType.TexUV2] = surface.Detail;
         arrays[(int)Mesh.ArrayType.Index] = surface.Indices;
         arrays[(int)Mesh.ArrayType.Custom0] = surface.ParentOffsets;
+        arrays[(int)Mesh.ArrayType.Custom1] = surface.CoastalHeights;
 
         ArrayMesh mesh = new ArrayMesh();
 
         Mesh.ArrayFormat format = (Mesh.ArrayFormat)((ulong)Mesh.ArrayCustomFormat.RgbaFloat << (int)Mesh.ArrayFormat.FormatCustom0Shift);
+        format |= (Mesh.ArrayFormat)((ulong)Mesh.ArrayCustomFormat.RFloat << (int)Mesh.ArrayFormat.FormatCustom1Shift);
         mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays, flags: format);
 
         return new MeshInstance3D {
@@ -559,6 +562,7 @@ public sealed partial class Ground : Node3D {
     // dead the moment the mesh is woven, so allocating it fresh only feeds the collector.
     [ThreadStatic] private static Vector3d[] _points;
     [ThreadStatic] private static double[] _sounding;
+    [ThreadStatic] private static double[] _coastalHeights;
 
     private static Surface Tessellate(Terrain terrain, double radius, int face, double s, double t, double span, CancellationToken cancellation) {
 
@@ -571,6 +575,7 @@ public sealed partial class Ground : Node3D {
 
         Vector3d[] points = _points ??= new Vector3d[side * side];
         double[] sounding = _sounding ??= new double[side * side];
+        double[] coastalHeights = _coastalHeights ??= new double[side * side];
 
         double lowest = double.MaxValue;
         double highest = double.MinValue;
@@ -587,7 +592,7 @@ public sealed partial class Ground : Node3D {
 
                 Vector3d direction = Direction(face, u, v);
 
-                double elevation = terrain.Elevation(direction, spacing);
+                double elevation = terrain.Elevation(direction, spacing, out double coastalHeight);
 
                 // Clamped at the datum: below sea level the mesh is the water's own surface, which
                 // is what a vehicle touches and what the shader shades as sea. The depth is kept,
@@ -602,6 +607,7 @@ public sealed partial class Ground : Node3D {
                 points[index] = direction * (radius + standing);
                 // Preserve both sides of sea level so the shoreline crosses triangles at zero height.
                 sounding[index] = -elevation;
+                coastalHeights[index] = coastalHeight;
 
             }
 
@@ -609,11 +615,11 @@ public sealed partial class Ground : Node3D {
 
         Vector3d anchor = Direction(face, s + span * 0.5, t + span * 0.5) * (radius + (lowest + highest) * 0.5);
 
-        return Weave(radius, s, t, span, points, sounding, anchor);
+        return Weave(radius, s, t, span, points, sounding, coastalHeights, anchor);
 
     }
 
-    private static Surface Weave(double radius, double s, double t, double span, Vector3d[] points, double[] sounding, Vector3d anchor) {
+    private static Surface Weave(double radius, double s, double t, double span, Vector3d[] points, double[] sounding, double[] coastalHeights, Vector3d anchor) {
 
         int side = Grid + 3;
         int line = Grid + 1;
@@ -629,6 +635,7 @@ public sealed partial class Ground : Node3D {
         Vector2[] detail = new Vector2[count];
         Color[] depths = new Color[count];
         float[] parentOffsets = new float[count * 4];
+        float[] coastal = new float[count];
 
         // The detail lattice is metres from an origin each patch picks for itself, because a
         // face-wide coordinate interpolated in single precision steps visibly once a patch is a few
@@ -692,6 +699,7 @@ public sealed partial class Ground : Node3D {
                 parentOffsets[index * 4 + 1] = parentOffset.Y;
                 parentOffsets[index * 4 + 2] = parentOffset.Z;
                 parentOffsets[index * 4 + 3] = (float)-sounding[sample];
+                coastal[index] = (float)coastalHeights[sample];
 
                 Vector3 axis = Frames.Direction(tangent);
 
@@ -749,6 +757,7 @@ public sealed partial class Ground : Node3D {
             Depths = depths,
             Indices = indices,
             ParentOffsets = parentOffsets,
+            CoastalHeights = coastal,
 
             Anchor = anchor,
 
@@ -812,6 +821,7 @@ public sealed partial class Ground : Node3D {
 
             Array.Copy(surface.Tangents, source * 4, surface.Tangents, wall * 4, 4);
             Array.Copy(surface.ParentOffsets, source * 4, surface.ParentOffsets, wall * 4, 4);
+            surface.CoastalHeights[wall] = surface.CoastalHeights[source];
 
         }
 

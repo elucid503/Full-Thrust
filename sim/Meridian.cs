@@ -72,10 +72,8 @@ public static class Meridian {
     // craft diagram all read these, so none of them can place a nozzle the others disagree with.
     public const int RcsPorts = 4;
 
-    // One ring at each end of the stage rather than one amidships: couples act on the longest lever
-    // the stage has, and a pair of rings can translate as well as rotate. Both stand on the skin -
-    // letting them into the tank wall buys a little drag and costs a hole in a pressure vessel.
-    public const double RcsAftHeight = 0.55;
+    // Two rings retain a long control lever; their recessed service ports sit behind the outer skin.
+    public const double RcsAftHeight = 1.50;
     public const double RcsForwardHeight = 7.30;
     public const double RcsHalfHeight = 0.30;
     public const double RcsPortRadius = 0.18;
@@ -234,6 +232,7 @@ public static class Meridian {
 
             Count = RcsPorts,
             RingRadius = BodyRadius,
+            Depth = 0.32,
 
             Profile = BuildQuad(datum, height),
 

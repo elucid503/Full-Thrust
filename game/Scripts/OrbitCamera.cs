@@ -13,7 +13,7 @@ public sealed partial class OrbitCamera : Node3D {
 
     public static OrbitCamera Active { get; private set; }
 
-    [Export] public float Distance { get; set; } = 26.0f;
+    [Export] public float Distance { get; set; } = 95.0f;
     [Export] public float Yaw { get; set; } = 2.5f;
     [Export] public float Pitch { get; set; } = 0.22f;
 
@@ -136,6 +136,18 @@ public sealed partial class OrbitCamera : Node3D {
         Vector3 look = (GlobalPosition - eye).Normalized();
 
         _camera.LookAt(GlobalPosition, Mathf.Abs(look.Dot(vertical)) > 0.999f ? Vector3.Up : vertical);
+
+        FullThrust.Sim.Vessel vessel = Flight.Active?.Vessel;
+
+        if (GraphicsOptions.LaunchShake && vessel != null && !Flight.Active.DebugPaused) {
+
+            float altitude = (float)Flight.Active.Altitude;
+            float amplitude = (float)vessel.Throttle * (1.0f - Mathf.SmoothStep(80, 1200, altitude)) * 0.0012f;
+            float time = (float)(Flight.Active.Time % 100.0);
+            _camera.RotateObjectLocal(Vector3.Right, amplitude * (Mathf.Sin(time * 37.0f) + 0.4f * Mathf.Sin(time * 63.0f)));
+            _camera.RotateObjectLocal(Vector3.Up, amplitude * 0.6f * Mathf.Sin(time * 43.0f));
+
+        }
 
     }
 

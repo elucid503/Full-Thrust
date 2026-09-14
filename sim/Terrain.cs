@@ -198,9 +198,13 @@ public sealed class Terrain {
     /// <summary>Ground elevation with every detail octave finer than a sample spacing left off.
     /// A mesh built at kilometre spacing cannot carry a fifteen-metre octave and pays for it on
     /// every vertex it places; pass no spacing, as the physics does, to read the whole field.</summary>
-    public double Elevation(Vector3d direction, double spacing) {
+    public double Elevation(Vector3d direction, double spacing) => Elevation(direction, spacing, out _);
+
+    /// <summary>Samples ground and its smooth coastal reference together, before local relief changes shoreline slopes.</summary>
+    public double Elevation(Vector3d direction, double spacing, out double coastalHeight) {
 
         double length = direction.Length;
+        coastalHeight = 0.0;
 
         if (length <= 0.0) {
 
@@ -218,7 +222,9 @@ public sealed class Terrain {
 
         double measured = Sample(u, v);
 
-        double natural = PreserveCoast(measured, measured + Detail(unit, Ruggedness(u, v, latitude), spacing, measured));
+        double coast = CoastalLandforms.Elevation(unit, _radius, measured);
+        coastalHeight = Level(unit, coast);
+        double natural = PreserveCoast(coast, coast + Detail(unit, Ruggedness(u, v, latitude), spacing, coast));
 
         return Level(unit, natural);
 
@@ -242,7 +248,8 @@ public sealed class Terrain {
 
         double measured = Sample(u, v);
 
-        return PreserveCoast(measured, measured + Detail(unit, Ruggedness(u, v, latitude), 0.0, measured));
+        double coast = CoastalLandforms.Elevation(unit, _radius, measured);
+        return PreserveCoast(coast, coast + Detail(unit, Ruggedness(u, v, latitude), 0.0, coast));
 
     }
 
@@ -311,7 +318,24 @@ public sealed class Terrain {
         double rolling = rollingOctaves > 0.0
             ? Noise.Fractal(at.X, at.Y, at.Z, rollingOctaves, DetailGain) * RollingAmplitude
             : 0.0;
+        double province = Noise.Value(at.X * 0.31 + 13.0, at.Y * 0.31, at.Z * 0.31 - 7.0);
+        rolling *= 1.15 + province * 0.75;
         rolling *= 0.18 + 0.82 * Smoothstep(0.0, 18.0, Math.Abs(measured));
+
+        double coastal = Smoothstep(0.0, 2.0, measured) * (1.0 - Smoothstep(15.0, 45.0, measured))
+            * (1.0 - Smoothstep(0.55, 0.75, Math.Abs(unit.Z)));
+        if (coastal > 0.0) {
+
+            Vector3d hummocks = unit * (_radius / 120.0);
+            double localOctaves = spacing > 0.0 ? Math.Clamp(Math.Log2(480.0 / Math.Max(spacing, 1.0)), 0.0, 3.0) : 3.0;
+            rolling += Noise.Fractal(hummocks.X, hummocks.Y, hummocks.Z, localOctaves, 0.48) * coastal * 1.4;
+            double dune = Math.Sin(hummocks.X * 2.1 + hummocks.Y * 1.3 + hummocks.Z * 0.7
+                + Noise.Value(hummocks.X * 0.15, hummocks.Y * 0.15, hummocks.Z * 0.15) * 4.0);
+            double resolvedDunes = 1.0 - Smoothstep(20.0, 90.0, spacing);
+            rolling += (dune + 0.3 * Math.Sin(dune * 2.4)) * coastal * resolvedDunes
+                * Smoothstep(1.5, 5.0, measured) * (0.8 + Math.Max(province, 0.0) * 3.0);
+
+        }
 
         double ridgeOctaves = Math.Clamp(resolved, 0.0, RidgeOctaves);
 
@@ -328,7 +352,11 @@ public sealed class Terrain {
 
         // The ridged sum is normalised by its own octaves, so it does not thin as they are dropped.
         // Its amplitude is faded over the last one instead.
-        return rolling + ridged * RidgeAmplitude * ruggedness * Math.Min(ridgeOctaves, 1.0);
+        double drainage = Noise.Value(at.X * 5.0 + warp, at.Y * 5.0 - warp, at.Z * 5.0 + 71.0);
+        double gullies = Math.Pow(Math.Max(0.0, 1.0 - Math.Abs(drainage) * 3.0), 4.0);
+        double resolvedGullies = 1.0 - Smoothstep(120.0, 500.0, spacing);
+        return rolling + ridged * RidgeAmplitude * ruggedness * Math.Min(ridgeOctaves, 1.0)
+            - gullies * ruggedness * resolvedGullies * Smoothstep(5.0, 40.0, measured) * (12.0 + 8.0 * province);
 
     }
 
@@ -366,8 +394,7 @@ public sealed class Terrain {
 
     private double Count(int x, int y) => _counts[y * _width + x];
 
-    // Detail may roughen either side of a shoreline, but it cannot turn a surveyed land texel into
-    // sea or raise surveyed seabed through the datum.
+    // Relief preserves the refined shoreline shared with the surface shader.
     private static double PreserveCoast(double measured, double detailed) => measured >= 0.0
         ? Math.Max(detailed, 0.01)
         : Math.Min(detailed, -0.01);

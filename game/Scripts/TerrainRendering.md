@@ -1,9 +1,9 @@
 # Close terrain
 
-Water and atmosphere are unchanged. The launch site retains only its mount; its level footing is
-12 metres in radius, blending back into natural terrain by 90 metres. Ground clutter can grow
-from 20 metres away, while trees retain additional crown clearance. Close land gains
-parallax occlusion mapping, height-based rock/soil blending, material cavity occlusion and roughness.
+The launch complex stands on a 36 metre level plateau, blending back into natural terrain by
+90 metres. Its paved apron is 48 by 40 metres. Grass and stones stop 0.15 metres beyond
+that rectangle; trees stop 0.6 metres beyond it. The remaining level ground supports vegetation.
+Close land gains parallax occlusion mapping, height-based rock/soil blending, material cavity occlusion and roughness.
 The added material treatment fades between 45–140 metres and also fades when its texels cannot be
 resolved. At grazing angles the depth offset tapers to avoid stretched horizons. This is a shallow
 surface effect, not tessellation or collision displacement.

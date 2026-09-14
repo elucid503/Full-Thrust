@@ -160,10 +160,6 @@ public sealed partial class VesselView {
 
         float scale = gauge / NozzleGauge;
 
-        float seat = part.Depth > 0.0
-            ? (float)(stage.Hull.RadiusAt(height) - part.Depth)
-            : (float)stage.Hull.RadiusAt(height);
-
         // A pocket takes the pair further apart than a pod does, because each bell has to clear the
         // sill and the lintel of the cut rather than just the skin.
         float spread = part.Depth > 0.0 ? RcsOffset : (float)part.Length * 0.28f;
@@ -172,15 +168,17 @@ public sealed partial class VesselView {
 
             float angle = Mathf.Tau * PortCentre(part.Count, index) / RadialSegments;
 
-            Vector3 outward = Surface(stage, angle, height);
             Vector3 side = Vector3.Up.Cross(Radial(angle)).Normalized();
 
             // One nozzle canted forward and one aft: a port that only fired radially could not pitch.
             for (int sense = -1; sense <= 1; sense += 2) {
 
-                Vector3 axis = (outward * Mathf.Cos(RcsCant) + Vector3.Up * (Mathf.Sin(RcsCant) * sense)).Normalized();
-
-                Vector3 position = Radial(angle) * seat + axis * (NozzleBase * scale) + Vector3.Up * (height + spread * sense);
+                float station = height + spread * sense;
+                float seat = (float)(stage.Hull.RadiusAt(station) - part.Depth);
+                Vector3 outward = Surface(stage, angle, station);
+                Vector3 along = outward.Cross(side).Normalized();
+                Vector3 axis = (outward * Mathf.Cos(RcsCant) + along * (Mathf.Sin(RcsCant) * sense)).Normalized();
+                Vector3 position = Radial(angle) * seat + axis * (NozzleBase * scale) + Vector3.Up * station;
 
                 yield return (position, axis, side, scale);
 

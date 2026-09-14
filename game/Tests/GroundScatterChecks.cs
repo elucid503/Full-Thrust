@@ -196,8 +196,16 @@ public sealed partial class GroundScatterChecks : Node {
             OuterRadius = 600.0,
 
         });
-        Check(Transforms(Generate(clearedKey)).Length == 0, "launch clearing excludes grass");
-        Check(Transforms(Generate(Key(28.7, -80.8, false))).Length == 0, "launch clearing excludes stones");
+        Check((bool)type.GetMethod("Cleared", Private).Invoke(scatter, new object[] { centre }), "pavement excludes scatters");
+        Vector3d eastAtPad = Vector3d.Cross(Vector3d.UnitZ, centre).Normalized;
+        Vector3d northAtPad = Vector3d.Cross(centre, eastAtPad);
+        foreach (Vector3d offset in new[] { eastAtPad * 24.5, -eastAtPad * 24.5, northAtPad * 20.5, -northAtPad * 20.5 }) {
+
+            Vector3d beside = (centre * body.Radius + offset).Normalized;
+            Check(!(bool)type.GetMethod("Cleared", Private).Invoke(scatter, new object[] { beside }), "scatters allowed immediately beyond pavement edge");
+
+        }
+        Check(Transforms(Generate(clearedKey)).Length > 0, "levelled ground beyond the pavement supports vegetation");
 
         foreach (double latitude in new[] { 0.0, 28.7, 89.9999, -89.9999 }) {
 
@@ -212,17 +220,18 @@ public sealed partial class GroundScatterChecks : Node {
         Check(scatter.Pending == 0 && scatter.CellCount == 0, "no streaming outside close range");
         LaunchSite site = LaunchSite.Home;
         site.Commission(body);
-        object siteGrove = Generate(Key(28.52, -80.62, true));
+        object siteGrove = Generate(Key(28.52, -80.616, true));
         Transform3D[] sitePlants = Transforms(siteGrove);
-        Check(sitePlants.Length > 0, "vegetation grows in launch-site cell");
+        Check(sitePlants.Length > 0, "vegetation grows beside the launch apron");
         double closest = double.MaxValue;
         foreach (Transform3D transform in sitePlants) {
 
             Vector3d direction = (Anchor(siteGrove) + Frames.Sim(transform.Origin)).Normalized;
+            Check(!Landscape.OnPavement(direction, body.Terrain, body.Radius, 0.14), "generated plant remains outside pavement");
             closest = Math.Min(closest, (direction - site.Up).Length * body.Radius);
 
         }
-        Check(closest >= 20.0 && closest < (broad ? 300.0 : 100.0), "launch plants clear mount without a wide barren zone");
+        Check(closest >= 20.0 && closest < (broad ? 300.0 : 150.0), "launch plants clear the apron and resume nearby");
         Vector3d physics = body.Radius * Vector3d.UnitX;
         type.GetField("_physicsFocus", Private).SetValue(scatter, (Vector3d?)physics);
         type.GetMethod("Select", Private).Invoke(scatter, new object[] { -physics * 2, false });

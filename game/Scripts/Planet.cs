@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 using FullThrust.Sim;
 
@@ -10,29 +11,12 @@ namespace FullThrust.Game;
 /// over both. Reads the body; holds no sim state.</summary>
 public sealed partial class Planet : Node3D {
 
-    // Bounds of the deck sampled by its optical altitude surfaces. A seven-kilometre top is where
-    // cumulus actually stops, and the base is where a coastal deck sits on a summer morning.
+    // Coastal cumulus shares one physical deck between view rays and ground shadows.
     private const float CloudBase = 900.0f;
     private const float CloudTop = 3800.0f;
 
-    // The carrier shell has to enclose the deck at every angle, so it stands off the top by more
-    // than the sagitta of its own tessellation.
-    private const float CloudStandoff = 1600.0f;
-
-    private const int CloudSegments = 192;
-    private const int CloudRings = 96;
-
-    private const int AtmosphereSegments = 96;
-    private const int AtmosphereRings = 48;
-
     // Where the shadow is taken from, which is the middle of the deck rather than either edge.
     private const float ShadowDeck = 1900.0f;
-
-    // The deck turns fractionally faster than the ground, so cloud shadows creep rather than lock.
-    private const double CloudRotationRatio = 1.02;
-
-    // How far the cloud noise itself is carried per second, in tiles of its own volume.
-    private const double CloudDrift = 1.6e-6;
 
     public static Planet Active { get; private set; }
 
@@ -40,15 +24,24 @@ public sealed partial class Planet : Node3D {
 
     private Ground _ground;
     private Forest _forest;
+    private Forest _canopy;
     private GroundScatter _scatter;
     private GroundScatter _broadScatter;
+    private CloudShadows _cloudShadows;
 
     private ShaderMaterial[] _faces;
     private ShaderMaterial _clouds;
     private Texture3D _cloudShape;
     private Texture3D _cloudDetail;
     private Texture3D _smokeNoise;
+    private static Texture3D _sharedCloudShape;
+    private static Texture3D _sharedCloudDetail;
+    private static Texture3D _sharedSmokeNoise;
+    private static bool _shapeReady;
+    private static bool _detailReady;
+    public bool CloudTexturesReady => _shapeReady && _detailReady;
     private ShaderMaterial _atmosphere;
+    private readonly Dictionary<string, double> _opticalParameters = new();
 
     // The shells sit on the planet's centre; the quadtree places every patch on its own absolute
     // transform, so this node stays at the origin and nothing under it is offset twice.
@@ -88,12 +81,13 @@ public sealed partial class Planet : Node3D {
 
     public int TreeCount => _forest?.TreeCount ?? 0;
     public int ForestCells => _forest?.CellCount ?? 0;
-    public int ForestPending => _forest?.Pending ?? 0;
+    public int ForestPending => (_forest?.Pending ?? 0) + (_canopy?.Pending ?? 0);
     public int ScatterCount => (_scatter?.ScatterCount ?? 0) + (_broadScatter?.ScatterCount ?? 0);
     public int ScatterCells => (_scatter?.CellCount ?? 0) + (_broadScatter?.CellCount ?? 0);
     public int ScatterPending => (_scatter?.Pending ?? 0) + (_broadScatter?.Pending ?? 0);
     public int ScatterFailures => (_scatter?.Failures ?? 0) + (_broadScatter?.Failures ?? 0);
-    public int ForestFailures => _forest?.Failures ?? 0;
+    public int ForestFailures => (_forest?.Failures ?? 0) + (_canopy?.Failures ?? 0);
+    public int CanopyCount => _canopy?.TreeCount ?? 0;
 
     public void Build(CelestialBody body, Vector3 sunDirection) {
 
@@ -106,9 +100,24 @@ public sealed partial class Planet : Node3D {
 
         Texture2D cloud = GD.Load<Texture2D>("res://Assets/Planet/clouds.jpg");
 
-        _cloudShape = Volume(128, 0.035f, 4);
-        _cloudDetail = Billow(64, 0.075f, 3);
-        _smokeNoise = Worley(64, 0.055f);
+        if (_sharedCloudShape == null) {
+
+            _sharedCloudShape = Volume(256, 0.0175f, 5);
+            _sharedCloudDetail = Worley(128, 0.0375f);
+            _sharedSmokeNoise = Worley(64, 0.055f);
+            _sharedCloudShape.Changed += () => {
+
+                _sharedCloudShape = FilteredVolume.Build(_sharedCloudShape);
+                _shapeReady = true;
+
+            };
+            _sharedCloudDetail.Changed += () => _detailReady = true;
+
+        }
+        _cloudShape = _sharedCloudShape;
+        _cloudDetail = _sharedCloudDetail;
+        _smokeNoise = _sharedSmokeNoise;
+        BuildSurfaceVolumes();
 
         BuildFaces(radius, cloud, sunDirection);
 
@@ -120,6 +129,9 @@ public sealed partial class Planet : Node3D {
         _forest = new Forest { Name = "Forest" };
         AddChild(_forest);
         _forest.Build(body, GD.Load<Texture2D>("res://Assets/Planet/biomes.png"));
+        _canopy = new Forest { Name = "DistantForest" };
+        AddChild(_canopy);
+        _canopy.Build(body, GD.Load<Texture2D>("res://Assets/Planet/biomes.png"), true);
 
         _scatter = new GroundScatter { Name = "GroundScatter" };
         AddChild(_scatter);
@@ -128,23 +140,40 @@ public sealed partial class Planet : Node3D {
         AddChild(_broadScatter);
         _broadScatter.Build(body, GD.Load<Texture2D>("res://Assets/Planet/biomes.png"), true);
 
+        _cloudShadows = new CloudShadows { Name = "CloudShadows" };
+        AddChild(_cloudShadows);
+        _cloudShadows.Build(cloud, _cloudShape, _cloudDetail, radius, CloudBase, CloudTop, CoastalWeatherDirection());
+        foreach (ShaderMaterial face in _faces) { _cloudShadows.AddReceiver(face); }
+        _cloudShadows.AddReceiver(_forest.SurfaceMaterial);
+        _cloudShadows.AddReceiver(_canopy.SurfaceMaterial);
+        _cloudShadows.AddReceiver(_scatter.SurfaceMaterial);
+        _cloudShadows.AddReceiver(_broadScatter.SurfaceMaterial);
+
         _atmosphere = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Atmosphere.gdshader") };
+        _cloudShadows.AddReceiver(_atmosphere);
 
         _atmosphere.SetShaderParameter("planet_radius", radius);
         _atmosphere.SetShaderParameter("atmosphere_radius", atmosphereRadius);
         _atmosphere.SetShaderParameter("sun_direction", sunDirection);
         _atmosphere.SetShaderParameter("rayleigh_height", (float)body.Atmosphere.ScaleHeight);
+        _opticalParameters["planet_radius"] = radius;
+        _opticalParameters["atmosphere_radius"] = atmosphereRadius;
+        _opticalParameters["rayleigh_height"] = body.Atmosphere.ScaleHeight;
+        _opticalParameters["mie_height"] = 1200.0;
+        _opticalParameters["ozone_height"] = 22000.0;
+        _opticalParameters["ozone_half_width"] = 15000.0;
+        RefreshAtmosphereLookup();
 
-        // Clouds are integrated first and the air composites over them. The cloud shader already
-        // carries its own extinction; this final pass is what gives a distant cloud the same aerial
-        // perspective as the ground under it and keeps the orbital deck inside the blue limb.
-        _atmosphere.RenderPriority = 1;
+        // Clouds composite afterward and integrate foreground air to their optical centroid.
+        _atmosphere.RenderPriority = 0;
 
         _clouds = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Clouds.gdshader") };
+        _cloudShadows.AddReceiver(_clouds);
 
         _clouds.SetShaderParameter("cloud_map", cloud);
         _clouds.SetShaderParameter("shape_noise", _cloudShape);
         _clouds.SetShaderParameter("detail_noise", _cloudDetail);
+        _clouds.SetShaderParameter("coastal_weather_direction", CoastalWeatherDirection());
 
         _clouds.SetShaderParameter("sun_direction", sunDirection);
         _clouds.SetShaderParameter("planet_radius", radius);
@@ -153,13 +182,13 @@ public sealed partial class Planet : Node3D {
 
         _clouds.RenderPriority = 2;
 
-        _deck = Shell("Clouds", radius + CloudTop + CloudStandoff, CloudSegments, CloudRings, _clouds);
+        _deck = SkyPass("Clouds", _clouds);
 
         AddChild(_deck);
 
         if (body.HasAtmosphere) {
 
-            _air = Shell("Atmosphere", atmosphereRadius * 1.002f, AtmosphereSegments, AtmosphereRings, _atmosphere);
+            _air = SkyPass("Atmosphere", _atmosphere);
 
             AddChild(_air);
 
@@ -221,6 +250,7 @@ public sealed partial class Planet : Node3D {
             material.SetShaderParameter("cloud_map", cloud);
             material.SetShaderParameter("shape_noise", _cloudShape);
             material.SetShaderParameter("detail_noise", _cloudDetail);
+            material.SetShaderParameter("coastal_weather_direction", CoastalWeatherDirection());
             material.SetShaderParameter("base_radius", radius + CloudBase);
             material.SetShaderParameter("top_radius", radius + CloudTop);
 
@@ -247,6 +277,17 @@ public sealed partial class Planet : Node3D {
 
     /// <summary>Live shader tuning from the debug bridge; scalars, or comma-separated vectors.</summary>
     public bool Tune(string target, string parameter, string value) {
+
+        if (target == "atmosphere" && _opticalParameters.ContainsKey(parameter)) {
+
+            if (!double.TryParse(value, out double number) || !double.IsFinite(number) || number <= 0.0) { return false; }
+            double radius = parameter == "planet_radius" ? number : _opticalParameters["planet_radius"];
+            double top = parameter == "atmosphere_radius" ? number : _opticalParameters["atmosphere_radius"];
+            if (top <= radius) { return false; }
+            _opticalParameters[parameter] = number;
+            RefreshAtmosphereLookup();
+
+        }
 
         string[] parts = value.Split(',');
 
@@ -287,11 +328,49 @@ public sealed partial class Planet : Node3D {
 
     }
 
+    private static Vector3 CoastalWeatherDirection() {
+
+        LaunchSite site = LaunchSite.Home;
+        double cosine = Math.Cos(site.Latitude);
+        return Frames.Direction(new Vector3d(cosine * Math.Cos(site.Longitude), cosine * Math.Sin(site.Longitude), Math.Sin(site.Latitude)));
+
+    }
+
+    private void RefreshAtmosphereLookup() {
+
+        foreach ((string name, double value) in _opticalParameters) {
+
+            _atmosphere.SetShaderParameter(name, (float)value);
+
+        }
+
+        _atmosphere.SetShaderParameter("sun_optical_depth", AtmosphereLookup.Build(
+            _opticalParameters["planet_radius"], _opticalParameters["atmosphere_radius"],
+            _opticalParameters["rayleigh_height"], _opticalParameters["mie_height"],
+            _opticalParameters["ozone_height"], _opticalParameters["ozone_half_width"]));
+
+    }
+
     public void Sync(double time, Vector3d eye) {
+
+        if (_shapeReady && _cloudShape != _sharedCloudShape) {
+
+            _cloudShape = _sharedCloudShape;
+            _clouds.SetShaderParameter("shape_noise", _cloudShape);
+            foreach (ShaderMaterial face in _faces) {
+
+                face.SetShaderParameter("shape_noise", _cloudShape);
+
+            }
+            _cloudShadows.SetShape(_cloudShape);
+
+        }
 
         Vector3 centre = Frames.Point(Vector3d.Zero);
 
         _deck.Position = centre;
+        _clouds.SetShaderParameter("fog_enabled", GraphicsOptions.Haze && _body.HasAtmosphere ? 1.0f : 0.0f);
+        _clouds.SetShaderParameter("sun_shafts", GraphicsOptions.SunShafts ? 1.0f : 0.0f);
 
         if (_air != null) {
 
@@ -300,12 +379,14 @@ public sealed partial class Planet : Node3D {
         }
 
         _ground.Sync(time, eye);
+        _cloudShadows.Sync(_body, time, eye, Main.SunDirection);
         SyncEffects(time);
 
-        float deck = (float)(_body.SpinAt(time) * CloudRotationRatio);
+        Basis cloudFrame = CloudWind.Frame(_body, time);
         float altitude = (float)Math.Max(0.0, _body.HeightAboveGround(eye, time));
         float materialAltitude = (float)Math.Max(0.0, eye.Length - _body.Radius);
         _forest.Sync(time, eye, altitude);
+        _canopy.Sync(time, eye, altitude);
         _scatter.Sync(time, eye, altitude);
         _broadScatter.Sync(time, eye, altitude);
         double spin = _body.SpinAt(time);
@@ -316,27 +397,22 @@ public sealed partial class Planet : Node3D {
             face.SetShaderParameter("planet_centre", centre);
             face.SetShaderParameter("camera_altitude", materialAltitude);
             face.SetShaderParameter("terrain_rotation", rotation);
-            face.SetShaderParameter("cloud_spin", deck);
-            face.SetShaderParameter("drift", (float)(time * CloudDrift));
+            face.SetShaderParameter("cloud_frame", cloudFrame);
 
         }
 
         _clouds.SetShaderParameter("planet_centre", centre);
-        _clouds.SetShaderParameter("cloud_spin", deck);
-        _clouds.SetShaderParameter("drift", (float)(time * CloudDrift));
-        _clouds.SetShaderParameter("frame_jitter", (float)(Engine.GetProcessFrames() % 16) / 16.0f);
+        _clouds.SetShaderParameter("cloud_frame", cloudFrame);
+        _clouds.SetShaderParameter("view_steps", GraphicsOptions.CloudSteps);
+        _clouds.SetShaderParameter("eye_height", (float)(eye.Length - _body.Radius));
+        _clouds.SetShaderParameter("eye_up", Frames.Direction(eye.Normalized));
 
         _atmosphere.SetShaderParameter("planet_centre", centre);
+        _atmosphere.SetShaderParameter("sun_shafts", GraphicsOptions.SunShafts ? 1.0f : 0.0f);
 
     }
 
-    // The frequency is in voxels of the volume itself, not in metres: the shader decides how many
-    // metres a tile of it covers. Godot generates these on its own threads at load, which is a
-    // volume that never has to be built by a tool or carried in the repository.
-    // Worley rather than value noise, and inverted: the cells read as the cauliflower a cloud
-    // frays into, where a second field of the same smooth noise only ever softened its edges.
-    // A single unfractalised octave keeps the full normalised range; fBm of cellular distance collapses
-    // toward its mean, and averaging octaves in the shader narrows it further until erosion does nothing.
+    // A single cellular octave preserves the distance contrast needed for cloud billows and erosion.
     private static NoiseTexture3D Worley(int size, float frequency) {
 
         FastNoiseLite noise = new FastNoiseLite {
@@ -348,37 +424,6 @@ public sealed partial class Planet : Node3D {
             Frequency = frequency,
 
             FractalType = FastNoiseLite.FractalTypeEnum.None,
-
-        };
-
-        return new NoiseTexture3D {
-
-            Noise = noise,
-
-            Width = size,
-            Height = size,
-            Depth = size,
-
-            Seamless = true,
-            Normalize = true,
-
-        };
-
-    }
-
-    private static NoiseTexture3D Billow(int size, float frequency, int octaves) {
-
-        FastNoiseLite noise = new FastNoiseLite {
-
-            NoiseType = FastNoiseLite.NoiseTypeEnum.Cellular,
-            CellularReturnType = FastNoiseLite.CellularReturnTypeEnum.Distance,
-            CellularDistanceFunction = FastNoiseLite.CellularDistanceFunctionEnum.Euclidean,
-
-            Frequency = frequency,
-
-            FractalType = FastNoiseLite.FractalTypeEnum.Fbm,
-            FractalOctaves = octaves,
-            FractalGain = 0.5f,
 
         };
 
@@ -425,22 +470,13 @@ public sealed partial class Planet : Node3D {
 
     }
 
-    private static MeshInstance3D Shell(string name, float radius, int segments, int rings, Material material) {
-
-        SphereMesh mesh = new SphereMesh {
-
-            Radius = radius,
-            Height = radius * 2.0f,
-
-            RadialSegments = segments,
-            Rings = rings,
-
-        };
+    private static MeshInstance3D SkyPass(string name, Material material) {
 
         return new MeshInstance3D {
 
             Name = name,
-            Mesh = mesh,
+            Mesh = new QuadMesh { Size = new Vector2(2.0f, 2.0f) },
+            CustomAabb = new Aabb(-Vector3.One * 100_000_000.0f, Vector3.One * 200_000_000.0f),
             Layers = 2,
 
             MaterialOverride = material,

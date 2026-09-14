@@ -63,6 +63,12 @@ public static partial class Program {
 
         }
 
+        Vector3d coastProbe = Site(28.52, -80.55);
+        double detailedGround = terrain.Elevation(coastProbe, 0.0, out double closeCoast);
+        terrain.Elevation(coastProbe, 1000.0, out double distantCoast);
+        Near("shoreline reference is independent of terrain detail LOD", closeCoast, distantCoast, 1e-12);
+        Near("coastal reference sampling preserves physical terrain", detailedGround, terrain.Elevation(coastProbe), 1e-12);
+
         Expect("himalaya stands up", terrain.Elevation(Site(28.0, 86.9)) > 800.0, $"{terrain.Elevation(Site(28.0, 86.9)):F0} m");
         Expect("mid atlantic is deep", terrain.Elevation(Site(30.0, -40.0)) < -400.0, $"{terrain.Elevation(Site(30.0, -40.0)):F0} m");
         Expect("amazon basin is low land", terrain.Elevation(Site(-3.0, -60.0)) is > 0.0 and < 120.0, $"{terrain.Elevation(Site(-3.0, -60.0)):F0} m");
@@ -84,9 +90,33 @@ public static partial class Program {
 
         GroundSpectrum(terrain);
         GroundRegions(terrain);
+        ShorelineLandforms();
         GroundConcurrency(terrain);
         GroundContact(terrain);
         ExhaustTerrain(terrain);
+
+    }
+
+    private static void ShorelineLandforms() {
+
+        Section("shoreline landforms");
+        double minimum = double.MaxValue;
+        double maximum = double.MinValue;
+        for (int i = 0; i < 48; i++) {
+
+            Vector3d direction = Site(-65.0 + i * 2.7, -173.0 + i * 7.1);
+            double elevation = CoastalLandforms.Elevation(direction, Home.Radius, 0.0);
+            minimum = Math.Min(minimum, elevation);
+            maximum = Math.Max(maximum, elevation);
+            Near("coast is deterministic", elevation, CoastalLandforms.Elevation(direction, Home.Radius, 0.0), 0.0);
+            Near("deep ocean unaffected", CoastalLandforms.Elevation(direction, Home.Radius, -40.0), -40.0, 0.0);
+            Near("inland survey unaffected", CoastalLandforms.Elevation(direction, Home.Radius, 40.0), 40.0, 0.0);
+
+        }
+        Expect("shore refinement creates coves and headlands", minimum < -0.5 && maximum > 0.5, $"{minimum:F2} to {maximum:F2}");
+        Expect("shore refinement remains bounded", minimum > -8.0 && maximum < 8.0, $"{minimum:F2} to {maximum:F2}");
+        Near("coastline wraps at the dateline", CoastalLandforms.Elevation(Site(33.0, -180.0), Home.Radius, 0.0),
+            CoastalLandforms.Elevation(Site(33.0, 180.0), Home.Radius, 0.0), 1e-6);
 
     }
 

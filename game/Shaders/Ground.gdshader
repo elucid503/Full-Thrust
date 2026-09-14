@@ -67,14 +67,7 @@ uniform vec3 shallow_colour : source_color = vec3(0.045, 0.155, 0.178);
 uniform vec3 deep_colour : source_color = vec3(0.003, 0.012, 0.029);
 
 uniform float shallow_depth = 52.0;
-uniform float foam_depth = 0.8;
 
-// How far the surf runs out from the waterline. Metres of ground, and the band comes out twice
-// this wide, because the sounding is carried as its own square root and the depth under a linear
-// interpolation of that rises as the square of the distance. The depth to cut it at is read off the
-// mesh rather than assumed - the mesh is the only thing that knows how fast its sea floor drops
-// away here - but the width is this and nothing else, at every level of the tree.
-uniform float foam_reach = 7.0;
 uniform float wave_tile = 32.0;
 uniform float wave_speed = 0.032;
 uniform float wave_relief : hint_range(0.0, 3.0) = 0.28;
@@ -93,7 +86,7 @@ uniform float swell_near = 1.5;
 uniform float swell_far = 26.0;
 
 uniform float cloud_altitude = 9000.0;
-uniform float cloud_shadow : hint_range(0.0, 1.0) = 0.48;
+uniform float cloud_shadow : hint_range(0.0, 1.0) = 0.32;
 
 uniform float snow_albedo : hint_range(0.4, 1.0) = 0.72;
 
@@ -119,20 +112,29 @@ instance uniform float lod_morph : instance_index(0) = 0.0;
 
 #include "res://Shaders/CloudField.gdshaderinc"
 #include "res://Shaders/OceanField.gdshaderinc"
+#include "res://Shaders/CloudShadowSampling.gdshaderinc"
 
 instance uniform float mesh_spacing : instance_index(1) = 1.0;
 varying float ocean_room;
+varying float coastal_gradient;
+varying float smooth_coastal_height;
+
+#include "res://Shaders/LandscapeNoise.gdshaderinc"
+#include "res://Shaders/CoastalLandforms.gdshaderinc"
+#include "res://Shaders/ShorelineSampling.gdshaderinc"
 
 void vertex() {
 
     VERTEX += CUSTOM0.xyz * lod_morph;
     surface_elevation = CUSTOM0.w;
+    smooth_coastal_height = CUSTOM1.r;
     world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
     ocean_room = smoothstep(0.0, 4.0, -CUSTOM0.w);
     float local = 1.0 - smoothstep(20000.0, 25000.0, camera_altitude);
     vec3 radial = world_position - planet_centre;
     vec3 fixed_vertex = vec3(terrain_rotation.x * radial.x - terrain_rotation.y * radial.z,
         radial.y, terrain_rotation.y * radial.x + terrain_rotation.x * radial.z);
+    coastal_gradient = shoreline_slope(normalize(fixed_vertex), shoreline_height(fixed_vertex));
     vec4 wave = ocean_wave(fixed_vertex, mesh_spacing);
     vec3 up = normalize(world_position - planet_centre);
     float displacement = wave.x * ocean_room * local;
@@ -144,27 +146,18 @@ void vertex() {
 
 }
 
-float landscape_hash(vec3 p) {
 
-    // Integer lattice hashing keeps shared corners identical after GPU expression optimisation.
-    uvec3 cell = uvec3(ivec3(floor(p)));
-    uint hash = cell.x * 1597334677u ^ cell.y * 3812015801u ^ cell.z * 2798796415u;
-    hash = (hash ^ (hash >> 16u)) * 2246822519u;
-    hash = (hash ^ (hash >> 13u)) * 3266489917u;
-    hash ^= hash >> 16u;
-    return float(hash & 16777215u) / 16777216.0;
+float surface_grain(vec2 metres, float scale) {
 
-}
-
-float landscape_noise(vec3 p) {
-
-    vec3 cell = floor(p);
-    vec3 f = fract(p);
+    // The 64-cell period matches every power-of-two UV origin used by the terrain patches.
+    vec2 p = metres / scale;
+    vec2 cell = floor(p);
+    vec2 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
-    return mix(mix(mix(landscape_hash(cell), landscape_hash(cell + vec3(1,0,0)), f.x),
-                   mix(landscape_hash(cell + vec3(0,1,0)), landscape_hash(cell + vec3(1,1,0)), f.x), f.y),
-               mix(mix(landscape_hash(cell + vec3(0,0,1)), landscape_hash(cell + vec3(1,0,1)), f.x),
-                   mix(landscape_hash(cell + vec3(0,1,1)), landscape_hash(cell + vec3(1,1,1)), f.x), f.y), f.z);
+    vec2 low = mod(cell, vec2(64.0));
+    vec2 high = mod(cell + 1.0, vec2(64.0));
+    return mix(mix(landscape_hash(vec3(low, scale)), landscape_hash(vec3(high.x, low.y, scale)), f.x),
+        mix(landscape_hash(vec3(low.x, high.y, scale)), landscape_hash(vec3(high, scale)), f.x), f.y);
 
 }
 
@@ -174,11 +167,12 @@ float landscape_noise(vec3 p) {
 
 float overcast(vec3 radial, vec3 up) {
 
-    return 1.0 - cloud_transmittance(radial, sun_direction, 0.0017);
+    return 1.0 - cloud_transmittance(radial, sun_direction, 0.004);
 
 }
 
 #include "res://Shaders/TerrainDetail.gdshaderinc"
+
 
 void fragment() {
 
@@ -202,11 +196,16 @@ void fragment() {
 
     vec2 coast_uv = vec2(geography.x, clamp(geography.y,
         0.5 / float(textureSize(shoreline_map, 0).y), 1.0 - 0.5 / float(textureSize(shoreline_map, 0).y)));
-    float coast_elevation = texture(shoreline_map, coast_uv).r;
+    float coast_elevation = coastal_elevation(fixed_up * planet_radius, texture(shoreline_map, coast_uv).r, fixed_up.y);
+    // Close meshes carry double-sampled heights without planet-coordinate quantization.
+    coast_elevation = mix(smooth_coastal_height, coast_elevation, smoothstep(4.0, 16.0, mesh_spacing));
     float depth = max(-coast_elevation, 0.0);
     // Resolve the surveyed zero contour per pixel, including on distant coarse patches.
     float coast_width = max(fwidth(coast_elevation), 0.02);
     float sea = 1.0 - smoothstep(-coast_width, coast_width, coast_elevation);
+    // Fixed metre offsets avoid quantized screen derivatives moving the beach and surf with the eye.
+    float coast_slope = max(coastal_gradient, 0.002);
+    float coast_distance = coast_elevation / coast_slope;
 
     // Metres of ground under one pixel. Every fade below is driven off this rather than off the
     // range, so nothing steps at a fixed distance from the eye.
@@ -230,14 +229,25 @@ void fragment() {
     float regional_snow_line = mix(950.0, 80.0, smoothstep(0.3, 0.96, latitude));
     float snow = max(climate.g, smoothstep(regional_snow_line, regional_snow_line + snow_band, elevation))
         * (1.0 - smoothstep(0.12, 0.42, slope)) * (1.0 - sea);
-    float region = landscape_noise(fixed_position / 1800.0);
-    float mosaic = landscape_noise(fixed_position / 180.0 + region * 2.0);
+    vec3 habitat_position = fixed_up * planet_radius;
+    float region = landscape_noise(habitat_position / 1800.0);
+    float geology = landscape_noise(habitat_position / 8500.0 + vec3(7.0, 23.0, 11.0));
+    vec3 habitat = habitat_position / vec3(650.0, 1100.0, 420.0) + region * vec3(1.7, 0.8, -1.3);
+    float mosaic = landscape_noise(habitat) * 0.55
+        + landscape_noise(habitat * 2.13 + vec3(17.0, 3.0, 9.0)) * 0.30
+        + landscape_noise(habitat * 5.71 + vec3(2.0, 31.0, 7.0)) * 0.15;
+    float coastal = (1.0 - smoothstep(0.55, 0.75, abs(fixed_up.y)))
+        * (1.0 - smoothstep(15.0, 45.0, elevation)) * (1.0 - biome.b);
+    float groves = smoothstep(0.42, 0.68, mosaic);
+    float damp = coastal * (1.0 - smoothstep(2.0, 8.0, elevation)) * (1.0 - groves);
     float vegetation = smoothstep(0.18, 0.80, biome.r + (mosaic - 0.5) * 0.5)
         * (1.0 - bare) * (1.0 - snow);
     float close_detail = close_detail_strength * (1.0 - smoothstep(300.0, 1200.0, length(VERTEX)))
         * (1.0 - smoothstep(0.12, 1.2, footprint)) * (1.0 - sea) * (1.0 - snow);
     vec2 detail_dx = dFdx(near_uv);
     vec2 detail_dy = dFdy(near_uv);
+    vec2 metres_dx = dFdx(UV2);
+    vec2 metres_dy = dFdy(UV2);
     float cavity = 1.0;
     float close_roughness = 0.85;
     if (close_detail > 0.001) {
@@ -260,17 +270,31 @@ void fragment() {
         close_roughness = mix(soil_data.b, rock_data.b, bare);
 
     }
-    float forest = biome.g * vegetation;
-    float beach = (1.0 - smoothstep(1.0, 5.0, elevation)) * (1.0 - bare);
+    float forest = biome.g * vegetation * mix(0.25, 1.5, groves);
+    float beach_width = mix(22.0, 65.0, region) * (1.0 - smoothstep(0.12, 0.45, coast_slope));
+    float beach = (1.0 - smoothstep(beach_width * 0.4, max(beach_width, 1.0), coast_distance))
+        * (1.0 - smoothstep(3.0, 7.0, elevation)) * (1.0 - damp * 0.5);
+    float sand = coastal * smoothstep(0.56, 0.78, 1.0 - mosaic)
+        * smoothstep(3.0, 9.0, elevation) * (1.0 - damp) * 0.35;
+    beach = max(beach, sand) * (1.0 - bare) * (1.0 - sea);
     vec3 earth = mix(vec3(0.115, 0.082, 0.046), vec3(0.38, 0.265, 0.135), biome.b);
     vec3 grass = mix(vec3(0.095, 0.135, 0.038), vec3(0.22, 0.20, 0.075), biome.b);
-    vec3 woodland = mix(vec3(0.035, 0.080, 0.030), vec3(0.065, 0.105, 0.032), region);
+    vec3 woodland = mix(vec3(0.070, 0.105, 0.043), vec3(0.100, 0.135, 0.052), region);
     vec3 rock_tint = mix(vec3(0.20, 0.19, 0.17), vec3(0.32, 0.18, 0.105), biome.b * region);
+    rock_tint = mix(rock_tint, vec3(0.31, 0.30, 0.25), smoothstep(0.50, 0.76, geology) * 0.7);
+    earth *= mix(vec3(0.83, 0.91, 0.92), vec3(1.19, 1.05, 0.88), geology);
+    grass = mix(grass, mix(vec3(0.12, 0.17, 0.060), vec3(0.23, 0.235, 0.11), region), coastal * 0.8);
+    vegetation = max(vegetation, coastal * 0.85);
     ground = mix(earth, grass, vegetation);
-    ground = mix(ground, woodland, forest * 0.85);
+    ground = mix(ground, vec3(0.095, 0.125, 0.060), damp * 0.35);
+    ground = mix(ground, woodland, forest * 0.5);
     ground = mix(ground, rock_tint, bare);
-    ground = mix(ground, vec3(0.40, 0.34, 0.22), beach * (1.0 - biome.a));
-    ground *= mix(0.78, 1.20, mosaic);
+    vec3 beach_colour = mix(vec3(0.32, 0.27, 0.18), vec3(0.57, 0.51, 0.38), geology);
+    ground = mix(ground, beach_colour, beach * (1.0 - biome.a));
+    float swash = sin(environment_time * 1.05 + landscape_noise(habitat_position / 90.0) * 3.0) * 1.4;
+    float wet_sand = (1.0 - smoothstep(2.0 + swash, 12.0 + swash, coast_distance)) * beach;
+    ground *= 1.0 - wet_sand * 0.38;
+    ground *= mix(0.90, 1.10, mosaic);
     if (close_detail > 0.001) {
 
         float patches = landscape_noise(fixed_position / 28.0 + region * 3.0);
@@ -291,11 +315,12 @@ void fragment() {
     vec3 local_ground = ground;
     vec3 relief = vec3(0.0, 0.0, 1.0);
 
-    if (macro > 0.001 && procedural < 1.0) {
+    if (macro > 0.001 && sea < 0.999) {
 
         // Broad blotching first: the same material read at a few hundred metres a tile, which is
         // the scale the imagery has already smoothed away.
-        vec3 wide = mix(texture(soil_colour, wide_uv).rgb, texture(rock_colour, wide_uv).rgb, bare);
+        vec3 wide = mix(textureGrad(soil_colour, wide_uv, metres_dx / detail_macro, metres_dy / detail_macro).rgb,
+            textureGrad(rock_colour, wide_uv, metres_dx / detail_macro, metres_dy / detail_macro).rgb, bare);
 
         float blotch = dot(wide, vec3(0.2126, 0.7152, 0.0722));
 
@@ -306,10 +331,12 @@ void fragment() {
     if (detail > 0.001 && sea < 0.999) {
 
         vec3 near_grain = mix(textureGrad(soil_colour, near_uv, detail_dx, detail_dy).rgb, textureGrad(rock_colour, near_uv, detail_dx, detail_dy).rgb, bare);
-        vec3 far_grain = mix(texture(soil_colour, far_uv).rgb, texture(rock_colour, far_uv).rgb, bare);
+        vec3 far_grain = mix(textureGrad(soil_colour, far_uv, metres_dx / detail_coarse, metres_dy / detail_coarse).rgb,
+            textureGrad(rock_colour, far_uv, metres_dx / detail_coarse, metres_dy / detail_coarse).rgb, bare);
 
         vec3 near_bump = mix(textureGrad(soil_normal, near_uv, detail_dx, detail_dy).rgb, textureGrad(rock_normal, near_uv, detail_dx, detail_dy).rgb, bare);
-        vec3 far_bump = mix(texture(soil_normal, far_uv).rgb, texture(rock_normal, far_uv).rgb, bare);
+        vec3 far_bump = mix(textureGrad(soil_normal, far_uv, metres_dx / detail_coarse, metres_dy / detail_coarse).rgb,
+            textureGrad(rock_normal, far_uv, metres_dx / detail_coarse, metres_dy / detail_coarse).rgb, bare);
 
         relief = mix(near_bump, far_bump, mix(detail_balance, 0.18, close_detail)) * 2.0 - 1.0;
 
@@ -338,11 +365,17 @@ void fragment() {
 
             float resolved = 1.0 - smoothstep(scale * 0.2, scale * 0.7, footprint);
             if (resolved < 0.001) { break; }
-            grain += (landscape_noise(fixed_position / scale) - 0.5) * amplitude * resolved;
+            grain += (surface_grain(UV2, scale) - 0.5) * amplitude * resolved;
             scale *= 0.5;
             amplitude *= 0.6;
 
         }
+        float strata_resolved = 1.0 - smoothstep(1.0, 5.0, footprint);
+        float strata = sin(elevation * 1.8 + mosaic * 9.0 + geology * 13.0)
+            + sin(elevation * 0.39 + region * 7.0) * 0.7;
+        grain += strata * bare * strata_resolved * 0.08;
+        float ripple_resolved = 1.0 - smoothstep(0.08, 0.4, footprint);
+        grain += sin(UV2.x * 19.0 + sin(UV2.y * 0.5) * 1.7) * beach * ripple_resolved * 0.035;
         ground = mix(ground, local_ground * (1.0 + grain * mix(0.65, 1.1, bare)), procedural);
         vec3 dpdx = dFdx(world_position);
         vec3 dpdy = dFdy(world_position);
@@ -396,36 +429,15 @@ void fragment() {
         dot(impact_offset, normalize(mat3(INV_VIEW_MATRIX) * BINORMAL))) / max(impact_distance, 1.0)
         * cos(impact_distance * 0.7 - environment_time * 5.0) * impact * 0.4;
 
-    // Depth arrives as a vertex attribute, so a coarse patch spreads a metre of water over
-    // kilometres of ground: a band cut at a fixed depth is as wide as whatever patch happens to be
-    // under it, which is why the waterline swelled and shrank as the vehicle climbed. Cut it at the
-    // depth this mesh's own sea floor reaches a fixed distance out instead, and the surf is the same
-    // stretch of ground at every level of the tree.
     float sounding_step = max(fwidth(depth), 0.0001);
-
-    float sea_floor = sounding_step / max(footprint, 0.001);
-
-    float surf = max(min(foam_depth, foam_reach * sea_floor), 0.0001);
-
-    // And gone once that stretch is a couple of pixels, rather than left to alias into a flicker.
-    // Surf is a thing seen from the beach: carrying it to the horizon is what made every coastline
-    // on the planet a painted ribbon.
-    float shore = 1.0 - smoothstep(foam_reach * 0.5, foam_reach * 3.0, footprint);
 
     float shelf = 1.0 - smoothstep(shallow_depth * 0.5, shallow_depth * 3.0, sounding_step);
 
     float shallow = exp(-depth / shallow_depth) * shelf;
 
-    // The phase runs across the band rather than over a fixed depth, so the surf sweeps up the beach
-    // the same way whatever the band is cut at, and carries a slow term off the face coordinate so
-    // that every coastline on the planet does not brighten and fade in step.
-    float shore_pulse = 0.5 + 0.5 * sin(depth / surf * 5.0 - TIME * 1.5 + fract(UV.x * 37.0 + UV.y * 29.0) * TAU);
-
-    float foam = sea * (1.0 - smoothstep(0.0, surf, depth)) * shore * shore_pulse;
-
-    foam += sea * impact * 0.65;
-
-    vec3 water = mix(deep_colour, shallow_colour, shallow * shallow);
+    float shoals = landscape_noise(habitat_position / 420.0);
+    vec3 shelf_colour = mix(shallow_colour, vec3(0.035, 0.105, 0.085), coastal * 0.6);
+    vec3 water = mix(deep_colour, shelf_colour * mix(0.75, 1.18, shoals), shallow * shallow);
 
     float land_relief = detail_relief * detail * (1.0 - snow * 0.45);
     float sea_relief = wave_relief * swell_fade;
@@ -438,13 +450,16 @@ void fragment() {
     float lit = 1.0;
     if (dot(up, sun_direction) > 0.0) {
 
-        lit -= cloud_shadow * smoothstep(0.04, 0.92, overcast(radial, up));
+        vec2 local_shadow = local_cloud_light(world_position);
+        float opacity = local_shadow.x;
+        if (local_shadow.y < 0.999) { opacity = mix(overcast(radial, up), opacity, local_shadow.y); }
+        lit -= cloud_shadow * opacity;
 
     }
 
     // Cloud attenuation belongs to direct illumination, not the material reflectance.
     cloud_light = lit;
-    ALBEDO = mix(ground, water, sea) + vec3(foam * 0.07);
+    ALBEDO = mix(ground, water, sea);
 
     METALLIC = 0.0;
 
@@ -459,6 +474,8 @@ void fragment() {
     land_roughness = mix(land_roughness, 0.76, snow);
 
     land_roughness = mix(land_roughness, clamp(close_roughness, 0.55, 1.0), close_detail);
+    land_roughness = mix(land_roughness, 0.58, damp * (1.0 - beach));
+    land_roughness = mix(land_roughness, 0.30, wet_sand);
     AO = mix(1.0, cavity, close_detail * 0.75);
     AO_LIGHT_AFFECT = 0.0;
     ROUGHNESS = mix(land_roughness, swell_roughness, sea);

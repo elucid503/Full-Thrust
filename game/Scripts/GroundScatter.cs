@@ -25,6 +25,7 @@ public sealed partial class GroundScatter : Node3D {
         public Transform3D[] Transforms;
         public Color[] Colours;
         public bool Grass;
+        public bool Coastal;
         public ulong Born;
         public MultiMeshInstance3D Instance;
 
@@ -39,7 +40,9 @@ public sealed partial class GroundScatter : Node3D {
     private int _rows;
     private double _latitudeStep;
     private ArrayMesh[] _meshes;
+    private ArrayMesh[] _palmettos;
     private ShaderMaterial _material;
+    internal ShaderMaterial SurfaceMaterial => _material;
     private readonly Dictionary<Key, Grove> _groves = new();
     private readonly HashSet<Key> _wanted = new();
     private readonly List<Key> _queue = new();
@@ -75,6 +78,7 @@ public sealed partial class GroundScatter : Node3D {
         _rows = (int)Math.Ceiling(Math.PI * body.Radius / CellSize);
         _latitudeStep = Math.PI / _rows;
         _meshes = new[] { RockMesh(0), GrassMesh(0), RockMesh(1), GrassMesh(1), RockMesh(2), GrassMesh(2) };
+        if (broad) { _palmettos = new[] { PalmettoMesh(0), PalmettoMesh(1), PalmettoMesh(2) }; }
         _material = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/GroundScatter.gdshader") };
         _material.SetShaderParameter("grass_range", broad ? new Vector2(500, 850) : new Vector2(160, 290));
         _material.SetShaderParameter("stone_range", broad ? new Vector2(800, 1200) : new Vector2(230, 330));
@@ -326,6 +330,9 @@ public sealed partial class GroundScatter : Node3D {
                 double clustered = Smooth(0.25, 0.72, patch * 0.55 + colony * 0.45);
                 double density = key.Grass ? cover.R * (1.0 - cover.B * 0.7) * (0.12 + clustered * 0.95)
                     : (0.15 + cover.B * 0.3) * (0.35 + clustered * 1.3);
+                double mosaic = Landscape.Mosaic(direction, _body.Radius);
+                double woodland = Landscape.Woodland(mosaic);
+                density *= key.Grass ? 0.45 + woodland * 1.15 : 0.7;
                 if (chance > density || cover.A > 0.15 || Cleared(direction)) {
 
                     continue;
@@ -365,24 +372,12 @@ public sealed partial class GroundScatter : Node3D {
             }
 
         }
-        return new Grove { Key = key, Anchor = anchor, Transforms = transforms.ToArray(), Colours = colours.ToArray(), Grass = key.Grass };
+        bool coastal = Landscape.Coastal(centre.Z, anchor.Length - _body.Radius, Cover(centre).B) > 0.35;
+        return new Grove { Key = key, Anchor = anchor, Transforms = transforms.ToArray(), Colours = colours.ToArray(), Grass = key.Grass, Coastal = coastal };
 
     }
 
-    private bool Cleared(Vector3d direction) {
-
-        foreach (Terrain.Plateau plateau in _body.Terrain.Plateaus) {
-
-            if ((direction - plateau.Centre).Length * _body.Radius < plateau.InnerRadius + 8.0) {
-
-                return true;
-
-            }
-
-        }
-        return false;
-
-    }
+    private bool Cleared(Vector3d direction) => Landscape.OnPavement(direction, _body.Terrain, _body.Radius, 0.15);
 
     private void Adopt(Grove grove) {
 
@@ -402,7 +397,9 @@ public sealed partial class GroundScatter : Node3D {
 
             TransformFormat = MultiMesh.TransformFormatEnum.Transform3D,
             UseColors = true,
-            Mesh = _meshes[Math.Abs((grove.Key.Row ^ grove.Key.Column) % 3) * 2 + (grove.Grass ? 1 : 0)],
+            Mesh = _broad && grove.Grass && grove.Coastal
+                ? _palmettos[Math.Abs((grove.Key.Row ^ grove.Key.Column) % 3)]
+                : _meshes[Math.Abs((grove.Key.Row ^ grove.Key.Column) % 3) * 2 + (grove.Grass ? 1 : 0)],
             InstanceCount = grove.Transforms.Length,
 
         };
@@ -414,6 +411,7 @@ public sealed partial class GroundScatter : Node3D {
         }
         grove.Instance = new MultiMeshInstance3D {
 
+            Layers = 4,
             Multimesh = multi,
             MaterialOverride = _material,
             CastShadow = GeometryInstance3D.ShadowCastingSetting.On,
@@ -425,6 +423,58 @@ public sealed partial class GroundScatter : Node3D {
         grove.Instance.SetInstanceShaderParameter("cell_fade", 0.0f);
         AddChild(grove.Instance);
         if (!grove.Grass) { Obstacles.Add(grove.Key, grove.Anchor, grove.Transforms, multi, grove.Instance); }
+
+    }
+
+    private static ArrayMesh PalmettoMesh(int variant) {
+
+        using SurfaceTool surface = new();
+        surface.Begin(Mesh.PrimitiveType.Triangles);
+        uint seed = (uint)(6131 + variant * 7919);
+        for (int frond = 0; frond < 7; frond++) {
+
+            float angle = frond * 2.399963f + variant;
+            Vector3 outward = new(Mathf.Cos(angle), 0.0f, Mathf.Sin(angle));
+            Vector3 side = outward.Cross(Vector3.Up);
+            float rise = (float)(0.22 + Random(ref seed) * 0.16);
+            Vector3 hub = outward * 0.22f + Vector3.Up * rise;
+            Vector3 axis = (outward * 0.8f + Vector3.Up * (float)(0.25 + Random(ref seed) * 0.6)).Normalized();
+            Vector3 normal = side.Cross(axis).Normalized();
+            void Vertex(Vector3 point, Vector2 uv) {
+
+                surface.SetNormal(normal);
+                surface.SetUV(uv);
+                surface.SetUV2(Vector2.One);
+                surface.AddVertex(point);
+
+            }
+
+            Vertex(Vector3.Zero - side * 0.007f, new Vector2(0.0f, 0.0f));
+            Vertex(hub, new Vector2(0.5f, 0.45f));
+            Vertex(Vector3.Zero + side * 0.007f, new Vector2(1.0f, 0.0f));
+            for (int leaflet = 0; leaflet < 13; leaflet++) {
+
+                float fanAngle = (leaflet - 6) * 0.19f;
+                Vector3 direction = axis * Mathf.Cos(fanAngle) + side * Mathf.Sin(fanAngle);
+                Vector3 edge = normal.Cross(direction).Normalized();
+                float length = (float)(0.29 + Random(ref seed) * 0.10);
+                Vector3 tip = hub + direction * length - Vector3.Up * (0.03f + 0.04f * Mathf.Abs(fanAngle));
+                Vector3 fold = hub + direction * length * 0.48f + normal * 0.014f;
+                Vertex(hub - edge * 0.012f, new Vector2(0.0f, 0.4f));
+                Vertex(tip, new Vector2(0.5f, 1.0f));
+                Vertex(fold, new Vector2(0.5f, 0.65f));
+                Vertex(fold, new Vector2(0.5f, 0.65f));
+                Vertex(tip, new Vector2(0.5f, 1.0f));
+                Vertex(hub + edge * 0.012f, new Vector2(1.0f, 0.4f));
+
+            }
+
+        }
+        surface.Index();
+        using ImporterMesh imported = new();
+        imported.AddSurface(Mesh.PrimitiveType.Triangles, surface.CommitToArrays());
+        imported.GenerateLods(60.0f, 25.0f, new Godot.Collections.Array());
+        return imported.GetMesh();
 
     }
 

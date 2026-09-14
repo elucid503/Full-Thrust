@@ -17,8 +17,14 @@ public sealed partial class Planet {
     private readonly double[] _wakeTimes = new double[8];
     private readonly float[] _wakeRadii = new float[8];
     private readonly float[] _wakeLengths = new float[8];
+    private readonly float[] _wakePowers = new float[8];
+    private readonly float[] _wakeSpreads = new float[8];
     private readonly Vector4[] _wakeCentres = new Vector4[8];
     private readonly Vector4[] _wakeAxes = new Vector4[8];
+    private readonly Vector4[] _wakeStates = new Vector4[8];
+    private readonly Vector4[] _wakeShadowCentres = new Vector4[8];
+    private readonly Vector4[] _wakeShadowAxes = new Vector4[8];
+    public int CloudWakeCount { get; private set; }
     private int _wakeCursor;
     private double _lastWake = double.NegativeInfinity;
     private sealed class SurfacePuff {
@@ -46,6 +52,8 @@ public sealed partial class Planet {
         public float Power;
         public bool Water;
         public readonly List<SurfacePuff> Puffs = new();
+        public bool Deluge;
+        public Vector3d Outlet;
         public readonly Vector4[] Centres = new Vector4[PuffBudget];
         public readonly Vector4[] States = new Vector4[PuffBudget];
         public ShaderMaterial Material;
@@ -56,6 +64,45 @@ public sealed partial class Planet {
     private readonly Random _smokeRandom = new();
     private double _surfaceClock;
     private readonly List<SurfaceWake> _surfaceWakes = new();
+    private readonly Stack<(MeshInstance3D Volume, ShaderMaterial Material)> _surfaceVolumePool = new();
+    private int _surfaceWarmupFrames = 3;
+
+    private void BuildSurfaceVolumes() {
+
+        BoxMesh mesh = new() { Size = Vector3.One };
+        Shader shader = GD.Load<Shader>("res://Shaders/Steam.gdshader");
+        for (int index = 0; index < 8; index++) {
+
+            ShaderMaterial material = new() { Shader = shader, RenderPriority = 3 };
+            material.SetShaderParameter("flow_noise", _smokeNoise);
+            material.SetShaderParameter("bounds_min", -Vector3.One * 2.0f);
+            material.SetShaderParameter("bounds_max", Vector3.One * 2.0f);
+            MeshInstance3D volume = new() {
+
+                Mesh = mesh,
+                MaterialOverride = material,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                Layers = 2,
+                CustomAabb = new Aabb(-Vector3.One * 100.0f, Vector3.One * 200.0f),
+
+            };
+            AddChild(volume);
+            _surfaceVolumePool.Push((volume, material));
+
+        }
+
+    }
+
+    private void RecycleSurfaceVolume(SurfaceWake wake) {
+
+        if (wake.Volume == null) { return; }
+        wake.Volume.Visible = false;
+        wake.Material.SetShaderParameter("puff_count", 0);
+        _surfaceVolumePool.Push((wake.Volume, wake.Material));
+        wake.Volume = null;
+        wake.Material = null;
+
+    }
 
     public void Disturb(Vector3 nozzle, Vector3 axis, float length, float radius, float power, float spread) {
 
@@ -63,14 +110,16 @@ public sealed partial class Planet {
         Vector3d point = Frames.Origin + Frames.Sim(nozzle);
         Vector3d direction = Frames.Sim(axis.Normalized());
         double altitude = point.Length - _body.Radius;
-        if (altitude > CloudBase - length && altitude < CloudTop + length && time - _lastWake >= 0.2) {
+        if (power > 0.01f && altitude > CloudBase - length && altitude < CloudTop + length && time - _lastWake >= 0.5) {
 
             int index = _wakeCursor++ % 8;
             _wakePoints[index] = _body.ToBodyFixed(point, time);
             _wakeDirections[index] = _body.ToBodyFixed(direction, time);
             _wakeTimes[index] = time;
-            _wakeRadii[index] = radius * Mathf.Sqrt(power);
+            _wakeRadii[index] = Math.Max(radius, 6.0f);
             _wakeLengths[index] = length;
+            _wakePowers[index] = Math.Min(Mathf.Sqrt(power), 1.0f);
+            _wakeSpreads[index] = Mathf.Clamp(spread, 0.04f, 0.3f);
             _lastWake = time;
 
         }
@@ -81,6 +130,19 @@ public sealed partial class Planet {
         Vector3d fixedPoint = _body.ToBodyFixed(hit.Point, time);
         float reach = Math.Max(radius + (float)hit.Distance * spread, 0.5f);
         float strength = power * (1.0f - (float)hit.Distance / length);
+        LaunchSite site = Flight.Active.Site;
+        Vector3d pad = site.Up * (_body.Radius + site.Height);
+        bool deluge = !hit.Water && (fixedPoint - pad).Length < 7.0;
+        Vector3d outlet = Vector3d.Zero;
+
+        if (deluge) {
+
+            Vector3d nozzleFixed = _body.ToBodyFixed(point, time);
+            outlet = site.East * (Vector3d.Dot(nozzleFixed - pad, site.East) < 0.0 ? -1.0 : 1.0);
+            fixedPoint = pad + outlet * 14.0 + site.Up * 0.3;
+            reach = 3.2f;
+
+        }
 
         // A cluster scours one patch of ground, so nearby nozzles share a wake instead of stacking volumes.
         SurfaceWake wake = null;
@@ -102,7 +164,7 @@ public sealed partial class Planet {
 
             if (_surfaceWakes.Count > 8) {
 
-                _surfaceWakes[0].Volume?.QueueFree();
+                RecycleSurfaceVolume(_surfaceWakes[0]);
                 _surfaceWakes.RemoveAt(0);
 
             }
@@ -126,10 +188,18 @@ public sealed partial class Planet {
         wake.Radius = reach;
         wake.Power = strength;
         wake.Water = hit.Water;
+        wake.Deluge = deluge;
+        wake.Outlet = outlet;
 
     }
 
     private void SyncEffects(double time) {
+
+        if (_surfaceWarmupFrames > 0 && --_surfaceWarmupFrames == 0) {
+
+            foreach (var item in _surfaceVolumePool) { item.Volume.Visible = false; }
+
+        }
 
         _surfaceClock += Math.Min(GetProcessDeltaTime(), 0.1);
 
@@ -139,10 +209,17 @@ public sealed partial class Planet {
             double age = time - _wakeTimes[i];
             if (_wakeRadii[i] <= 0.0f || age < 0.0 || age >= 4.0) { continue; }
 
-            Vector3 point = Frames.Direction(_body.ToInertial(_wakePoints[i], time));
-            Vector3 axis = Frames.Direction(_body.ToInertial(_wakeDirections[i], time));
-            float recovery = (float)(1.0 - age / 4.0);
-            _wakeCentres[count] = new Vector4(point.X, point.Y, point.Z, _wakeRadii[i] * recovery);
+            Vector3d fixedPoint = CloudWind.Advect(_wakePoints[i] + _wakeDirections[i] * (age * 12.0), age, _body.Radius);
+            Vector3d fixedAxis = CloudWind.Advect(_wakeDirections[i], age, _body.Radius);
+            Vector3 point = Frames.Direction(_body.ToInertial(fixedPoint, time));
+            Vector3 axis = Frames.Direction(_body.ToInertial(fixedAxis, time));
+            float strength = _wakePowers[i] * (float)(Landscape.Smooth(0.0, 0.15, age) * (1.0 - Landscape.Smooth(2.0, 4.0, age)));
+            _wakeStates[count] = new Vector4(strength, _wakeSpreads[i], (float)age, 0.0f);
+            _wakeCentres[count] = new Vector4(point.X, point.Y, point.Z, _wakeRadii[i] + (float)age * 4.0f);
+            Vector3 shadowPoint = Frames.Direction(fixedPoint);
+            Vector3 shadowAxis = Frames.Direction(fixedAxis);
+            _wakeShadowCentres[count] = new Vector4(shadowPoint.X, shadowPoint.Y, shadowPoint.Z, _wakeCentres[count].W);
+            _wakeShadowAxes[count] = new Vector4(shadowAxis.X, shadowAxis.Y, shadowAxis.Z, _wakeLengths[i]);
             _wakeAxes[count++] = new Vector4(axis.X, axis.Y, axis.Z, _wakeLengths[i]);
 
         }
@@ -158,26 +235,27 @@ public sealed partial class Planet {
             wake.Puffs.RemoveAll(puff => _surfaceClock - puff.Born >= PuffLife);
             if (idle < 0.15 && _surfaceClock >= wake.NextEmission && wake.Puffs.Count < PuffBudget) {
 
+                bool steam = wake.Water || wake.Deluge;
                 Vector3d up = wake.Normal;
                 Vector3d side = Vector3d.Cross(up, Math.Abs(up.Z) < 0.9 ? Vector3d.UnitZ : Vector3d.UnitX).Normalized;
                 Vector3d ahead = Vector3d.Cross(up, side);
                 double angle = _smokeRandom.NextDouble() * Math.Tau;
                 Vector3d radial = side * Math.Cos(angle) + ahead * Math.Sin(angle);
-                float initialRadius = Math.Clamp(wake.Radius * (wake.Water ? 0.8f : 1.25f), wake.Water ? 2.0f : 3.0f, 6.5f);
+                float initialRadius = Math.Clamp(wake.Radius * (steam ? 0.8f : 1.25f), steam ? 2.0f : 3.0f, 6.5f);
                 initialRadius *= 0.85f + _smokeRandom.NextSingle() * 0.35f;
                 float formation = (float)(1.0 - Math.Exp(-(_surfaceClock - wake.Started) / 0.6));
                 wake.Puffs.Add(new SurfacePuff {
 
                     Point = wake.Point + radial * (wake.Radius * 0.65) + up * (initialRadius * 0.35),
-                    Velocity = radial * (0.75 + _smokeRandom.NextDouble() * 0.5) * (wake.Water ? 1.2 + Math.Sqrt(wake.Radius) * 0.5 : 3.2 + Math.Sqrt(wake.Radius) * 0.7)
-                        + up * (wake.Water ? 3.4 : 3.0),
+                    Velocity = radial * (0.75 + _smokeRandom.NextDouble() * 0.5) * (steam ? 1.2 + Math.Sqrt(wake.Radius) * 0.5 : 3.2 + Math.Sqrt(wake.Radius) * 0.7)
+                        + up * (steam ? 3.4 : 3.0) + wake.Outlet * 9.0,
                     Up = up,
                     Drift = (side * (_smokeRandom.NextDouble() - 0.5) + ahead * (_smokeRandom.NextDouble() - 0.5)) * 1.2,
                     Expansion = 0.8f + _smokeRandom.NextSingle() * 0.4f,
                     Born = _surfaceClock,
                     Radius = initialRadius,
-                    Power = wake.Power * formation * (wake.Water ? 0.55f : 1.1f) / initialRadius,
-                    Water = wake.Water,
+                    Power = wake.Power * formation * (steam ? 0.55f : 1.1f) / initialRadius,
+                    Water = steam,
 
                 });
                 wake.NextEmission = _surfaceClock + 0.15 + _smokeRandom.NextDouble() * 0.07;
@@ -186,7 +264,7 @@ public sealed partial class Planet {
 
             if (idle > PuffLife && wake.Puffs.Count == 0) {
 
-                wake.Volume?.QueueFree();
+                RecycleSurfaceVolume(wake);
                 _surfaceWakes.RemoveAt(w);
 
                 continue;
@@ -203,17 +281,7 @@ public sealed partial class Planet {
 
             if (wake.Volume == null) {
 
-                wake.Material = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Steam.gdshader"), RenderPriority = 3 };
-                wake.Material.SetShaderParameter("flow_noise", _smokeNoise);
-                wake.Volume = new MeshInstance3D {
-
-                    Mesh = new BoxMesh { Size = Vector3.One },
-                    MaterialOverride = wake.Material,
-                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                    Layers = 2,
-
-                };
-                AddChild(wake.Volume);
+                (wake.Volume, wake.Material) = _surfaceVolumePool.Pop();
 
             }
 
@@ -272,6 +340,8 @@ public sealed partial class Planet {
 
         foreach (ShaderMaterial face in _faces) { SetEffects(face, time, count, water, splash); }
         SetEffects(_clouds, time, count, water, splash);
+        _cloudShadows.SetWakes(count, _wakeShadowCentres, _wakeShadowAxes, _wakeStates);
+        CloudWakeCount = count;
 
     }
 
@@ -281,6 +351,7 @@ public sealed partial class Planet {
         material.SetShaderParameter("wake_count", count);
         material.SetShaderParameter("wake_centres", _wakeCentres);
         material.SetShaderParameter("wake_axes", _wakeAxes);
+        material.SetShaderParameter("wake_states", _wakeStates);
         material.SetShaderParameter("water_impact", water);
         material.SetShaderParameter("impact_strength", strength);
 

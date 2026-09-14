@@ -149,6 +149,12 @@ public sealed partial class DebugBridge : Node {
 
                     break;
 
+                case "/render":
+
+                    Respond(context, Render(context.Request.QueryString));
+
+                    break;
+
                 case "/tune":
 
                     Respond(context, Tune(context.Request.QueryString));
@@ -185,6 +191,12 @@ public sealed partial class DebugBridge : Node {
 
                     break;
 
+                case "/aa-sequence":
+
+                    _ = CaptureAaSequence(context);
+
+                    break;
+
                 case "/quit":
 
                     Respond(context, new Dictionary<string, object> { ["ok"] = true });
@@ -207,6 +219,95 @@ public sealed partial class DebugBridge : Node {
             Respond(context, new Dictionary<string, object> { ["error"] = e.ToString() }, 500);
 
         }
+
+    }
+
+    private Dictionary<string, object> Render(System.Collections.Specialized.NameValueCollection query) {
+
+        Node main = Flight.Active?.GetParent();
+        Dictionary<string, object> result = new();
+
+        if (main == null) {
+
+            result["error"] = "no flight";
+            return result;
+
+        }
+
+        string[] names = { "reflection", "clouds", "atmosphere", "forest", "canopy", "scatter", "broadScatter" };
+        string[] paths = { "Earthlight", "Planet/Clouds", "Planet/Atmosphere", "Planet/Forest", "Planet/DistantForest", "Planet/GroundScatter", "Planet/BroadScatter" };
+
+        for (int index = 0; index < names.Length; index++) {
+
+            Node3D node = main.GetNodeOrNull<Node3D>(paths[index]);
+
+            if (node == null) { continue; }
+            if (bool.TryParse(query[names[index]], out bool visible)) { node.Visible = visible; }
+            result[names[index]] = node.Visible;
+
+        }
+
+        Viewport viewport = GetViewport();
+
+        if (query["resetTimings"] == "true") {
+
+            _frameCount = 0;
+            _frameCursor = 0;
+            _lastFrame = 0;
+
+        }
+
+        if (bool.TryParse(query["msaa"], out bool msaa)) {
+
+            viewport.Msaa3D = msaa ? Viewport.Msaa.Msaa2X : Viewport.Msaa.Disabled;
+
+        }
+
+        if (int.TryParse(query["samples"], out int samples) && samples is 0 or 2 or 4 or 8) {
+
+            viewport.Msaa3D = samples switch { 2 => Viewport.Msaa.Msaa2X, 4 => Viewport.Msaa.Msaa4X, 8 => Viewport.Msaa.Msaa8X, _ => Viewport.Msaa.Disabled };
+
+        }
+        if (Enum.TryParse(query["edgeAA"], true, out Viewport.ScreenSpaceAAEnum edgeAA)
+            && edgeAA is Viewport.ScreenSpaceAAEnum.Disabled or Viewport.ScreenSpaceAAEnum.Fxaa or Viewport.ScreenSpaceAAEnum.Smaa) {
+
+            viewport.ScreenSpaceAA = edgeAA;
+
+        }
+
+        if (bool.TryParse(query["history"], out bool history)) {
+
+            foreach (CompositorEffect effect in main.GetNode<WorldEnvironment>("WorldEnvironment").Compositor.CompositorEffects) {
+
+                if (effect is GeometryHistory) { effect.Enabled = history; }
+
+            }
+
+        }
+
+        if (float.TryParse(query["scale"], out float scale) && float.IsFinite(scale)) {
+
+            viewport.Scaling3DScale = Mathf.Clamp(scale, 0.5f, 1.0f);
+
+        }
+
+        if (Enum.TryParse(query["reconstruction"], true, out Viewport.Scaling3DModeEnum reconstruction)
+            && reconstruction is Viewport.Scaling3DModeEnum.Bilinear or Viewport.Scaling3DModeEnum.Fsr or Viewport.Scaling3DModeEnum.Fsr2) {
+
+            viewport.Scaling3DMode = reconstruction;
+            viewport.UseTaa = reconstruction != Viewport.Scaling3DModeEnum.Fsr2;
+
+        }
+
+        if (bool.TryParse(query["shadows"], out bool shadows)) { main.GetNode<DirectionalLight3D>("Sun").ShadowEnabled = shadows; }
+
+        result["scale"] = viewport.Scaling3DScale;
+        result["msaa"] = viewport.Msaa3D.ToString();
+        result["edgeAA"] = viewport.ScreenSpaceAA.ToString();
+        result["reconstruction"] = viewport.Scaling3DMode.ToString();
+        result["taa"] = viewport.UseTaa;
+        result["shadows"] = main.GetNode<DirectionalLight3D>("Sun").ShadowEnabled;
+        return result;
 
     }
 
@@ -444,11 +545,14 @@ public sealed partial class DebugBridge : Node {
         // is still held while the pointer moves, or the map never sees the motion as a drag at all.
         bool down = press == "down";
         bool up = press == "up";
+        float.TryParse(query["dx"], out float dx);
+        float.TryParse(query["dy"], out float dy);
 
         Input.ParseInputEvent(new InputEventMouseMotion {
 
             Position = at,
             GlobalPosition = at,
+            Relative = new Vector2(dx, dy),
 
             ButtonMask = down || press == "move-held" ? mask : 0,
 
@@ -523,6 +627,78 @@ public sealed partial class DebugBridge : Node {
         }
 
         return new Dictionary<string, object> { ["key"] = code.ToString(), ["press"] = press };
+
+    }
+
+    private bool _capturingAa;
+
+    private async System.Threading.Tasks.Task CaptureAaSequence(HttpListenerContext context) {
+
+        OrbitCamera camera = OrbitCamera.Active;
+        if (_capturingAa || camera == null || !camera.IsCurrent || Flight.Active == null) {
+
+            Respond(context, new Dictionary<string, object> { ["error"] = "A flight camera is required and only one sequence can run at a time." }, 409);
+            return;
+
+        }
+        string label = context.Request.QueryString["name"] ?? "review";
+        if (label.Length > 48 || System.Text.RegularExpressions.Regex.IsMatch(label, "[^a-zA-Z0-9_-]")) {
+
+            Respond(context, new Dictionary<string, object> { ["error"] = "Use a short alphanumeric sequence name." }, 400);
+            return;
+
+        }
+        _capturingAa = true;
+        Flight flight = Flight.Active;
+        bool paused = flight.DebugPaused;
+        flight.DebugPaused = true;
+        float previousRate = camera.DebugYawRate;
+        float yaw = camera.Yaw;
+        float pitch = camera.Pitch;
+        float distance = camera.Distance;
+        camera.DebugYawRate = 0.0f;
+        string directory = $"{ShotDirectory}/aa-{label}";
+        DirAccess.MakeDirRecursiveAbsolute(directory);
+        try {
+
+            for (int i = 0; i < 40; i++) {
+
+                await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+
+            }
+            for (int frame = 0; frame < 24; frame++) {
+
+                // The same subpixel pan and zoom at each frame makes profile comparisons reproducible.
+                float step = frame < 12 ? frame : 23 - frame;
+                camera.Yaw = yaw + step * 0.0015f;
+                camera.Pitch = pitch;
+                camera.Distance = distance + step * 0.18f;
+                await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                using Image image = GetViewport().GetTexture().GetImage();
+                Error error = image.SavePng($"{directory}/{frame:00}.png");
+                if (error != Error.Ok) { throw new InvalidOperationException($"Capture failed: {error}"); }
+
+            }
+            Respond(context, new Dictionary<string, object> { ["directory"] = directory, ["frames"] = 24, ["width"] = GetViewport().GetVisibleRect().Size.X });
+
+        } catch (Exception exception) {
+
+            Respond(context, new Dictionary<string, object> { ["error"] = exception.Message }, 500);
+
+        } finally {
+
+            if (GodotObject.IsInstanceValid(flight)) { flight.DebugPaused = paused; }
+            if (GodotObject.IsInstanceValid(camera)) {
+
+                camera.Yaw = yaw;
+                camera.Pitch = pitch;
+                camera.Distance = distance;
+                camera.DebugYawRate = previousRate;
+
+            }
+            _capturingAa = false;
+
+        }
 
     }
 
@@ -672,9 +848,17 @@ public sealed partial class DebugBridge : Node {
             state["scatterFailures"] = Planet.Active?.ScatterFailures ?? 0;
             state["groundMs"] = Planet.Active?.GroundMilliseconds ?? 0.0;
             state["flightMs"] = (GetTree().CurrentScene as Main)?.FlightMilliseconds ?? 0.0;
+            state["updateMs"] = (GetTree().CurrentScene as Main)?.UpdateMilliseconds ?? 0.0;
+            state["hudMs"] = (GetTree().CurrentScene as Main)?.HudMilliseconds ?? 0.0;
+            state["vesselMs"] = (GetTree().CurrentScene as Main)?.VesselMilliseconds ?? 0.0;
+            state["planetMs"] = (GetTree().CurrentScene as Main)?.PlanetMilliseconds ?? 0.0;
+            state["cloudSteps"] = GraphicsOptions.CloudSteps;
+            state["cloudWakes"] = Planet.Active?.CloudWakeCount ?? 0;
+            state["cloudTexturesReady"] = Planet.Active?.CloudTexturesReady ?? false;
             state["terrainWorkerFailures"] = Planet.Active?.WorkerFailures ?? 0;
             state["terrainPendingJobs"] = Planet.Active?.PendingJobs ?? 0;
             state["trees"] = Planet.Active?.TreeCount ?? 0;
+            state["distantTrees"] = Planet.Active?.CanopyCount ?? 0;
             state["forestCells"] = Planet.Active?.ForestCells ?? 0;
             state["forestPendingJobs"] = Planet.Active?.ForestPending ?? 0;
             state["forestFailures"] = Planet.Active?.ForestFailures ?? 0;
@@ -817,7 +1001,7 @@ public sealed partial class DebugBridge : Node {
 
         }
 
-        Image image = GetViewport().GetTexture().GetImage();
+        using Image image = GetViewport().GetTexture().GetImage();
 
         Error error = image.SavePng(path);
 

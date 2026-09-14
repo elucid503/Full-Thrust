@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode unshaded, blend_mix, depth_draw_never, depth_test_disabled, cull_front;
+render_mode unshaded, blend_premul_alpha, depth_draw_never, depth_test_disabled, cull_disabled;
 
 // Single-scatter Rayleigh/Mie; integral bounds from ray-sphere hits and the depth buffer, not the
 // mesh. The shell composites rather than adds: what is behind it is dimmed by the air in front of
@@ -8,6 +8,7 @@ render_mode unshaded, blend_mix, depth_draw_never, depth_test_disabled, cull_fro
 
 uniform sampler2D screen_texture : hint_screen_texture, filter_linear;
 uniform sampler2D depth_buffer : hint_depth_texture, filter_nearest;
+uniform sampler2D sun_optical_depth : filter_linear, repeat_disable;
 
 uniform vec3 planet_centre = vec3(0.0, 0.0, 0.0);
 uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
@@ -27,6 +28,28 @@ uniform float ozone_height = 22000.0;
 uniform float ozone_half_width = 15000.0;
 
 uniform float sun_intensity = 3.4;
+uniform float sun_shafts = 1.0;
+
+#include "res://Shaders/CloudShadowSampling.gdshaderinc"
+#include "res://Shaders/AtmosphereComposite.gdshaderinc"
+
+float cloud_sunlight(vec3 position, vec3 ray, float stride) {
+
+    if (sun_shafts < 0.001 || shadow_ready < 0.001) { return 1.0; }
+    vec3 up = normalize(shadow_centre - planet_centre);
+    float solar = dot(up, sun_direction);
+    float height = max(length(position) - planet_radius, 0.0);
+    float influence = (1.0 - smoothstep(900.0, 1900.0, height)) * smoothstep(0.03, 0.12, solar);
+    if (influence < 0.001) { return 1.0; }
+    vec3 offset = position + planet_centre - shadow_centre;
+    offset -= sun_direction * dot(offset, up) / max(solar, 0.03);
+    vec2 uv = vec2(dot(offset, shadow_east), dot(offset, shadow_north)) / shadow_span + 0.5;
+    float coverage = 1.0 - smoothstep(0.38, 0.49, max(abs(uv.x - 0.5), abs(uv.y - 0.5)));
+    float footprint = length(ray - sun_direction * dot(ray, up) / max(solar, 0.03)) * stride;
+    float transmission = filtered_cloud_transmission(uv, footprint);
+    return 1.0 - (1.0 - transmission) * influence * coverage * sun_shafts * shadow_ready;
+
+}
 
 // Single scattering alone leaves a daytime sky too dark and too directional: most of what reaches
 // the eye from overhead has bounced more than once. An isotropic term on the Rayleigh phase is the
@@ -34,13 +57,13 @@ uniform float sun_intensity = 3.4;
 uniform float multiscatter : hint_range(0.0, 0.2) = 0.035;
 
 const int view_samples = 20;
-const int light_samples = 4;
 
 // Returns the near and far ray parameters of a sphere hit, or a reversed pair when the ray misses.
 vec2 sphere_span(vec3 origin, vec3 direction, float radius) {
 
     float half_b = dot(origin, direction);
-    float c = dot(origin, origin) - radius * radius;
+    float radial_distance = length(origin);
+    float c = (radial_distance - radius) * (radial_distance + radius);
 
     float discriminant = half_b * half_b - c;
 
@@ -66,10 +89,17 @@ vec3 densities(vec3 position) {
 
 }
 
+void vertex() {
+
+    POSITION = vec4(VERTEX.xy, 1.0, 1.0);
+
+}
+
 void fragment() {
 
     vec3 camera = INV_VIEW_MATRIX[3].xyz;
-    vec3 ray = normalize((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz - camera);
+    vec4 view_ray = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, 1.0, 1.0);
+    vec3 ray = normalize(mat3(INV_VIEW_MATRIX) * view_ray.xyz);
 
     vec3 origin = camera - planet_centre;
 
@@ -135,8 +165,6 @@ void fragment() {
 
         view_optical_depth += density;
 
-        vec2 sunward = sphere_span(position, sun_direction, atmosphere_radius);
-
         // A sample the planet already occludes contributes nothing, so skip the light march for it.
         vec2 blocked = sphere_span(position, sun_direction, planet_radius);
 
@@ -146,25 +174,21 @@ void fragment() {
 
         }
 
-        float light_length = sunward.y;
-
-        vec3 light_optical_depth = vec3(0.0);
-
-        for (int sample = 0; sample < light_samples; sample++) {
-
-            float low_light = pow(float(sample) / float(light_samples), 2.0);
-            float high_light = pow(float(sample + 1) / float(light_samples), 2.0);
-            light_optical_depth += densities(position + sun_direction * (light_length * (low_light + high_light) * 0.5))
-                * light_length * (high_light - low_light);
-
-        }
+        float radial_distance = length(position);
+        float solar_cosine = dot(position, sun_direction) / radial_distance;
+        vec2 lookup_uv = vec2(0.5 + 0.5 * sign(solar_cosine) * sqrt(abs(solar_cosine)),
+            sqrt(clamp((radial_distance - planet_radius) / (atmosphere_radius - planet_radius), 0.0, 1.0)));
+        lookup_uv = (lookup_uv * vec2(255.0, 127.0) + 0.5) / vec2(256.0, 128.0);
+        vec3 light_optical_depth = textureLod(sun_optical_depth, lookup_uv, 0.0).rgb
+            * vec3(rayleigh_height, mie_height, ozone_half_width);
 
         vec3 attenuation = exp(-(rayleigh_coefficients * (view_optical_depth.x - density.x * 0.5 + light_optical_depth.x)
             + vec3(mie_coefficient * 1.1 * (view_optical_depth.y - density.y * 0.5 + light_optical_depth.y))
             + ozone_coefficients * (view_optical_depth.z - density.z * 0.5 + light_optical_depth.z)));
 
-        rayleigh_total += density.x * attenuation;
-        mie_total += density.y * attenuation;
+        float sunlight = cloud_sunlight(position, ray, step_length);
+        rayleigh_total += density.x * attenuation * mix(1.0, sunlight, 0.12);
+        mie_total += density.y * attenuation * sunlight;
 
     }
 
@@ -181,7 +205,9 @@ void fragment() {
         + vec3(mie_coefficient * 1.1 * view_optical_depth.y)
         + ozone_coefficients * view_optical_depth.z));
 
-    ALBEDO = texture(screen_texture, SCREEN_UV).rgb * transmittance + inscatter;
-    ALPHA = 1.0;
+    // Preserve RGB extinction without declaring nearby opaque geometry fully reactive to FSR.
+    vec4 air = atmosphere_composite(texture(screen_texture, SCREEN_UV).rgb, transmittance, inscatter);
+    ALBEDO = air.rgb;
+    ALPHA = air.a;
 
 }

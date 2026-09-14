@@ -393,6 +393,13 @@ public sealed partial class VesselView : Node3D {
 
         }
 
+        foreach (MeshInstance3D mesh in Meshes(node)) {
+
+            // The vehicle receives environment reflections without appearing in its own probe.
+            if (mesh.Layers == 1) { mesh.Layers = 4; }
+
+        }
+
         return piece;
 
     }
@@ -553,9 +560,16 @@ public sealed partial class VesselView : Node3D {
             Skin(mesh, stage, Slice(profile, (float)shield.Top, float.PositiveInfinity), "Skin", HullMaterial(new Color(0.97f, 0.972f, 0.975f), 0.15f, 1.0f), piece);
 
         }
+        else if (stage.Name == "Zenith") {
+
+            Skin(mesh, stage, Slice(profile, float.NegativeInfinity, (float)Zenith.TankTop), "Paint", VehiclePaint(), piece);
+            Skin(mesh, stage, Slice(profile, (float)Zenith.TankTop, float.PositiveInfinity), "Interstage",
+                Paint(new Color(0.035f, 0.043f, 0.05f), 0.05f, 0.48f), piece);
+
+        }
         else {
 
-            Skin(mesh, stage, profile, "Skin", HullMaterial(new Color(0.97f, 0.972f, 0.975f), 0.15f, 1.0f), piece);
+            Skin(mesh, stage, profile, "Paint", VehiclePaint(), piece);
 
         }
 
@@ -601,7 +615,7 @@ public sealed partial class VesselView : Node3D {
 
         if (cut) {
 
-            Commit(mesh, ports, "Ports", Paint(new Color(0.46f, 0.462f, 0.47f), 0.05f, 0.72f), piece);
+            Commit(mesh, ports, "Ports", Paint(new Color(0.008f, 0.010f, 0.013f), 0.0f, 0.95f), piece);
 
         }
 
@@ -951,6 +965,25 @@ public sealed partial class VesselView : Node3D {
 
     }
 
+    private static StandardMaterial3D VehiclePaint() {
+
+        return new StandardMaterial3D {
+
+            AlbedoColor = new Color(0.83f, 0.85f, 0.86f),
+            Metallic = 0.0f,
+            Roughness = 0.40f,
+            NormalEnabled = true,
+            NormalTexture = GD.Load<Texture2D>("res://Assets/Vessel/hull_normal.jpg"),
+            NormalScale = 0.15f,
+            ClearcoatEnabled = true,
+            Clearcoat = 0.18f,
+            ClearcoatRoughness = 0.35f,
+            TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmapsAnisotropic,
+
+        };
+
+    }
+
     private static StandardMaterial3D HullMaterial(Color albedo, float metallic, float roughness) {
 
         // A fully metallic hull reads near-black in sunlight - its brightness is all specular, and a
@@ -1061,22 +1094,26 @@ public sealed partial class VesselView : Node3D {
     /// on it. Which one it is comes off the part's own depth, not off the stage it belongs to.</summary>
     private void AttachThrusters(Node3D node, Piece piece, Stage stage, Part part) {
 
-        ArrayMesh nozzle = BuildNozzleMesh((float)part.Extent);
+        ArrayMesh nozzle = part.Depth > 0.0 ? null : BuildNozzleMesh((float)part.Extent);
 
         int index = 0;
 
         foreach ((Vector3 position, Vector3 axis, Vector3 side, float scale) in Mounts(stage, part)) {
 
-            node.AddChild(new MeshInstance3D {
+            if (nozzle != null) {
 
-                Name = $"{part.Name}{index++}",
-                Mesh = nozzle,
+                node.AddChild(new MeshInstance3D {
 
-                Transform = new Transform3D(new Basis(side, axis, side.Cross(axis).Normalized()), position),
+                    Name = $"{part.Name}{index++}",
+                    Mesh = nozzle,
 
-                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                    Transform = new Transform3D(new Basis(side, axis, side.Cross(axis).Normalized()), position),
 
-            });
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+
+                });
+
+            }
 
             AttachJet(node, piece, position, axis, side, scale);
 
@@ -1093,11 +1130,7 @@ public sealed partial class VesselView : Node3D {
         double below = stage.Hull.RadiusAt(height - step);
         double above = stage.Hull.RadiusAt(height + step);
 
-        Vector2 slope = new Vector2((float)(step * 2.0), (float)(above - below));
-
-        Vector2 normal = new Vector2(slope.Y, -slope.X).Normalized();
-
-        return (Radial(angle) * -normal.X + Vector3.Up * -normal.Y).Normalized();
+        return (Radial(angle) * (float)(step * 2.0) - Vector3.Up * (float)(above - below)).Normalized();
 
     }
 

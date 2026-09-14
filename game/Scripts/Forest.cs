@@ -11,9 +11,10 @@ namespace FullThrust.Game;
 
 public sealed partial class Forest : Node3D {
 
-    private const double CellSize = 256.0;
-    private const double Reach = 1600.0;
-    private const int Samples = 14;
+    private bool _distant;
+    private double CellSize => _distant ? 1024.0 : 256.0;
+    private double Reach => _distant ? 8000.0 : 1600.0;
+    private int Samples => _distant ? 56 : 14;
 
     private readonly record struct Key(int Row, int Column);
 
@@ -24,6 +25,7 @@ public sealed partial class Forest : Node3D {
         public Transform3D[] Trees;
         public Color[] Colours;
         public bool Conifer;
+        public bool Coastal;
         public MultiMeshInstance3D Instance;
 
     }
@@ -36,8 +38,9 @@ public sealed partial class Forest : Node3D {
     private int _height;
     private int _rows;
     private double _latitudeStep;
-    private ArrayMesh[] _meshes;
+    private Mesh[] _meshes;
     private ShaderMaterial _material;
+    internal ShaderMaterial SurfaceMaterial => _material;
     private readonly Dictionary<Key, Grove> _groves = new();
     private readonly HashSet<Key> _wanted = new();
     private readonly List<Key> _queue = new();
@@ -53,8 +56,9 @@ public sealed partial class Forest : Node3D {
     public int Pending => _queue.Count + (_job == null ? 0 : 1);
     public int Failures { get; private set; }
 
-    public void Build(CelestialBody body, Texture2D biomes) {
+    public void Build(CelestialBody body, Texture2D biomes, bool distant = false) {
 
+        _distant = distant;
         _body = body;
         using Image image = biomes.GetImage();
         if (image.IsCompressed()) {
@@ -68,6 +72,13 @@ public sealed partial class Forest : Node3D {
         _biomes = image.GetData();
         _rows = (int)Math.Ceiling(Math.PI * body.Radius / CellSize);
         _latitudeStep = Math.PI / _rows;
+        if (_distant) {
+
+            _meshes = new Mesh[] { new QuadMesh { Size = new Vector2(12.0f, 12.0f) } };
+            _material = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/ForestCanopy.gdshader") };
+            return;
+
+        }
         ArrayMesh broadleaf = TreeAssets.Load("Tree_1", 0);
         ArrayMesh pine = TreeAssets.Load("Pine_1", 1);
         ArrayMesh birch = TreeAssets.Load("Birch_1", 2);
@@ -85,7 +96,7 @@ public sealed partial class Forest : Node3D {
         Vector3d local = _body.ToBodyFixed(eye, time);
         Vector3d? physics = null;
         Flight flight = Flight.Active;
-        if (flight != null && flight.Body == _body
+        if (!_distant && flight != null && flight.Body == _body
             && _body.HeightAboveGround(flight.Vessel.Position, time) < 100.0) {
             physics = _body.ToBodyFixed(flight.Vessel.Position, time);
         }
@@ -94,10 +105,12 @@ public sealed partial class Forest : Node3D {
                 && (physics.Value - _physicsFocus.Value).LengthSquared > CellSize * CellSize * 0.0625);
         if (physicsMoved) { _physicsFocus = physics; }
         bool enabled = altitude < Reach;
-        if (physicsMoved || enabled != _enabled || (local - _lastEye).LengthSquared > 96.0 * 96.0) {
+        Vector3d surfaceEye = local.Normalized * _body.Radius;
+        double movement = _distant ? 256.0 : 96.0;
+        if (physicsMoved || enabled != _enabled || (surfaceEye - _lastEye).LengthSquared > movement * movement) {
 
             Select(local, enabled);
-            _lastEye = local;
+            _lastEye = surfaceEye;
             _enabled = enabled;
 
         }
@@ -188,13 +201,14 @@ public sealed partial class Forest : Node3D {
             double latitude = Math.Asin(eye.Normalized.Z);
             double longitude = Math.Atan2(eye.Y, eye.X);
             int row = (int)((latitude + Math.PI * 0.5) / _latitudeStep);
-            for (int r = Math.Max(0, row - 8); r <= Math.Min(_rows - 1, row + 8); r++) {
+            int rowReach = (int)Math.Ceiling(Reach / CellSize) + 1;
+            for (int r = Math.Max(0, row - rowReach); r <= Math.Min(_rows - 1, row + rowReach); r++) {
 
                 int columns = Columns(r);
                 int centre = (int)((longitude + Math.PI) / (Math.PI * 2.0) * columns);
                 // Longitude converges at the poles, where a whole ring can fit inside the view.
                 double poleDistance = (Math.PI * 0.5 - Math.Abs(latitude)) * _body.Radius;
-                int spread = poleDistance < Reach + CellSize ? columns : 9;
+                int spread = poleDistance < Reach + CellSize ? columns : rowReach + 1;
                 for (int c = centre - spread; c <= centre + spread; c++) {
 
                     Key key = new Key(r, ((c % columns) + columns) % columns);
@@ -309,7 +323,9 @@ public sealed partial class Forest : Node3D {
                 double scale = 0.75 + Random(ref seed) * 0.65;
                 double rotation = Random(ref seed) * Math.PI * 2.0;
                 double variation = Random(ref seed);
-                if (chance > cover.G * 0.65 || cover.A > 0.15) {
+                double mosaic = Landscape.Mosaic(direction, _body.Radius);
+                double woodland = Landscape.Woodland(mosaic);
+                if (chance > cover.G * (0.035 + woodland * 1.15) || cover.A > 0.15) {
 
                     continue;
 
@@ -332,31 +348,21 @@ public sealed partial class Forest : Node3D {
                 }
                 Vector3 up = Frames.Direction(direction);
                 Vector3 right = Frames.Direction(tangent);
-                Basis basis = new Basis(right, up, right.Cross(up)).Rotated(up, (float)rotation).Scaled(Vector3.One * (float)scale);
+                double coastal = Landscape.Coastal(direction.Z, height, cover.B);
+                Vector3 dimensions = new((float)(1.0 + coastal * 0.2), (float)(1.0 - coastal * (0.35 + variation * 0.2)), (float)(1.0 + coastal * 0.2));
+                Basis basis = new Basis(right, up, right.Cross(up)).Rotated(up, (float)rotation) * Basis.FromScale(dimensions * (float)scale);
                 trees.Add(new Transform3D(basis, Frames.Direction(direction * (_body.Radius + height - 0.35) - anchor)));
                 colours.Add(new Color((float)(0.78 + variation * 0.25), (float)(0.85 + variation * 0.20), 0.80f, 1.0f));
 
             }
 
         }
-        return new Grove { Key = key, Anchor = anchor, Trees = trees.ToArray(), Colours = colours.ToArray(), Conifer = conifer };
+        bool coast = Landscape.Coastal(centre.Z, anchor.Length - _body.Radius, Cover(centre).B) > 0.35;
+        return new Grove { Key = key, Anchor = anchor, Trees = trees.ToArray(), Colours = colours.ToArray(), Conifer = conifer, Coastal = coast };
 
     }
 
-    private bool Cleared(Vector3d direction) {
-
-        foreach (Terrain.Plateau plateau in _body.Terrain.Plateaus) {
-
-            if ((direction - plateau.Centre).Length * _body.Radius < plateau.InnerRadius + 24.0) {
-
-                return true;
-
-            }
-
-        }
-        return false;
-
-    }
+    private bool Cleared(Vector3d direction) => Landscape.OnPavement(direction, _body.Terrain, _body.Radius, 0.6);
 
     private void Adopt(Grove grove) {
 
@@ -376,7 +382,8 @@ public sealed partial class Forest : Node3D {
 
             TransformFormat = MultiMesh.TransformFormatEnum.Transform3D,
             UseColors = true,
-            Mesh = _meshes[Math.Abs((grove.Key.Row ^ grove.Key.Column) % 3) * 2 + (grove.Conifer ? 1 : 0)],
+            Mesh = _distant ? _meshes[0] : grove.Coastal ? _meshes[(grove.Key.Row ^ grove.Key.Column) % 3 == 0 ? 1 : 0]
+                : _meshes[Math.Abs((grove.Key.Row ^ grove.Key.Column) % 3) * 2 + (grove.Conifer ? 1 : 0)],
             InstanceCount = grove.Trees.Length,
 
         };
@@ -388,15 +395,17 @@ public sealed partial class Forest : Node3D {
         }
         grove.Instance = new MultiMeshInstance3D {
 
+            Layers = 4,
             Multimesh = multi,
             MaterialOverride = _material,
-            CastShadow = GeometryInstance3D.ShadowCastingSetting.On,
+            CastShadow = _distant ? GeometryInstance3D.ShadowCastingSetting.Off : GeometryInstance3D.ShadowCastingSetting.On,
             GIMode = GeometryInstance3D.GIModeEnum.Disabled,
             ExtraCullMargin = 15.0f,
+            VisibilityRangeEnd = (float)(Reach + CellSize),
 
         };
         AddChild(grove.Instance);
-        Obstacles.Add(grove.Key, grove.Anchor, grove.Trees, multi, grove.Instance);
+        if (!_distant) { Obstacles.Add(grove.Key, grove.Anchor, grove.Trees, multi, grove.Instance); }
 
     }
 

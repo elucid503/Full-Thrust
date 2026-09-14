@@ -8,11 +8,16 @@ uniform sampler2D pine_map : source_color, filter_linear_mipmap_anisotropic;
 uniform sampler2D birch_map : source_color, filter_linear_mipmap_anisotropic;
 varying vec3 local_position;
 varying float distance_to_eye;
+varying vec3 world_position;
+varying float cloud_light;
+varying float leaf_amount;
+#include "res://Shaders/CloudShadowSampling.gdshaderinc"
 
 void vertex() {
 
     local_position = VERTEX;
     vec3 world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+    world_position = world;
     distance_to_eye = length(world - eye_position);
     float fade = 1.0 - smoothstep(800.0, 1600.0, distance_to_eye);
     float phase = float(INSTANCE_ID) * 2.399963;
@@ -26,6 +31,9 @@ void vertex() {
 
 void fragment() {
     float leaves = step(0.5, UV2.x);
+    leaf_amount = leaves;
+    vec2 shadow = local_cloud_light(world_position);
+    cloud_light = 1.0 - 0.32 * shadow.x * shadow.y;
     vec4 foliage = vec4(1.0);
     if (leaves > 0.5) {
         if (UV2.y < 0.5) { foliage = texture(broadleaf_map, UV); }
@@ -42,4 +50,12 @@ void fragment() {
     AO = mix(1.0, mix(0.72, 1.0, clamp(local_position.y / 10.5, 0.0, 1.0)), leaves);
     AO_LIGHT_AFFECT = 0.0;
     BACKLIGHT = ALBEDO * leaves * 0.25;
+}
+
+void light() {
+
+    float shade = LIGHT_IS_DIRECTIONAL ? cloud_light : 1.0;
+    float diffuse = max(dot(NORMAL, LIGHT), 0.0) + max(dot(-NORMAL, LIGHT), 0.0) * leaf_amount * 0.2;
+    DIFFUSE_LIGHT += LIGHT_COLOR * ATTENUATION * shade * diffuse / PI;
+
 }

@@ -15,8 +15,8 @@ public sealed class LaunchSite {
 
     };
 
-    // Only the mount needs level ground; restore the natural surface beyond its small footing.
-    private const double LevelRadius = 12.0;
+    // The apron, deflector and tower share a level survey datum.
+    private const double LevelRadius = 36.0;
     private const double BlendRadius = 90.0;
 
     /// <summary>Standoff of the pad deck over the natural ground, metres.</summary>

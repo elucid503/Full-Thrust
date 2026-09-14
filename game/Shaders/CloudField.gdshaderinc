@@ -1,74 +1,120 @@
 #include "res://Shaders/EnvironmentField.gdshaderinc"
 
 uniform sampler2D cloud_map : filter_linear_mipmap, repeat_enable;
-uniform sampler3D shape_noise : filter_linear, repeat_enable;
+uniform sampler3D shape_noise : filter_linear_mipmap, repeat_enable;
 uniform sampler3D detail_noise : filter_linear, repeat_enable;
 uniform float base_radius = 1275400.0;
 uniform float top_radius = 1281200.0;
-uniform float cloud_spin = 0.0;
-uniform float drift = 0.0;
+uniform mat3 cloud_frame = mat3(1.0);
+uniform vec3 coastal_weather_direction = vec3(0.143, 0.478, 0.867);
 
 vec3 cloud_unspin(vec3 p) {
 
-    float s = sin(-cloud_spin);
-    float c = cos(-cloud_spin);
-    return vec3(p.x * c + p.z * s, p.y, -p.x * s + p.z * c);
+    return cloud_frame * p;
+
+}
+
+vec2 weather_at(vec3 p) {
+
+    vec3 fixed_p = cloud_unspin(p);
+    vec3 up = normalize(fixed_p);
+    vec2 uv = vec2(atan(-up.z, up.x) / TAU + 0.5, 0.5 - asin(clamp(up.y, -1.0, 1.0)) / PI);
+    float cover = pow(textureLod(cloud_map, uv, 3.0).r, 0.65);
+    float weather = textureLod(shape_noise, up * base_radius * 0.000007, 0.0).r;
+    float coastal_weather = 1.0 - smoothstep(30000.0, 100000.0, length(up - coastal_weather_direction) * base_radius);
+    float coverage = clamp(mix((cover - 0.22) * 1.35, 0.28 + cover * 0.64, coastal_weather)
+        + (weather - 0.5) * 0.5, 0.0, 0.92);
+    return vec2(coverage, weather);
+
+}
+
+vec4 cloud_base_at_height(vec3 p, float footprint, vec2 conditions, float height) {
+
+    if (height <= 0.0 || height >= 1.0) { return vec4(-1.0, 0.0, 0.0, 0.0); }
+    vec3 fixed_p = cloud_unspin(p);
+    float coverage = conditions.x;
+    float weather = conditions.y;
+    float convection = smoothstep(0.35, 0.7, weather);
+    float ceiling = mix(0.38, 0.96, convection);
+    float floor_height = 0.035 + 0.035 * weather;
+    float profile = smoothstep(floor_height, floor_height + 0.07, height)
+        * (1.0 - smoothstep(ceiling * 0.45, ceiling, height));
+    if (coverage < 0.015 || profile < 0.001) { return vec4(-1.0, 0.0, 0.0, 0.0); }
+
+    // Different world-space wavelengths bend the tiled volume into coherent, non-grid-aligned systems.
+    vec3 regional = fixed_p * 0.000017;
+    vec3 warp = sin(regional.yzx * vec3(1.31, 0.91, 1.73) + sin(regional.zxy * 0.67)) * 6500.0;
+    warp += (weather - 0.5) * 11000.0 * vec3(0.63, -0.51, 0.58);
+
+    float shape_lod = log2(max(1.0, footprint * 0.00010 * float(textureSize(shape_noise, 0).x) * 1.5));
+    float shape = textureLod(shape_noise, (fixed_p + warp) * 0.00010, shape_lod).r;
+    float billow_resolved = 1.0 - smoothstep(120.0, 600.0, footprint);
+    float billow = 0.5;
+    if (billow_resolved > 0.001) { billow = textureLod(detail_noise, (fixed_p + warp * 0.3) * 0.00043, 0.0).r; }
+    float meso_resolved = 1.0 - smoothstep(45.0, 160.0, footprint);
+    float meso = 0.5;
+    if (meso_resolved > 0.001) { meso = textureLod(detail_noise, fixed_p * 0.0014, 0.0).r; }
+    shape += (0.5 - billow) * 0.28 * billow_resolved + (0.5 - meso) * 0.20 * meso_resolved;
+    float sheet = smoothstep(0.35, 0.72, coverage) * (1.0 - convection * 0.45);
+    shape = mix(shape, shape * 0.45 + 0.36, sheet);
+
+    // Billows taper the underside as well as the silhouette.
+    float threshold = 0.65 - coverage * 0.36;
+    float body = (shape - threshold - (1.0 - profile) * 0.18) / 0.18;
+    return vec4(body, profile, convection, billow);
+
+}
+
+vec4 cloud_base(vec3 p, float footprint, vec2 conditions) {
+
+    return cloud_base_at_height(p, footprint, conditions, (length(p) - base_radius) / (top_radius - base_radius));
+
+}
+
+float cloud_envelope(vec3 p, float footprint, vec2 conditions) {
+
+    return cloud_base(p, footprint, conditions).x;
+
+}
+
+float density_from_base(vec3 p, float footprint, vec4 base) {
+
+    float body = clamp(base.x, 0.0, 1.0);
+    if (body < 0.001) { return 0.0; }
+    if (body >= 1.0) { return base.y * mix(0.85, 1.25, base.z) * (1.0 - plume_clearance(p)); }
+    float erosion = mix(0.30, 0.08, smoothstep(250.0, 2400.0, footprint));
+    body = max(body - base.w * erosion * (1.0 - body), 0.0);
+
+    // Only resolve fine edge erosion when its projected footprint can retain it.
+    float close = 1.0 - smoothstep(12.0, 48.0, footprint);
+
+    if (close > 0.002) {
+
+        vec3 fixed_p = cloud_unspin(p);
+        float fray = textureLod(detail_noise, fixed_p * 0.0045, 0.0).r;
+
+        body = max(body - fray * 0.35 * close * (1.0 - body), 0.0);
+
+    }
+
+    body = smoothstep(0.015, 0.35, body);
+    return body * base.y * mix(0.85, 1.25, base.z) * (1.0 - plume_clearance(p));
+
+}
+
+float density_in_weather(vec3 p, float footprint, vec2 conditions) {
+
+    return density_from_base(p, footprint, cloud_base(p, footprint, conditions));
 
 }
 
 float density_at(vec3 p, float footprint) {
 
-    float height = (length(p) - base_radius) / (top_radius - base_radius);
-    if (height <= 0.0 || height >= 1.0) { return 0.0; }
-
-    vec3 fixed_p = cloud_unspin(p);
-    vec3 up = normalize(fixed_p);
-    vec2 uv = vec2(atan(-up.z, up.x) / TAU + 0.5, 0.5 - asin(clamp(up.y, -1.0, 1.0)) / PI);
-    float cover = textureLod(cloud_map, uv, 3.0).r;
-    vec3 wind = vec3(drift, drift * 0.18, drift * 0.43);
-    float weather = textureLod(shape_noise, fixed_p * 0.000007 + wind * 0.2, 0.0).r;
-    float convection = smoothstep(0.35, 0.7, weather);
-    float ceiling = mix(0.25, 0.92, convection);
-    float floor_height = 0.035 + 0.14 * weather;
-    float profile = smoothstep(floor_height, floor_height + 0.16, height)
-        * (1.0 - smoothstep(ceiling * 0.48, max(ceiling, floor_height + 0.20), height));
-    float coverage = clamp((cover - 0.22) * 1.35 + (weather - 0.5) * 0.3, 0.0, 1.0);
-    if (coverage < 0.015 || profile < 0.001) { return 0.0; }
-
-    // The shape volume tiles every fifteen kilometres, which over a whole hemisphere reads as a grid
-    // of identical cloud. Warping its lookup by the weather field - a hundred and forty kilometres to
-    // a tile, and no whole multiple of the other - carries the repeat out past the planet for free,
-    // because the weather sample is one this function has already paid for.
-    vec3 warp = (weather - 0.5) * 11000.0 * vec3(0.63, -0.51, 0.58);
-
-    float shape = textureLod(shape_noise, (fixed_p + warp) * 0.000065 + wind, 0.0).r;
-
-    // Billows taper the underside as well as the silhouette.
-    profile *= smoothstep(0.0, 0.16, height - floor_height - (1.0 - shape) * 0.12);
-    float threshold = 1.0 - coverage * 0.8;
-    float body = smoothstep(threshold - 0.09, threshold + 0.15, shape + profile * 0.16);
-    if (body < 0.001) { return 0.0; }
-    float billow = footprint < 1200.0 ? textureLod(detail_noise, fixed_p * 0.00029 + wind * 1.7, 0.0).r : 0.5;
-    float erosion = mix(0.18, 0.045, smoothstep(250.0, 2400.0, footprint));
-    body = max(body - billow * erosion * (1.0 - body), 0.0);
-
-    // A third octave at ten metres to a voxel, taken only where the step is short enough to resolve
-    // it. It costs nothing on the distant deck, nothing in the shadow and light marches, and it is
-    // the difference between a cloud that frays and a smooth blob when the vehicle is flying at one.
-    float close = 1.0 - smoothstep(35.0, 180.0, footprint);
-
-    if (close > 0.002) {
-
-        float fray = textureLod(detail_noise, fixed_p * 0.0016 + wind * 5.0, 0.0).r;
-
-        body = max(body - fray * 0.26 * close * (1.0 - body), 0.0);
-
-    }
-
-    return body * profile * mix(0.65, 1.0, convection) * (1.0 - plume_clearance(p));
+    float radius = length(p);
+    if (radius <= base_radius || radius >= top_radius) { return 0.0; }
+    return density_in_weather(p, footprint, weather_at(p));
 
 }
-
 
 float cloud_transmittance(vec3 p, vec3 sun, float extinction_coefficient) {
 
@@ -82,9 +128,12 @@ float cloud_transmittance(vec3 p, vec3 sun, float extinction_coefficient) {
     if (length(p) < base_radius && inner > 0.0) { start = max(0.0, -b + sqrt(inner)); }
     float stride = max(finish - start, 0.0) / 6.0;
     float optical = 0.0;
+    vec2 conditions = weather_at(p + sun * (start + stride * 3.0));
     for (int i = 0; i < 6; i++) {
 
-        optical += density_at(p + sun * (start + (float(i) + 0.5) * stride), max(stride, 1200.0)) * stride;
+        vec3 sample_position = p + sun * (start + (float(i) + 0.5) * stride);
+        optical += (stride < 3000.0 ? density_in_weather(sample_position, max(stride, 1200.0), conditions)
+            : density_at(sample_position, stride)) * stride;
 
     }
     return exp(-optical * extinction_coefficient);

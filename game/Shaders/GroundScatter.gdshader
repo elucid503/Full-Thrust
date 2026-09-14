@@ -13,10 +13,14 @@ varying vec3 local_normal;
 varying mat3 stone_to_view;
 varying float blade;
 varying float variation;
+varying vec3 world_position;
+varying float cloud_light;
+#include "res://Shaders/CloudShadowSampling.gdshaderinc"
 
 void vertex() {
 
     local_position = VERTEX;
+    world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
     local_normal = NORMAL;
     stone_to_view = MODELVIEW_NORMAL_MATRIX;
     blade = UV2.x;
@@ -32,6 +36,9 @@ void vertex() {
 }
 
 void fragment() {
+
+    vec2 shadow = local_cloud_light(world_position);
+    cloud_light = 1.0 - 0.32 * shadow.x * shadow.y;
 
     float blade_ridge = 0.82 + 0.18 * sin(UV.x * PI);
     ALBEDO = COLOR.rgb * mix(0.48, 1.20, UV.y) * blade_ridge;
@@ -57,5 +64,13 @@ void fragment() {
     SPECULAR = 0.22;
     AO = mix(1.0, mix(0.5, 1.0, UV.y), blade);
     BACKLIGHT = COLOR.rgb * blade * 0.35;
+
+}
+
+void light() {
+
+    float shade = LIGHT_IS_DIRECTIONAL ? cloud_light : 1.0;
+    float diffuse = max(dot(NORMAL, LIGHT), 0.0) + max(dot(-NORMAL, LIGHT), 0.0) * blade * 0.3;
+    DIFFUSE_LIGHT += LIGHT_COLOR * ATTENUATION * shade * diffuse / PI;
 
 }

@@ -2,6 +2,7 @@ uniform float environment_time = 0.0;
 uniform int wake_count = 0;
 uniform vec4 wake_centres[8];
 uniform vec4 wake_axes[8];
+uniform vec4 wake_states[8];
 uniform vec4 water_impact = vec4(0.0);
 uniform float impact_strength = 0.0;
 
@@ -13,13 +14,14 @@ float plume_clearance(vec3 p) {
 
         vec3 offset = p - wake_centres[i].xyz;
         float along = clamp(dot(offset, wake_axes[i].xyz), 0.0, wake_axes[i].w);
-        float radius = wake_centres[i].w + along * 0.12;
+        float radius = wake_centres[i].w + along * wake_states[i].y;
         float distance = length(offset - wake_axes[i].xyz * along);
-        clearing = max(clearing, 1.0 - smoothstep(radius * 0.35, radius, distance));
+        float strength = wake_states[i].x;
+        clearing = max(clearing, (1.0 - smoothstep(radius * 0.35, radius, distance)) * strength);
         compression = max(compression, smoothstep(radius * 0.7, radius, distance)
-            * (1.0 - smoothstep(radius, radius * 1.5, distance)));
+            * (1.0 - smoothstep(radius, radius * 1.5, distance)) * strength);
 
     }
-    return clearing - compression * 0.3 * (1.0 - clearing);
+    return clearing - compression * 0.65 * (1.0 - clearing);
 
 }

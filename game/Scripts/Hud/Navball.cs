@@ -17,20 +17,6 @@ public sealed partial class Navball : Control {
 
     private const float MarkerSize = 8.5f;
 
-    // The ball is shaded rather than lit: a sphere with no terminator on it reads as a flat disc.
-    private const float Curve = 0.22f;
-
-    private static readonly Color Sky = new Color(0.475f, 0.541f, 0.612f);
-    private static readonly Color Ground = new Color(0.145f, 0.161f, 0.184f);
-    private static readonly Color Line = new Color(0.945f, 0.961f, 0.976f);
-
-    // Every thirty degrees, and no finer. A ball this size carries a ten degree ladder as noise:
-    // the lines land within a pixel or two of each other and the markers have to compete with them.
-    private const int Parallels = 5;
-    private const int Meridians = 4;
-
-    private const int Step = 30;
-
     // The tape is logarithmic and fixed. An auto-ranging tape rescales every time the reading
     // crosses a step, which fills the bar, resets it, and fills it again while the climb is steady:
     // the pointer ends up saying more about the scale than about the vessel.
@@ -45,14 +31,9 @@ public sealed partial class Navball : Control {
 
     );
 
-    private readonly byte[] _pixels = new byte[Diameter * Diameter * 4];
-
-    private readonly float[] _parallelSine = new float[Parallels];
-    private readonly float[] _boundarySine = new float[Parallels - 1];
-
-    private readonly Vector3[] _meridian = new Vector3[Meridians];
-
-    private ImageTexture _texture;
+    private Texture2D _texture;
+    private SubViewport _ballViewport;
+    private ShaderMaterial _ballMaterial;
 
     private Flight _flight;
 
@@ -74,24 +55,29 @@ public sealed partial class Navball : Control {
         MouseFilter = MouseFilterEnum.Stop;
         TextureFilter = TextureFilterEnum.Linear;
 
-        for (int index = 0; index < Parallels; index++) {
-
-            _parallelSine[index] = Mathf.Sin(Mathf.DegToRad(-60.0f + Step * index));
-
-        }
-
-        for (int index = 0; index < Parallels - 1; index++) {
-
-            _boundarySine[index] = Mathf.Sin(Mathf.DegToRad(-45.0f + Step * index));
-
-        }
-
         _ball = new Rect2(Margin + TapeWidth + Gap, Margin, Diameter, Diameter);
 
         _leftTape = new Rect2(Margin, Margin, TapeWidth, Diameter);
         _rightTape = new Rect2(Extent.X - Margin - TapeWidth, Margin, TapeWidth, Diameter);
 
-        _texture = ImageTexture.CreateFromImage(Image.CreateFromData(Diameter, Diameter, false, Image.Format.Rgba8, _pixels));
+        _ballViewport = new SubViewport {
+
+            Size = new Vector2I(Diameter, Diameter),
+            TransparentBg = true,
+            Disable3D = true,
+            RenderTargetUpdateMode = SubViewport.UpdateMode.Once,
+
+        };
+        AddChild(_ballViewport);
+        _ballMaterial = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Navball.gdshader") };
+        _ballViewport.AddChild(new ColorRect {
+
+            Size = new Vector2(Diameter, Diameter),
+            Color = Colors.White,
+            Material = _ballMaterial,
+
+        });
+        _texture = _ballViewport.GetTexture();
 
     }
 
@@ -122,17 +108,12 @@ public sealed partial class Navball : Control {
         _east = Single(inverse.Rotate(eastWorld));
         _north = Single(inverse.Rotate(northWorld));
 
-        for (int index = 0; index < Meridians; index++) {
-
-            float angle = Mathf.Pi * index / Meridians;
-
-            _meridian[index] = _east * Mathf.Cos(angle) - _north * Mathf.Sin(angle);
-
-        }
-
         _verticalSpeed = Vector3d.Dot(vessel.Velocity, upWorld);
 
-        Raster();
+        _ballMaterial.SetShaderParameter("local_up", _up);
+        _ballMaterial.SetShaderParameter("local_east", _east);
+        _ballMaterial.SetShaderParameter("local_north", _north);
+        _ballViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Once;
 
         QueueRedraw();
 
@@ -158,157 +139,6 @@ public sealed partial class Navball : Control {
 
         DrawThrottleTape();
         DrawVerticalSpeedTape();
-
-    }
-
-    /// <summary>The ball itself. Every pixel is a direction, so the grid needs no geometry and never distorts.</summary>
-    private void Raster() {
-
-        float radius = Diameter * 0.5f;
-        float centre = radius;
-
-        for (int py = 0; py < Diameter; py++) {
-
-            float ny = (py + 0.5f - centre) / radius;
-
-            for (int px = 0; px < Diameter; px++) {
-
-                float nx = (px + 0.5f - centre) / radius;
-
-                int at = (py * Diameter + px) * 4;
-
-                float squared = nx * nx + ny * ny;
-
-                if (squared >= 1.0f) {
-
-                    _pixels[at + 3] = 0;
-
-                    continue;
-
-                }
-
-                float bz = Mathf.Sqrt(1.0f - squared);
-
-                float bx = nx;
-                float by = -ny;
-
-                float u = bx * _up.X + by * _up.Y + bz * _up.Z;
-
-                float shade = 1.0f - Curve + Curve * bz;
-
-                Color colour = u >= 0.0f ? Sky : Ground;
-
-                float mask = Math.Max(Parallel(nx, ny, bz, radius, u), Meridian(bx, by, bz, nx, ny, radius, u));
-
-                float red = Mathf.Lerp(colour.R, Line.R, mask) * shade;
-                float green = Mathf.Lerp(colour.G, Line.G, mask) * shade;
-                float blue = Mathf.Lerp(colour.B, Line.B, mask) * shade;
-
-                // One pixel of feather on the limb; a hard edge on a 152 px ball reads as a cut-out.
-                float cover = Mathf.Clamp((1.0f - Mathf.Sqrt(squared)) * radius, 0.0f, 1.0f);
-
-                _pixels[at] = Byte(red);
-                _pixels[at + 1] = Byte(green);
-                _pixels[at + 2] = Byte(blue);
-                _pixels[at + 3] = Byte(cover);
-
-            }
-
-        }
-
-        _texture.Update(Image.CreateFromData(Diameter, Diameter, false, Image.Format.Rgba8, _pixels));
-
-    }
-
-    private float Parallel(float nx, float ny, float bz, float radius, float u) {
-
-        if (Math.Abs(u) > 0.9659f) {
-
-            return 0.0f;
-
-        }
-
-        int band = 0;
-
-        while (band < Parallels - 1 && u > _boundarySine[band]) {
-
-            band++;
-
-        }
-
-        bool horizon = band == Parallels / 2;
-
-        float weight = horizon ? 1.0f : 0.46f;
-        float thickness = horizon ? 1.9f : 1.15f;
-
-        return Edge(u - _parallelSine[band], Gradient(_up, nx, ny, bz, radius), thickness) * weight;
-
-    }
-
-    private float Meridian(float bx, float by, float bz, float nx, float ny, float radius, float u) {
-
-        // Held almost to the pole. Cut earlier and a ball seen down its own axis loses every
-        // meridian at once, leaving concentric parallels that read as a target rather than a sphere.
-        float fade = Mathf.Clamp((0.9986f - Math.Abs(u)) * 90.0f, 0.0f, 1.0f);
-
-        if (fade <= 0.0f) {
-
-            return 0.0f;
-
-        }
-
-        int nearest = 0;
-        float closest = float.MaxValue;
-
-        for (int index = 0; index < Meridians; index++) {
-
-            Vector3 axis = _meridian[index];
-
-            float value = Math.Abs(bx * axis.X + by * axis.Y + bz * axis.Z);
-
-            if (value < closest) {
-
-                closest = value;
-                nearest = index;
-
-            }
-
-        }
-
-        Vector3 chosen = _meridian[nearest];
-
-        float signed = bx * chosen.X + by * chosen.Y + bz * chosen.Z;
-
-        bool cardinal = nearest % (Meridians / 2) == 0;
-
-        float mask = Edge(signed, Gradient(chosen, nx, ny, bz, radius), cardinal ? 1.3f : 1.0f);
-
-        return mask * fade * (cardinal ? 0.46f : 0.20f);
-
-    }
-
-    // How fast a plane's signed distance changes across the screen, so a line can be a fixed number
-    // of pixels wide wherever it falls, including where the sphere turns away at the limb.
-    private static float Gradient(Vector3 axis, float nx, float ny, float bz, float radius) {
-
-        float alongX = (axis.X - axis.Z * nx / bz) / radius;
-        float alongY = (-axis.Y - axis.Z * ny / bz) / radius;
-
-        return Mathf.Sqrt(alongX * alongX + alongY * alongY);
-
-    }
-
-    private static float Edge(float distance, float gradient, float thickness) {
-
-        if (gradient <= 0.0f) {
-
-            return 0.0f;
-
-        }
-
-        float pixels = Math.Abs(distance) / gradient;
-
-        return Mathf.Clamp((thickness * 0.5f + 0.5f - pixels), 0.0f, 1.0f);
 
     }
 
@@ -505,6 +335,5 @@ public sealed partial class Navball : Control {
 
     private static Vector3 Single(Vector3d value) => new Vector3((float)value.X, (float)value.Y, (float)value.Z);
 
-    private static byte Byte(float value) => (byte)Mathf.Clamp(Mathf.RoundToInt(value * 255.0f), 0, 255);
 
 }
