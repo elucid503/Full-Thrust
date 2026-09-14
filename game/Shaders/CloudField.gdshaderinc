@@ -28,7 +28,7 @@ vec2 weather_at(vec3 p) {
 
 }
 
-vec4 cloud_base_at_height(vec3 p, float footprint, vec2 conditions, float height) {
+vec4 cloud_base_sample(vec3 p, float footprint, vec2 conditions, float height, bool envelope_only) {
 
     if (height <= 0.0 || height >= 1.0) { return vec4(-1.0, 0.0, 0.0, 0.0); }
     vec3 fixed_p = cloud_unspin(p);
@@ -49,11 +49,11 @@ vec4 cloud_base_at_height(vec3 p, float footprint, vec2 conditions, float height
     float shape_lod = log2(max(1.0, footprint * 0.00010 * float(textureSize(shape_noise, 0).x) * 1.5));
     float shape = textureLod(shape_noise, (fixed_p + warp) * 0.00010, shape_lod).r;
     float billow_resolved = 1.0 - smoothstep(120.0, 600.0, footprint);
-    float billow = 0.5;
-    if (billow_resolved > 0.001) { billow = textureLod(detail_noise, (fixed_p + warp * 0.3) * 0.00043, 0.0).r; }
+    float billow = envelope_only ? 0.0 : 0.5;
+    if (!envelope_only && billow_resolved > 0.001) { billow = textureLod(detail_noise, (fixed_p + warp * 0.3) * 0.00043, 0.0).r; }
     float meso_resolved = 1.0 - smoothstep(45.0, 160.0, footprint);
-    float meso = 0.5;
-    if (meso_resolved > 0.001) { meso = textureLod(detail_noise, fixed_p * 0.0014, 0.0).r; }
+    float meso = envelope_only ? 0.0 : 0.5;
+    if (!envelope_only && meso_resolved > 0.001) { meso = textureLod(detail_noise, fixed_p * 0.0014, 0.0).r; }
     shape += (0.5 - billow) * 0.28 * billow_resolved + (0.5 - meso) * 0.20 * meso_resolved;
     float sheet = smoothstep(0.35, 0.72, coverage) * (1.0 - convection * 0.45);
     shape = mix(shape, shape * 0.45 + 0.36, sheet);
@@ -62,6 +62,19 @@ vec4 cloud_base_at_height(vec3 p, float footprint, vec2 conditions, float height
     float threshold = 0.65 - coverage * 0.36;
     float body = (shape - threshold - (1.0 - profile) * 0.18) / 0.18;
     return vec4(body, profile, convection, billow);
+
+}
+
+vec4 cloud_base_at_height(vec3 p, float footprint, vec2 conditions, float height) {
+
+    return cloud_base_sample(p, footprint, conditions, height, false);
+
+}
+
+float cloud_bound_at_height(vec3 p, float footprint, vec2 conditions, float height) {
+
+    // Maximum omitted detail bounds occupied samples without fetching either erosion octave.
+    return cloud_base_sample(p, footprint, conditions, height, true).x;
 
 }
 
@@ -77,11 +90,11 @@ float cloud_envelope(vec3 p, float footprint, vec2 conditions) {
 
 }
 
-float density_from_base(vec3 p, float footprint, vec4 base) {
+float undisturbed_density_from_base(vec3 p, float footprint, vec4 base) {
 
     float body = clamp(base.x, 0.0, 1.0);
     if (body < 0.001) { return 0.0; }
-    if (body >= 1.0) { return base.y * mix(0.85, 1.25, base.z) * (1.0 - plume_clearance(p)); }
+    if (body >= 1.0) { return base.y * mix(0.85, 1.25, base.z); }
     float erosion = mix(0.30, 0.08, smoothstep(250.0, 2400.0, footprint));
     body = max(body - base.w * erosion * (1.0 - body), 0.0);
 
@@ -98,7 +111,14 @@ float density_from_base(vec3 p, float footprint, vec4 base) {
     }
 
     body = smoothstep(0.015, 0.35, body);
-    return body * base.y * mix(0.85, 1.25, base.z) * (1.0 - plume_clearance(p));
+    return body * base.y * mix(0.85, 1.25, base.z);
+
+}
+
+float density_from_base(vec3 p, float footprint, vec4 base) {
+
+    float density = undisturbed_density_from_base(p, footprint, base);
+    return density > 0.0 ? density * (1.0 - plume_clearance(p)) : 0.0;
 
 }
 

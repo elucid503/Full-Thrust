@@ -9,6 +9,7 @@ namespace FullThrust.Game;
 
 public sealed partial class CloudShadows : Node {
 
+    private const int LightingResolution = 256;
     private readonly List<ShaderMaterial> _receivers = new();
     private SubViewport _viewport;
     private ShaderMaterial _material;
@@ -82,13 +83,14 @@ public sealed partial class CloudShadows : Node {
 
         SubViewport viewport = new() {
 
-            Size = new Vector2I(512, 512),
+            Size = new Vector2I(LightingResolution, LightingResolution),
             Disable3D = true,
+            UseHdr2D = true,
             RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled,
 
         };
         AddChild(viewport);
-        viewport.AddChild(new ColorRect { Size = new Vector2(512, 512), Material = material, Color = Colors.White });
+        viewport.AddChild(new ColorRect { Size = new Vector2(LightingResolution, LightingResolution), Material = material, Color = Colors.White });
         return viewport;
 
     }

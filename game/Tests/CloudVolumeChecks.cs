@@ -37,10 +37,16 @@ public sealed partial class CloudVolumeChecks : Node {
         Vector4[] states = new Vector4[8];
         states[0] = new Vector4(strength, 0.1f, 0, 0);
         _material.SetShaderParameter("wake_states", states);
+        return (await Read()).R * 2.0f;
+
+    }
+
+    private async Task<Color> Read() {
+
         await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
         await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
         using Image image = _viewport.GetTexture().GetImage();
-        return image.GetPixel(4, 4).R * 2.0f;
+        return image.GetPixel(4, 4);
 
     }
 
@@ -94,6 +100,34 @@ public sealed partial class CloudVolumeChecks : Node {
                 Check(Math.Abs(result.GetPixel(4, 4).R - 0.5f) < 0.1f, $"cloud ray height agrees with double precision within 1 cm at {offset}");
 
             }
+            // Compile the production marcher so the regression also catches incorrect clipping in its caller.
+            string clouds = FileAccess.GetFileAsString("res://Shaders/Clouds.gdshader");
+            int start = clouds.IndexOf("uniform vec3 planet_centre", StringComparison.Ordinal);
+            int finish = clouds.IndexOf("#include \"res://Shaders/CoastalFog", StringComparison.Ordinal);
+            _material.Shader = new Shader {
+
+                Code = "shader_type canvas_item; render_mode unshaded;\n" + clouds[start..finish]
+                    + "\nuniform vec3 probe; uniform float scene_distance = 4000000.0; void fragment() { float distance; vec4 cloud = cloud_radiance(vec3(0.0, planet_radius + eye_height, 0.0), normalize(probe), scene_distance, 0.00001, 0.5, distance); COLOR = vec4(cloud.a, distance / 200000.0, 0.0, 1.0); }",
+
+            };
+            using Image weatherImage = Image.CreateEmpty(2, 2, false, Image.Format.Rgb8);
+            weatherImage.Fill(new Color(0.75f, 0.75f, 0.75f));
+            using ImageTexture weather = ImageTexture.CreateFromImage(weatherImage);
+            _material.SetShaderParameter("cloud_map", weather);
+            _material.SetShaderParameter("wake_count", 0);
+            _material.SetShaderParameter("eye_height", 1100.0f);
+            _material.SetShaderParameter("eye_up", Vector3.Up);
+            _material.SetShaderParameter("extinction", 0.00001f);
+            _material.SetShaderParameter("probe", new Vector3(1, 0.00001f, 0));
+            float aboveHorizon = (await Read()).R;
+            _material.SetShaderParameter("probe", new Vector3(1, -0.00001f, 0));
+            float belowHorizon = (await Read()).R;
+            Check(aboveHorizon > 0.05f, "horizon regression samples an occupied cloud deck");
+            Check(Math.Abs(aboveHorizon - belowHorizon) < 0.008f, "cloud transmission is continuous across the local horizon");
+            _material.SetShaderParameter("extinction", 0.009f);
+            Check((await Read()).R > 0.999f, "opaque cloud termination leaves no background horizon leak");
+            _material.SetShaderParameter("scene_distance", 0.0f);
+            Check((await Read()).R < 0.001f, "foreground scene depth clips cloud integration");
             GD.Print($"Cloud volume: {_checks} GPU checks passed");
             GetTree().Quit();
 

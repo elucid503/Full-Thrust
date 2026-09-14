@@ -15,7 +15,7 @@ public sealed partial class GraphicsOptions : CanvasLayer {
     private int _mode = 1;
 
     public const bool LaunchShake = true;
-    public const float CloudSteps = 128.0f;
+    public const float CloudSteps = 96.0f;
 
     public override void _Ready() {
 

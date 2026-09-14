@@ -399,6 +399,7 @@ public sealed partial class Planet : Node3D {
         _clouds.SetShaderParameter("planet_centre", centre);
         _clouds.SetShaderParameter("cloud_frame", cloudFrame);
         _clouds.SetShaderParameter("view_steps", GraphicsOptions.CloudSteps);
+        _clouds.SetShaderParameter("sample_phase", (float)((Engine.GetProcessFrames() % 1024) * 0.61803398875 % 1.0));
         _clouds.SetShaderParameter("eye_height", (float)(eye.Length - _body.Radius));
         _clouds.SetShaderParameter("eye_up", Frames.Direction(eye.Normalized));
 

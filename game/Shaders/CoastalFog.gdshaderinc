@@ -4,8 +4,9 @@ uniform float sun_shafts = 1.0;
 const float marine_top = 1200.0;
 const float haze_top = 3000.0;
 
-vec4 coastal_fog(vec3 origin, vec3 ray, float scene_distance) {
+vec4 coastal_fog(vec3 origin, vec3 ray, float scene_distance, float cloud_distance, out vec4 foreground) {
 
+    foreground = vec4(0.0);
     if (fog_enabled < 0.5) { return vec4(0.0); }
     vec2 shell = eye_sphere_span(ray, planet_radius + haze_top);
     float start = max(shell.x, 0.0);
@@ -19,6 +20,8 @@ vec4 coastal_fog(vec3 origin, vec3 ray, float scene_distance) {
     float phase = (1.0 - 0.68 * 0.68) / (4.0 * PI * pow(1.0 + 0.68 * 0.68 - 1.36 * mu, 1.5));
     float transmission = 1.0;
     vec3 radiance = vec3(0.0);
+    float front_transmission = 1.0;
+    vec3 front_radiance = vec3(0.0);
     vec3 map_up = normalize(shadow_centre - planet_centre);
     float map_solar = dot(map_up, sun_direction);
     float near_height = max(ray_height(ray * start), 0.0);
@@ -73,10 +76,32 @@ vec4 coastal_fog(vec3 origin, vec3 ray, float scene_distance) {
 
         }
         vec3 scattered = vec3(0.07, 0.10, 0.15) + sunlight * phase * 3.4 * light;
-        radiance += scattered * day * transmission * opacity;
+        // Split extinction within the same bin instead of marching foreground fog a second time.
+        if (cloud_distance < finish && cloud_distance > low) {
+
+            float front_opacity = 1.0 - exp(-density * min(cloud_distance - low, stride) * 0.00024);
+            front_radiance = from_far
+                ? scattered * day * front_opacity + front_radiance * (1.0 - front_opacity)
+                : front_radiance + scattered * day * front_transmission * front_opacity;
+            front_transmission *= 1.0 - front_opacity;
+
+        }
+        if (from_far) {
+
+            radiance = scattered * day * opacity + radiance * (1.0 - opacity);
+
+        }
+        else {
+
+            radiance += scattered * day * transmission * opacity;
+
+        }
         transmission *= 1.0 - opacity;
+        if (!from_far && transmission < 0.003) { break; }
 
     }
-    return vec4(radiance, 1.0 - transmission);
+    vec4 full = vec4(radiance, 1.0 - transmission);
+    foreground = cloud_distance >= finish ? full : vec4(front_radiance, 1.0 - front_transmission);
+    return full;
 
 }

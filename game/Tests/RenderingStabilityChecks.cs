@@ -92,6 +92,17 @@ public sealed partial class RenderingStabilityChecks : Node {
                 Check(Math.Abs(result.G - alpha) < 0.01f, $"air opacity tracks extinction at {transmission}");
 
             }
+            _material.Shader = new Shader {
+
+                Code = "shader_type canvas_item; render_mode unshaded;\n#include \"res://Shaders/AtmosphereComposite.gdshaderinc\"\nuniform float cloud_alpha; void fragment() { vec4 cloud = vec4(vec3(0.6) * cloud_alpha, cloud_alpha); vec4 front = vec4(0.02, 0.03, 0.04, 0.1); vec4 back = vec4(0.1, 0.12, 0.15, 0.7); vec4 full = front + back * (1.0 - front.a); vec4 expected = front + (cloud + back * (1.0 - cloud.a)) * (1.0 - front.a); vec4 error = abs(cloud_fog_composite(cloud, front, full) - expected); COLOR = vec4(max(max(error.r, error.g), max(error.b, error.a)) * 100.0, 0.0, 0.0, 1.0); }",
+
+            };
+            foreach (float alpha in new[] { 0.0f, 0.25f, 0.75f, 1.0f }) {
+
+                _material.SetShaderParameter("cloud_alpha", alpha);
+                Check((await Read()).R < 0.01f, $"cloud opacity {alpha} occludes only fog behind it");
+
+            }
             GeometryHistoryChecks.Run();
             _checks++;
             GD.Print($"Rendering stability: {_checks} GPU checks passed");

@@ -1,5 +1,9 @@
 # Environmental rendering
 
+See [CloudPerformance.md](CloudPerformance.md) for the current cloud marcher, fog compositing,
+minimal graphics controls and performance validation. It supersedes the older cloud quality
+presets and fog ordering described below.
+
 The existing terrain geometry and collision survey remain shared. Below 20 km above sea level,
 the ground shader combines filtered rock/soil colour and normals with procedural material variation.
 It blends back to the previous material from 20 to 25 km; at and above 25 km the additional
