@@ -6,8 +6,8 @@ using Godot;
 
 namespace FullThrust.Game;
 
-/// <summary>What the air is doing, and how hot the leading skin has got. Up only while falling
-/// through air, so an ascent never carries a reentry instrument.</summary>
+/// <summary>What the air is doing, and how hot the leading skin has got. Up only in a fast
+/// descent through the upper air, so an ascent and a slow fall never carry it.</summary>
 public sealed partial class EntryPanel : Control {
 
     private const float PanelWidth = 336.0f;
@@ -39,6 +39,7 @@ public sealed partial class EntryPanel : Control {
 
         CustomMinimumSize = Extent;
         Size = Extent;
+        Visible = false;
 
         MouseFilter = MouseFilterEnum.Stop;
 
@@ -48,8 +49,8 @@ public sealed partial class EntryPanel : Control {
 
         _flight = flight;
 
-        // The panel is the entry's own instrument. On the pad and on the way up it is gone.
-        Visible = !flight.Clamped && flight.Vessel.Aero.Entering;
+        AeroForces air = flight.Vessel.Aero;
+        Visible = !flight.Clamped && air.Entering && flight.Altitude > 20_000.0 && air.AirSpeed > 1_500.0;
 
         if (Visible) {
 

@@ -10,13 +10,18 @@ void fragment() {
 
     if (interval.y <= interval.x) { discard; }
 
-    int count = 48;
+    vec3 outside = max(max(bounds_min - volume_camera, volume_camera - bounds_max), vec3(0.0));
+    float proxy = max(length(bounds_max - bounds_min), body_radius);
+    float close = 1.0 - smoothstep(0.0, proxy, length(outside));
+    int count = int(mix(48.0, 20.0, close));
     float ds = (interval.y - interval.x) / float(count);
     float jitter = mix(0.25, 0.75, grain(FRAGCOORD.xy));
     vec3 total = vec3(0.0);
     float transmission = 1.0;
 
     for (int i = 0; i < 48; i++) {
+
+        if (i >= count) { break; }
 
         vec3 p = volume_camera + ray * (interval.x + (float(i) + jitter) * ds);
         float downstream = max(-p.y, 0.0);

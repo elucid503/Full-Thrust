@@ -27,6 +27,7 @@ public sealed partial class GroundScatter : Node3D {
         public bool Grass;
         public bool Coastal;
         public ulong Born;
+        public bool Faded;
         public MultiMeshInstance3D Instance;
 
     }
@@ -148,7 +149,14 @@ public sealed partial class GroundScatter : Node3D {
 
             if (grove.Instance != null) {
 
-                grove.Instance.SetInstanceShaderParameter("cell_fade", Mathf.Clamp((Time.GetTicksMsec() - grove.Born) / 450.0f, 0.0f, 1.0f));
+                if (!grove.Faded) {
+
+                    float fade = Mathf.Clamp((Time.GetTicksMsec() - grove.Born) / 450.0f, 0.0f, 1.0f);
+                    grove.Instance.SetInstanceShaderParameter("cell_fade", fade);
+                    grove.Faded = fade >= 1.0f;
+
+                }
+
                 grove.Instance.Transform = new Transform3D(turn, Frames.Point(_body.ToInertial(grove.Anchor, time)));
 
             }
@@ -513,7 +521,7 @@ public sealed partial class GroundScatter : Node3D {
             Vertex(middle + side * width * 0.65f, new Vector2(1, 0.55f));
 
         }
-        return surface.Commit();
+        return WithLod(surface);
 
     }
 
@@ -558,7 +566,17 @@ public sealed partial class GroundScatter : Node3D {
             }
 
         }
-        return surface.Commit();
+        return WithLod(surface);
+
+    }
+
+    private static ArrayMesh WithLod(SurfaceTool surface) {
+
+        surface.Index();
+        using ImporterMesh imported = new();
+        imported.AddSurface(Mesh.PrimitiveType.Triangles, surface.CommitToArrays());
+        imported.GenerateLods(60.0f, 25.0f, new Godot.Collections.Array());
+        return imported.GetMesh();
 
     }
 

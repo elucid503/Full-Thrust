@@ -9,7 +9,6 @@ uniform float extinction = 0.009;
 uniform float sun_power = 2.0;
 uniform float ambient_gain = 0.28;
 uniform float view_steps = 128.0;
-uniform float ultra_density_samples = 6.0;
 uniform sampler2D local_cloud_lighting : filter_linear, repeat_disable;
 
 #include "res://Shaders/CloudShadowSampling.gdshaderinc"
@@ -91,7 +90,17 @@ vec4 cloud_radiance(vec3 origin, vec3 ray, float scene_distance, float angular_f
 
     }
     vec2 ground = eye_sphere_span(ray, planet_radius);
-    if (ground.x > 0.0 && ground.y > ground.x) { finish = min(finish, ground.x); }
+    if (ground.x > 0.0 && ground.y > ground.x) {
+
+        finish = min(finish, ground.x);
+
+    }
+    else if (dot(eye_up, ray) < 0.0) {
+
+        float horizon = sqrt(max(eye_height * (2.0 * planet_radius + eye_height), 0.0));
+        finish = min(finish, max(horizon, start));
+
+    }
     if (finish <= start || outer.y <= outer.x) { return vec4(0.0); }
 
     // Skip the clear cavity while retaining both sides of a grazing cloud-deck intersection.
@@ -149,12 +158,7 @@ vec4 cloud_radiance(vec3 origin, vec3 ray, float scene_distance, float angular_f
             (ray_height(ray * (cursor + step_length * 0.5)) - (base_radius - planet_radius)) / (top_radius - base_radius)).x;
         if (max(max(previous_envelope, next_envelope), middle_envelope) > -0.75) {
 
-            // Keep Standard/High sampling intact. Ultra's shorter
-            // coarse intervals need only six samples to retain High's 16 m density spacing.
-            // Counts depend on quality, never camera distance, so zooming cannot switch sample grids.
-            // All quality levels retain full sampling around a plume disturbance.
-            int samples = cursor + step_length > wake_start && cursor < wake_finish ? 16
-                : (view_steps > 224.0 ? int(clamp(ultra_density_samples, 6.0, 8.0)) : 8);
+            int samples = cursor + step_length > wake_start && cursor < wake_finish ? 16 : 8;
             float stride = step_length / float(samples);
             for (int j = 0; j < 16; j++) {
 
@@ -226,7 +230,7 @@ void fragment() {
     }
     float footprint = max(length(dFdx(ray)), length(dFdy(ray)));
     vec4 fog = coastal_fog(origin, ray, scene_distance);
-    bool fog_in_front = eye_height < 900.0;
+    bool fog_in_front = eye_height < haze_top;
     vec4 cloud = cloud_radiance(origin, ray, scene_distance, footprint, fog_in_front ? 1.0 - fog.a : 1.0);
     vec4 combined = fog_in_front
         ? fog + cloud * (1.0 - fog.a) : cloud + fog * (1.0 - cloud.a);

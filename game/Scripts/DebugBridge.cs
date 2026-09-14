@@ -257,45 +257,13 @@ public sealed partial class DebugBridge : Node {
 
         }
 
-        if (bool.TryParse(query["msaa"], out bool msaa)) {
-
-            viewport.Msaa3D = msaa ? Viewport.Msaa.Msaa2X : Viewport.Msaa.Disabled;
-
-        }
-
-        if (int.TryParse(query["samples"], out int samples) && samples is 0 or 2 or 4 or 8) {
-
-            viewport.Msaa3D = samples switch { 2 => Viewport.Msaa.Msaa2X, 4 => Viewport.Msaa.Msaa4X, 8 => Viewport.Msaa.Msaa8X, _ => Viewport.Msaa.Disabled };
-
-        }
-        if (Enum.TryParse(query["edgeAA"], true, out Viewport.ScreenSpaceAAEnum edgeAA)
-            && edgeAA is Viewport.ScreenSpaceAAEnum.Disabled or Viewport.ScreenSpaceAAEnum.Fxaa or Viewport.ScreenSpaceAAEnum.Smaa) {
-
-            viewport.ScreenSpaceAA = edgeAA;
-
-        }
-
-        if (bool.TryParse(query["history"], out bool history)) {
-
-            foreach (CompositorEffect effect in main.GetNode<WorldEnvironment>("WorldEnvironment").Compositor.CompositorEffects) {
-
-                if (effect is GeometryHistory) { effect.Enabled = history; }
-
-            }
-
-        }
-
         if (float.TryParse(query["scale"], out float scale) && float.IsFinite(scale)) {
 
             viewport.Scaling3DScale = Mathf.Clamp(scale, 0.5f, 1.0f);
-
-        }
-
-        if (Enum.TryParse(query["reconstruction"], true, out Viewport.Scaling3DModeEnum reconstruction)
-            && reconstruction is Viewport.Scaling3DModeEnum.Bilinear or Viewport.Scaling3DModeEnum.Fsr or Viewport.Scaling3DModeEnum.Fsr2) {
-
-            viewport.Scaling3DMode = reconstruction;
-            viewport.UseTaa = reconstruction != Viewport.Scaling3DModeEnum.Fsr2;
+            viewport.UseTaa = true;
+            viewport.Scaling3DMode = viewport.Scaling3DScale >= 0.999f
+                ? Viewport.Scaling3DModeEnum.Bilinear
+                : Viewport.Scaling3DModeEnum.Fsr;
 
         }
 
@@ -810,6 +778,12 @@ public sealed partial class DebugBridge : Node {
             ["frameSamples"] = _frameCount,
             ["renderCpuMs"] = RenderingServer.ViewportGetMeasuredRenderTimeCpu(GetViewport().GetViewportRid()),
             ["renderGpuMs"] = RenderingServer.ViewportGetMeasuredRenderTimeGpu(GetViewport().GetViewportRid()),
+            ["processMs"] = Performance.GetMonitor(Performance.Monitor.TimeProcess) * 1000.0,
+            ["physicsMs"] = Performance.GetMonitor(Performance.Monitor.TimePhysicsProcess) * 1000.0,
+            ["drawCalls"] = Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame),
+            ["primitives"] = Performance.GetMonitor(Performance.Monitor.RenderTotalPrimitivesInFrame),
+            ["videoRam"] = Performance.GetMonitor(Performance.Monitor.RenderVideoMemUsed),
+            ["objectCount"] = Performance.GetMonitor(Performance.Monitor.ObjectCount),
             ["frame"] = Engine.GetProcessFrames(),
             ["uptimeSeconds"] = Time.GetTicksMsec() / 1000.0,
 

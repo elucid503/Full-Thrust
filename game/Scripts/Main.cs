@@ -56,7 +56,7 @@ public sealed partial class Main : Node3D {
         _earthshine = GetNode<DirectionalLight3D>("Earthshine");
         _earthlight = GetNode<ReflectionProbe>("Earthlight");
         _environment = GetNode<WorldEnvironment>("WorldEnvironment");
-        _environment.Compositor = new Compositor { CompositorEffects = new Godot.Collections.Array<CompositorEffect> { new GeometryHistory() } };
+        _environment.Compositor = null;
 
         _sun.LookAtFromPosition(Vector3.Zero, -SunDirection, Vector3.Up);
 
@@ -218,6 +218,18 @@ public sealed partial class Main : Node3D {
         Vector3 viewpoint = _map.Open ? _map.Camera.GlobalPosition
             : FreeCamera.Flying ? _free.GlobalPosition : _camera.Eye;
 
+        // SSAO radius is world metres. At a few metres from the hull that kernel covers most of the
+        // screen, which is both the close-up hitch and a contact shadow the size of the vehicle.
+        if (_environment.Environment.SsaoEnabled) {
+
+            float gap = (viewpoint - focus).Length();
+            float reach = Mathf.SmoothStep(8.0f, 50.0f, gap);
+
+            _environment.Environment.SsaoRadius = Mathf.Lerp(0.28f, 1.4f, reach);
+            _environment.Environment.SsaoDetail = Mathf.Lerp(0.15f, 0.5f, reach);
+
+        }
+
         Vector3d eye = Frames.Origin + Frames.Sim(viewpoint);
 
         SyncSky(eye);
@@ -302,7 +314,7 @@ public sealed partial class Main : Node3D {
         return new Godot.Environment {
 
             BackgroundMode = Godot.Environment.BGMode.Sky,
-            Sky = new Sky { SkyMaterial = _starfield, RadianceSize = Sky.RadianceSizeEnum.Size256, ProcessMode = Sky.ProcessModeEnum.Realtime },
+            Sky = new Sky { SkyMaterial = _starfield, RadianceSize = Sky.RadianceSizeEnum.Size128, ProcessMode = Sky.ProcessModeEnum.Incremental },
 
             AmbientLightSource = Godot.Environment.AmbientSource.Color,
             AmbientLightColor = new Color(0.44f, 0.52f, 0.64f),

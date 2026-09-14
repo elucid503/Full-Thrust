@@ -105,13 +105,8 @@ public sealed partial class Planet : Node3D {
             _sharedCloudShape = Volume(256, 0.0175f, 5);
             _sharedCloudDetail = Worley(128, 0.0375f);
             _sharedSmokeNoise = Worley(64, 0.055f);
-            _sharedCloudShape.Changed += () => {
-
-                _sharedCloudShape = FilteredVolume.Build(_sharedCloudShape);
-                _shapeReady = true;
-
-            };
-            _sharedCloudDetail.Changed += () => _detailReady = true;
+            _sharedCloudShape.Changed += () => Callable.From(FilterCloudShape).CallDeferred();
+            _sharedCloudDetail.Changed += () => Callable.From(() => _detailReady = true).CallDeferred();
 
         }
         _cloudShape = _sharedCloudShape;
@@ -369,8 +364,8 @@ public sealed partial class Planet : Node3D {
         Vector3 centre = Frames.Point(Vector3d.Zero);
 
         _deck.Position = centre;
-        _clouds.SetShaderParameter("fog_enabled", GraphicsOptions.Haze && _body.HasAtmosphere ? 1.0f : 0.0f);
-        _clouds.SetShaderParameter("sun_shafts", GraphicsOptions.SunShafts ? 1.0f : 0.0f);
+        _clouds.SetShaderParameter("fog_enabled", _body.HasAtmosphere ? 1.0f : 0.0f);
+        _clouds.SetShaderParameter("sun_shafts", 1.0f);
 
         if (_air != null) {
 
@@ -408,7 +403,30 @@ public sealed partial class Planet : Node3D {
         _clouds.SetShaderParameter("eye_up", Frames.Direction(eye.Normalized));
 
         _atmosphere.SetShaderParameter("planet_centre", centre);
-        _atmosphere.SetShaderParameter("sun_shafts", GraphicsOptions.SunShafts ? 1.0f : 0.0f);
+        _atmosphere.SetShaderParameter("sun_shafts", 1.0f);
+
+    }
+
+    private static void FilterCloudShape() {
+
+        if (_shapeReady || _sharedCloudShape == null || _sharedCloudShape.HasMipmaps()) {
+
+            _shapeReady = _sharedCloudShape != null;
+            return;
+
+        }
+
+        try {
+
+            _sharedCloudShape = FilteredVolume.Build(_sharedCloudShape);
+            _shapeReady = true;
+
+        }
+        catch (Exception exception) {
+
+            GD.PushError($"Cloud mip volume failed: {exception.Message}");
+
+        }
 
     }
 

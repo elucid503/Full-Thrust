@@ -39,7 +39,7 @@ float cloud_sunlight(vec3 position, vec3 ray, float stride) {
     vec3 up = normalize(shadow_centre - planet_centre);
     float solar = dot(up, sun_direction);
     float height = max(length(position) - planet_radius, 0.0);
-    float influence = (1.0 - smoothstep(900.0, 1900.0, height)) * smoothstep(0.03, 0.12, solar);
+    float influence = (1.0 - smoothstep(900.0, 3200.0, height)) * smoothstep(0.03, 0.12, solar);
     if (influence < 0.001) { return 1.0; }
     vec3 offset = position + planet_centre - shadow_centre;
     offset -= sun_direction * dot(offset, up) / max(solar, 0.03);
@@ -187,7 +187,7 @@ void fragment() {
             + ozone_coefficients * (view_optical_depth.z - density.z * 0.5 + light_optical_depth.z)));
 
         float sunlight = cloud_sunlight(position, ray, step_length);
-        rayleigh_total += density.x * attenuation * mix(1.0, sunlight, 0.12);
+        rayleigh_total += density.x * attenuation * mix(1.0, sunlight, 0.18);
         mie_total += density.y * attenuation * sunlight;
 
     }

@@ -93,10 +93,11 @@ public sealed partial class Hud : CanvasLayer {
 
         _loss.Sync();
 
-        Place();
-
         _trajectory.Sync(_flight);
         _entry.Sync(_flight);
+
+        Place();
+
         _craft.Sync();
         _navball.Sync(_flight);
         _gauge.Sync();
@@ -111,9 +112,16 @@ public sealed partial class Hud : CanvasLayer {
 
         Vector2 screen = GetViewport().GetVisibleRect().Size;
 
-        _trajectory.Position = new Vector2(Margin, Margin);
+        Vector2 stack = new Vector2(Margin, Margin);
+        _trajectory.Position = stack;
 
-        _entry.Position = _trajectory.Position + new Vector2(0.0f, _trajectory.Foot + Gap);
+        if (_trajectory.Visible) {
+
+            stack.Y += _trajectory.Foot + Gap;
+
+        }
+
+        _entry.Position = stack;
 
         _craft.Position = new Vector2(screen.X - Margin - _craft.Size.X, Margin);
 

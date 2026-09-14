@@ -64,6 +64,7 @@ public sealed partial class TrajectoryPanel : Control {
 
         CustomMinimumSize = Extent;
         Size = Extent;
+        Visible = false;
 
         MouseFilter = MouseFilterEnum.Stop;
 
@@ -83,6 +84,13 @@ public sealed partial class TrajectoryPanel : Control {
     public void Sync(Flight flight) {
 
         _flight = flight;
+        Visible = !flight.Clamped;
+
+        if (!Visible) {
+
+            return;
+
+        }
 
         double speed = flight.Vessel.Velocity.Length;
 

@@ -34,10 +34,15 @@ void fragment() {
     float transmission = 1.0;
     vec3 total = vec3(0.0);
     float jitter = mix(0.35, 0.65, grain(FRAGCOORD.xy));
+    vec3 outside = max(max(bounds_min - volume_camera, volume_camera - bounds_max), vec3(0.0));
+    float proxy = max(length(bounds_max - bounds_min), body_radius);
+    float close = 1.0 - smoothstep(0.0, proxy, length(outside));
+    int limit = int(mix(96.0, 36.0, close));
+    float step_scale = mix(1.0, 2.4, close);
 
     for (int i = 0; i < 96; i++) {
 
-        if (t >= interval.y) { break; }
+        if (i >= limit || t >= interval.y) { break; }
 
         vec3 p = volume_camera + ray * t;
         vec4 hull = hull_at(p);
@@ -47,7 +52,7 @@ void fragment() {
         float thickness = standoff * (0.70 + 0.30 * (1.0 - windward));
         float clearance = min((abs(hull.a) - standoff * 2.8) * 0.7, (abs(front.x) - front.y * 3.0) * 0.65);
         float ds = max(min(standoff * 0.45, body_radius * 0.04), clearance);
-        ds = min(ds, interval.y - t);
+        ds = min(ds * step_scale, interval.y - t);
 
         // The distance gradient advances the sample without another hull texture fetch.
         float distance = hull.a + dot(hull.xyz, ray) * ds * jitter;

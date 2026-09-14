@@ -72,11 +72,11 @@ public static class Meridian {
     // craft diagram all read these, so none of them can place a nozzle the others disagree with.
     public const int RcsPorts = 4;
 
-    // Two rings retain a long control lever; their recessed service ports sit behind the outer skin.
+    // Two rings retain a long control lever; their recessed circular ports sit behind the outer skin.
     public const double RcsAftHeight = 1.50;
     public const double RcsForwardHeight = 7.30;
-    public const double RcsHalfHeight = 0.30;
-    public const double RcsPortRadius = 0.18;
+    public const double RcsHalfHeight = 0.16;
+    public const double RcsPortRadius = 0.12;
 
     public const double EngineDeck = 0.36;
     public const double EngineLength = 2.55;
@@ -195,7 +195,7 @@ public static class Meridian {
 
     }
 
-    /// <summary>A quad in section: one pod standing on the skin with a nozzle mouth at each end of it.</summary>
+    /// <summary>A quad in section: two short bells sharing one circular port.</summary>
     private static Hull.Station[] BuildQuad(double datum, double height) {
 
         double middle = datum + height;
@@ -205,15 +205,15 @@ public static class Meridian {
 
         return new[] {
 
-            new Hull.Station(low, RcsPortRadius * 0.55),
-            new Hull.Station(low + 0.06, RcsPortRadius),
-            new Hull.Station(middle - 0.06, RcsPortRadius),
+            new Hull.Station(low, RcsPortRadius * 0.5),
+            new Hull.Station(low + 0.03, RcsPortRadius),
+            new Hull.Station(middle - 0.03, RcsPortRadius),
 
-            new Hull.Station(middle, RcsPortRadius * 0.42),
+            new Hull.Station(middle, RcsPortRadius * 0.4),
 
-            new Hull.Station(middle + 0.06, RcsPortRadius),
-            new Hull.Station(high - 0.06, RcsPortRadius),
-            new Hull.Station(high, RcsPortRadius * 0.55),
+            new Hull.Station(middle + 0.03, RcsPortRadius),
+            new Hull.Station(high - 0.03, RcsPortRadius),
+            new Hull.Station(high, RcsPortRadius * 0.5),
 
         };
 

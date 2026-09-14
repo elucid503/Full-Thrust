@@ -32,13 +32,12 @@ public sealed partial class VesselView : Node3D {
     // How far a bulkhead sits inside an open end that has no engine behind it to place one.
     private const float BulkheadInset = 0.30f;
 
-    private const int RcsHalfSteps = 3;
-    private const float RcsCant = 0.50f;
+    private const int PortSegments = 32;
+    private const float RcsCant = 0.20f;
 
-    // A canted bell reaches further up the pocket than its own length, and further in than its own
-    // depth: the pocket is cut to clear both, and the pair sits close enough that neither mouth
-    // cuts back out through the sill or the lintel.
-    private const float RcsOffset = 0.085f;
+    // The pair sits close to the port axis so both jets leave through the circular opening rather
+    // than clipping the rim of a deep well.
+    private const float RcsOffset = 0.03f;
 
     // The port radius the nozzle mesh below is drawn at; anything else scales off it.
     private const float NozzleGauge = 0.18f;
@@ -326,7 +325,7 @@ public sealed partial class VesselView : Node3D {
     private static float TileMetres(Stage stage) => Mathf.Tau * (float)stage.Hull.MaxRadius / TilesAround;
 
     // Ports sit between the quadrant axes so none of them ever fires straight along a control axis
-    // on its own; the window is a whole number of segments wide, so its edges land on the grid.
+    // on its own; the bounding window is a whole number of segments wide, so its edges land on the grid.
     private static int PortCentre(int count, int index) => RadialSegments / (count * 2) + RadialSegments / count * index;
 
     private Piece BuildStage(Stage stage) {
@@ -507,7 +506,7 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    /// <summary>Whether a station falls inside one of the windows cut for a recessed thruster.</summary>
+    /// <summary>Whether a station falls inside the bounding window of a recessed circular port.</summary>
     private static bool InsidePort(Stage stage, int step, float low, float high) {
 
         foreach (Part part in stage.Parts) {
@@ -524,11 +523,13 @@ public sealed partial class VesselView : Node3D {
 
             }
 
+            int half = PortHalfSteps(stage.Hull, part);
+
             for (int index = 0; index < part.Count; index++) {
 
-                int offset = step - PortCentre(part.Count, index);
+                int offset = WrappedOffset(step, PortCentre(part.Count, index));
 
-                if (offset >= -RcsHalfSteps && offset < RcsHalfSteps) {
+                if (offset >= -half && offset < half) {
 
                     return true;
 
@@ -539,6 +540,36 @@ public sealed partial class VesselView : Node3D {
         }
 
         return false;
+
+    }
+
+    private static float PortRadius(Part part) => (float)Math.Min(part.Extent, (part.Top - part.Bottom) * 0.5);
+
+    private static int PortHalfSteps(Hull hull, Part part) {
+
+        float arc = (float)hull.RadiusAt(part.Centre) * Mathf.Tau / RadialSegments;
+
+        return Math.Max(1, Mathf.CeilToInt(PortRadius(part) / arc) + 1);
+
+    }
+
+    private static int WrappedOffset(int step, int centre) {
+
+        int offset = (step - centre) % RadialSegments;
+
+        if (offset < 0) {
+
+            offset += RadialSegments;
+
+        }
+
+        if (offset > RadialSegments / 2) {
+
+            offset -= RadialSegments;
+
+        }
+
+        return offset;
 
     }
 
@@ -615,7 +646,10 @@ public sealed partial class VesselView : Node3D {
 
         if (cut) {
 
-            Commit(mesh, ports, "Ports", Paint(new Color(0.008f, 0.010f, 0.013f), 0.0f, 0.95f), piece);
+            StandardMaterial3D fill = Paint(new Color(0.008f, 0.010f, 0.013f), 0.0f, 0.95f);
+            fill.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+
+            Commit(mesh, ports, "Ports", fill, piece);
 
         }
 
@@ -635,7 +669,11 @@ public sealed partial class VesselView : Node3D {
 
         surface.Begin(Mesh.PrimitiveType.Triangles);
 
-        Revolve(surface, profile, RadialSegments, true, TileMetres(stage), (step, low, high) => InsidePort(stage, step, low, high));
+        float tile = TileMetres(stage);
+
+        Revolve(surface, profile, RadialSegments, true, tile, (step, low, high) => InsidePort(stage, step, low, high));
+
+        Sills(surface, stage, profile, tile);
 
         surface.GenerateTangents();
 
@@ -899,38 +937,243 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    private static void Pocket(SurfaceTool surface, int centre, Hull hull, Part part) {
+    /// <summary>Paints the mould line back into the lathe's bounding window, leaving only the
+    /// circular opening. Without this the skipped facets would read as a square inset.</summary>
+    private static void Sills(SurfaceTool surface, Stage stage, Vector2[] profile, float tile) {
 
-        float middleHeight = (float)part.Centre;
+        foreach (Part part in stage.Parts) {
 
-        float outer = (float)hull.RadiusAt(middleHeight);
-        float floor = outer - (float)part.Depth;
+            if (part.Kind != PartKind.Thruster || part.Depth <= 0.0) {
 
-        float low = (float)part.Bottom;
-        float high = (float)part.Top;
+                continue;
 
-        float from = Mathf.Tau * (centre - RcsHalfSteps) / RadialSegments;
-        float to = Mathf.Tau * (centre + RcsHalfSteps) / RadialSegments;
+            }
 
-        Vector3 middle = Radial((from + to) * 0.5f);
+            if ((float)part.Centre < profile[0].Y - 1e-4f || (float)part.Centre > profile[profile.Length - 1].Y + 1e-4f) {
 
-        // Floor, drawn one segment at a time so it keeps the hull's curvature rather than chording it.
-        for (int step = -RcsHalfSteps; step < RcsHalfSteps; step++) {
+                continue;
 
-            float a = Mathf.Tau * (centre + step) / RadialSegments;
-            float b = Mathf.Tau * (centre + step + 1) / RadialSegments;
+            }
 
-            Quad(surface, At(a, floor, low), At(b, floor, low), At(b, floor, high), At(a, floor, high), (Radial(a) + Radial(b)).Normalized());
+            for (int index = 0; index < part.Count; index++) {
+
+                Sill(surface, PortCentre(part.Count, index), stage, part, profile, tile);
+
+            }
 
         }
 
-        // Sides, then sill and lintel: each spans the full depth, so the wall's thickness is what
-        // shows at the lip of the cut.
-        Quad(surface, At(from, floor, low), At(from, outer, low), At(from, outer, high), At(from, floor, high), middle.Cross(Vector3.Down).Normalized() * -1.0f);
-        Quad(surface, At(to, floor, low), At(to, outer, low), At(to, outer, high), At(to, floor, high), middle.Cross(Vector3.Down).Normalized());
+    }
 
-        Quad(surface, At(from, floor, low), At(to, floor, low), At(to, outer, low), At(from, outer, low), Vector3.Up);
-        Quad(surface, At(from, floor, high), At(to, floor, high), At(to, outer, high), At(from, outer, high), Vector3.Down);
+    private static void Sill(SurfaceTool surface, int centre, Stage stage, Part part, Vector2[] profile, float tile) {
+
+        Hull hull = stage.Hull;
+        float opening = PortRadius(part);
+        float middle = (float)part.Centre;
+        float portAngle = Mathf.Tau * centre / RadialSegments;
+        float ring = (float)hull.RadiusAt(middle);
+        int half = PortHalfSteps(hull, part);
+        float sMax = half * ring * Mathf.Tau / RadialSegments;
+        float zMax = (float)(part.Top - part.Bottom) * 0.5f;
+
+        List<float> thetas = new List<float>();
+
+        for (int index = 0; index < PortSegments; index++) {
+
+            thetas.Add(Mathf.Tau * index / PortSegments);
+
+        }
+
+        foreach (float around in new[] { sMax, -sMax }) {
+
+            foreach (float along in new[] { zMax, -zMax }) {
+
+                float theta = Mathf.Atan2(around, along);
+
+                if (theta < 0.0f) {
+
+                    theta += Mathf.Tau;
+
+                }
+
+                thetas.Add(theta);
+
+            }
+
+        }
+
+        thetas.Sort();
+
+        for (int index = thetas.Count - 1; index > 0; index--) {
+
+            if (thetas[index] - thetas[index - 1] < 1e-4f) {
+
+                thetas.RemoveAt(index);
+
+            }
+
+        }
+
+        (Vector3 Point, float Angle, float Height) Project(float around, float along) {
+
+            float angle = portAngle + around / ring;
+            float height = middle + along;
+
+            return (At(angle, (float)hull.RadiusAt(height), height), angle, height);
+
+        }
+
+        (Vector3 Point, float Angle, float Height) OnCircle(float theta) {
+
+            return Project(Mathf.Sin(theta) * opening, Mathf.Cos(theta) * opening);
+
+        }
+
+        (Vector3 Point, float Angle, float Height) OnWindow(float theta) {
+
+            float around = Mathf.Sin(theta);
+            float along = Mathf.Cos(theta);
+            float t = Mathf.Min(
+                Mathf.Abs(around) > 1e-6f ? sMax / Mathf.Abs(around) : float.PositiveInfinity,
+                Mathf.Abs(along) > 1e-6f ? zMax / Mathf.Abs(along) : float.PositiveInfinity);
+
+            return Project(around * t, along * t);
+
+        }
+
+        for (int index = 0; index < thetas.Count; index++) {
+
+            float first = thetas[index];
+            float second = index + 1 < thetas.Count ? thetas[index + 1] : thetas[0] + Mathf.Tau;
+            var inner0 = OnCircle(first);
+            var inner1 = OnCircle(second);
+            var outer0 = OnWindow(first);
+            var outer1 = OnWindow(second);
+
+            SillTri(surface, outer0, outer1, inner1, stage, profile, tile);
+            SillTri(surface, outer0, inner1, inner0, stage, profile, tile);
+
+        }
+
+    }
+
+    private static float ProfileArc(Vector2[] profile, float height) {
+
+        float arc = 0.0f;
+
+        for (int index = 0; index < profile.Length - 1; index++) {
+
+            Vector2 from = profile[index];
+            Vector2 to = profile[index + 1];
+            float run = to.Y - from.Y;
+
+            if (height <= to.Y || index == profile.Length - 2) {
+
+                float span = Mathf.Abs(run) > 1e-8f ? Mathf.Clamp((height - from.Y) / run, 0.0f, 1.0f) : 1.0f;
+
+                return arc + from.DistanceTo(to) * span;
+
+            }
+
+            arc += from.DistanceTo(to);
+
+        }
+
+        return arc;
+
+    }
+
+    private static void SillTri(
+        SurfaceTool surface,
+        (Vector3 Point, float Angle, float Height) a,
+        (Vector3 Point, float Angle, float Height) b,
+        (Vector3 Point, float Angle, float Height) c,
+        Stage stage,
+        Vector2[] profile,
+        float tile) {
+
+        Vector3 facing = Surface(stage, a.Angle, a.Height);
+
+        if ((b.Point - a.Point).Cross(c.Point - a.Point).LengthSquared() < 1e-12f) {
+
+            return;
+
+        }
+
+        if ((b.Point - a.Point).Cross(c.Point - a.Point).Dot(facing) > 0.0f) {
+
+            (b, c) = (c, b);
+
+        }
+
+        SillVert(surface, a, facing, profile, tile);
+        SillVert(surface, b, facing, profile, tile);
+        SillVert(surface, c, facing, profile, tile);
+
+    }
+
+    private static void SillVert(
+        SurfaceTool surface,
+        (Vector3 Point, float Angle, float Height) point,
+        Vector3 facing,
+        Vector2[] profile,
+        float tile) {
+
+        surface.SetNormal(facing);
+        surface.SetUV(new Vector2(point.Angle / Mathf.Tau * TilesAround, ProfileArc(profile, point.Height) / tile));
+        surface.AddVertex(point.Point);
+
+    }
+
+    private static void Pocket(SurfaceTool surface, int centre, Hull hull, Part part) {
+
+        float opening = PortRadius(part);
+        float middle = (float)part.Centre;
+        float portAngle = Mathf.Tau * centre / RadialSegments;
+        float ring = (float)hull.RadiusAt(middle);
+        float depth = (float)part.Depth;
+        Vector3 outward = Radial(portAngle);
+        Vector3 around = outward.Cross(Vector3.Up).Normalized();
+        Vector3 well = At(portAngle, ring - depth, middle);
+        Vector3[] lip = new Vector3[PortSegments];
+        Vector3[] cap = new Vector3[PortSegments];
+
+        for (int index = 0; index < PortSegments; index++) {
+
+            float theta = Mathf.Tau * index / PortSegments;
+            float aroundOffset = Mathf.Sin(theta) * opening;
+            float alongOffset = Mathf.Cos(theta) * opening;
+            float angle = portAngle + aroundOffset / ring;
+            float height = middle + alongOffset;
+
+            lip[index] = At(angle, (float)hull.RadiusAt(height), height);
+            cap[index] = well + around * aroundOffset + Vector3.Up * alongOffset;
+
+        }
+
+        for (int index = 0; index < PortSegments; index++) {
+
+            int next = (index + 1) % PortSegments;
+            Vector3 mid = (lip[index] + lip[next] + cap[index] + cap[next]) * 0.25f;
+
+            Quad(surface, lip[index], lip[next], cap[next], cap[index], (well - mid).Normalized());
+            Triangle(surface, well, cap[index], cap[next], outward);
+
+        }
+
+    }
+
+    private static void Triangle(SurfaceTool surface, Vector3 a, Vector3 b, Vector3 c, Vector3 facing) {
+
+        if ((b - a).Cross(c - a).Dot(facing) > 0.0f) {
+
+            (b, c) = (c, b);
+
+        }
+
+        Corner(surface, a, facing, new Vector2(0.0f, 0.0f));
+        Corner(surface, b, facing, new Vector2(1.0f, 0.0f));
+        Corner(surface, c, facing, new Vector2(0.5f, 1.0f));
 
     }
 
@@ -1090,8 +1333,8 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    /// <summary>A cluster's nozzles, either recessed in a pocket cut through the wall or standing
-    /// on it. Which one it is comes off the part's own depth, not off the stage it belongs to.</summary>
+    /// <summary>A cluster's nozzles, either recessed in a circular port cut through the wall or
+    /// standing on it. Which one it is comes off the part's own depth, not off the stage it belongs to.</summary>
     private void AttachThrusters(Node3D node, Piece piece, Stage stage, Part part) {
 
         ArrayMesh nozzle = part.Depth > 0.0 ? null : BuildNozzleMesh((float)part.Extent);

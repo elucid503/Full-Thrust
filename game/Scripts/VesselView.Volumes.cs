@@ -160,8 +160,7 @@ public sealed partial class VesselView {
 
         float scale = gauge / NozzleGauge;
 
-        // A pocket takes the pair further apart than a pod does, because each bell has to clear the
-        // sill and the lintel of the cut rather than just the skin.
+        // A recessed pair shares one circular port, so the bells sit closer than they do on a pod.
         float spread = part.Depth > 0.0 ? RcsOffset : (float)part.Length * 0.28f;
 
         for (int index = 0; index < part.Count; index++) {
