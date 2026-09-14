@@ -43,6 +43,12 @@ public static class HudTheme {
     private static readonly StyleBoxFlat ChipLit = Chip(new Color(0.118f, 0.145f, 0.180f, 0.96f), new Color(0.906f, 0.933f, 0.961f, 0.66f));
     private static readonly StyleBoxFlat ChipLitHover = Chip(new Color(0.157f, 0.192f, 0.235f, 0.98f), new Color(0.906f, 0.933f, 0.961f, 0.90f));
 
+    private static readonly StyleBoxFlat DropPanel = Chip(new Color(0.022f, 0.028f, 0.038f, 0.98f), Edge);
+    private static readonly StyleBoxFlat DropHover = new StyleBoxFlat { BgColor = new Color(0.118f, 0.145f, 0.180f, 0.96f) };
+
+    private static readonly Texture2D Tick;
+    private static readonly Texture2D Blank;
+
     static HudTheme() {
 
         Label = GD.Load<Font>("res://Assets/Fonts/IBMPlexSansCondensed-Regular.ttf");
@@ -50,6 +56,9 @@ public static class HudTheme {
 
         Numeral = GD.Load<Font>("res://Assets/Fonts/JetBrainsMono-Regular.ttf");
         NumeralStrong = GD.Load<Font>("res://Assets/Fonts/JetBrainsMono-Medium.ttf");
+
+        Tick = Mark(true);
+        Blank = Mark(false);
 
     }
 
@@ -123,6 +132,36 @@ public static class HudTheme {
 
     }
 
+    /// <summary>The closed chip and the square popup every dropdown in the interface opens.</summary>
+    public static void Menu(OptionButton menu) {
+
+        menu.FocusMode = Control.FocusModeEnum.None;
+        menu.MouseDefaultCursorShape = Control.CursorShape.PointingHand;
+        menu.AddThemeFontOverride("font", Strong);
+        menu.AddThemeFontSizeOverride("font_size", Small);
+        Light(menu, false);
+
+        PopupMenu popup = menu.GetPopup();
+        popup.AddThemeStyleboxOverride("panel", DropPanel);
+        popup.AddThemeStyleboxOverride("hover", DropHover);
+        popup.AddThemeFontOverride("font", Strong);
+        popup.AddThemeFontSizeOverride("font_size", Small);
+        popup.AddThemeColorOverride("font_color", Dim);
+        popup.AddThemeColorOverride("font_hover_color", Ink);
+        popup.AddThemeColorOverride("font_separator_color", Faint);
+        popup.AddThemeIconOverride("checked", Tick);
+        popup.AddThemeIconOverride("unchecked", Blank);
+        popup.AddThemeIconOverride("radio_checked", Tick);
+        popup.AddThemeIconOverride("radio_unchecked", Blank);
+        popup.AddThemeConstantOverride("icon_max_width", 12);
+        popup.Transparent = true;
+        popup.TransparentBg = true;
+        popup.Borderless = true;
+        popup.HideOnCheckableItemSelection = true;
+        popup.AboutToPopup += () => Checks(menu);
+
+    }
+
     /// <summary>Draws text from a baseline origin.</summary>
     public static void Write(CanvasItem canvas, Font font, int size, Vector2 baseline, string text, Color colour) {
 
@@ -161,6 +200,59 @@ public static class HudTheme {
         box.SetBorderWidthAll(1);
 
         return box;
+
+    }
+
+    private static void Checks(OptionButton menu) {
+
+        PopupMenu popup = menu.GetPopup();
+        int selected = menu.Selected;
+
+        for (int index = 0; index < popup.ItemCount; index++) {
+
+            popup.SetItemAsRadioCheckable(index, false);
+            popup.SetItemAsCheckable(index, true);
+            popup.SetItemChecked(index, index == selected);
+
+        }
+
+    }
+
+    private static Texture2D Mark(bool tick) {
+
+        const int size = 12;
+        Image image = Image.CreateEmpty(size, size, false, Image.Format.Rgba8);
+        image.Fill(Colors.Transparent);
+
+        if (tick) {
+
+            for (int i = 0; i < 3; i++) {
+
+                Dot(image, 1 + i, 6 + i);
+                Dot(image, 1 + i, 5 + i);
+
+            }
+
+            for (int i = 0; i < 7; i++) {
+
+                Dot(image, 3 + i, 8 - i);
+                Dot(image, 3 + i, 7 - i);
+
+            }
+
+        }
+
+        return ImageTexture.CreateFromImage(image);
+
+    }
+
+    private static void Dot(Image image, int x, int y) {
+
+        if ((uint)x < 12 && (uint)y < 12) {
+
+            image.SetPixel(x, y, Ink);
+
+        }
 
     }
 

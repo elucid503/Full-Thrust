@@ -93,6 +93,7 @@ public sealed partial class Flight : Node {
 
         Body = BodyCatalog.Home;
         Body.Terrain = Survey();
+        Body.Weather = new Weather();
 
         Site = LaunchSite.Home;
         Site.Commission(Body);
@@ -212,7 +213,7 @@ public sealed partial class Flight : Node {
 
             foreach (Tracked track in _traffic) {
 
-                track.Vessel.Aero = Aerodynamics.Compute(track.Vessel, Body);
+                track.Vessel.Aero = Aerodynamics.Compute(track.Vessel, Body, Time);
 
             }
 
@@ -325,10 +326,11 @@ public sealed partial class Flight : Node {
                 track.Pilot.Update(vessel, interval);
                 Vector3d previous = vessel.Position;
                 QuaternionD orientation = vessel.Orientation;
-                Integrator.Step(vessel, Body, interval);
+                Integrator.Step(vessel, Body, interval, Time - remaining);
                 if (!(Clamped && vessel == Vessel)) {
                     bool damage = !(Invulnerable && vessel == Vessel);
-                    bool contact = GroundCollision.Resolve(Body, vessel, previous, orientation,
+                    bool contact = WaterPhysics.Apply(Body, vessel, Time - remaining + interval, interval, damage);
+                    contact |= GroundCollision.Resolve(Body, vessel, previous, orientation,
                         Time - remaining, Time - remaining + interval, damage);
                     if (vessel.Intact && Planet.Active != null) {
                         contact |= Planet.Active.ResolveScatter(vessel, previous, orientation,
@@ -524,7 +526,7 @@ public sealed partial class Flight : Node {
 
         }
 
-        if (Body.HeightAboveGround(vessel.Position, Time) <= 0.0) {
+        if (vessel.Position.Length - Body.SolidRadiusUnder(vessel.Position, Time) <= 0.0) {
 
             vessel.Fate = VesselFate.Impacted;
 

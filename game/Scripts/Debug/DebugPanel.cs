@@ -33,6 +33,7 @@ public sealed partial class DebugPanel : CanvasLayer {
     private Control _readout;
     private OptionButton _cameraSpeed;
     private OptionButton _clock;
+    private OptionButton _weatherPreset;
 
     private readonly List<(Button Chip, Func<bool> Lit)> _lamps = new List<(Button, Func<bool>)>();
     private readonly List<(string Label, Func<string> Value)> _rows = new List<(string, Func<string>)>();
@@ -54,7 +55,9 @@ public sealed partial class DebugPanel : CanvasLayer {
 
         _column = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         _column.AddThemeConstantOverride("separation", 8);
-        _frame.AddChild(_column);
+        ScrollContainer scroll = new ScrollContainer { HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
+        _frame.AddChild(scroll);
+        scroll.AddChild(_column);
 
         Write("DEBUG", HudTheme.Strong, HudTheme.Head, HudTheme.Ink);
 
@@ -88,6 +91,11 @@ public sealed partial class DebugPanel : CanvasLayer {
         _clock.Select(0);
         _clock.ItemSelected += index => Engine.TimeScale = Timescales[(int)index];
 
+        Section("WEATHER");
+        _weatherPreset = Menu("Calm / clear", "Fair", "Breezy", "Gale / overcast");
+        _weatherPreset.Select((int)_flight.Body.Weather.Preset);
+        _weatherPreset.ItemSelected += index => _flight.Body.Weather.SetPreset((WeatherPreset)index, _flight.Time);
+
         Section("DISPLAY");
         Row();
         Chip("HUD", () => _hud.Hidden = !_hud.Hidden, () => !_hud.Hidden);
@@ -112,6 +120,8 @@ public sealed partial class DebugPanel : CanvasLayer {
 
         Vector2 screen = GetViewport().GetVisibleRect().Size;
         _frame.Position = new Vector2(screen.X - Margin - Width, Margin);
+        _frame.Size = new Vector2(Width, Math.Min(screen.Y - Margin * 2.0f, _column.GetCombinedMinimumSize().Y + Inset * 2.0f));
+        _weatherPreset.Select((int)_flight.Body.Weather.Preset);
 
         foreach ((Button chip, Func<bool> lit) in _lamps) {
 
@@ -200,14 +210,11 @@ public sealed partial class DebugPanel : CanvasLayer {
 
         OptionButton menu = new OptionButton {
 
-            FocusMode = Control.FocusModeEnum.None,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             CustomMinimumSize = new Vector2(0.0f, ChipHeight),
 
         };
-        menu.AddThemeFontOverride("font", HudTheme.Strong);
-        menu.AddThemeFontSizeOverride("font_size", HudTheme.Small);
-        HudTheme.Light(menu, false);
+        HudTheme.Menu(menu);
 
         foreach (string item in items) {
 

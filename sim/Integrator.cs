@@ -2,12 +2,12 @@ namespace FullThrust.Sim;
 
 public static class Integrator {
 
-    public static void Step(Vessel vessel, CelestialBody body, double dt) {
+    public static void Step(Vessel vessel, CelestialBody body, double dt, double time = 0.0) {
 
         // Aerodynamic loads are read once for the step, the way thrust already is. Over a step this
         // short the air the vehicle is in changes by parts in ten thousand, and RK4 is here for
         // gravity, which does not.
-        vessel.Aero = Aerodynamics.Compute(vessel, body);
+        vessel.Aero = Aerodynamics.Compute(vessel, body, time);
 
         StepAttitude(vessel, dt);
         StepTranslation(vessel, body, dt);

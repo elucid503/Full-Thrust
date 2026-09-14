@@ -328,7 +328,7 @@ public static class Aerodynamics {
     }
 
     /// <summary>Loads on a vessel at a state, or nothing at all where there is no air to speak of.</summary>
-    public static AeroForces Compute(Vessel vessel, CelestialBody body, Vector3d position, Vector3d velocity) {
+    public static AeroForces Compute(Vessel vessel, CelestialBody body, Vector3d position, Vector3d velocity, double time = 0.0) {
 
         if (!body.HasAtmosphere || vessel.Profile == null) {
 
@@ -345,7 +345,7 @@ public static class Aerodynamics {
 
         }
 
-        Vector3d through = velocity - body.AirVelocityAt(position);
+        Vector3d through = velocity - body.AirVelocityAt(position, time);
 
         double speed = through.Length;
 
@@ -436,7 +436,7 @@ public static class Aerodynamics {
 
     }
 
-    public static AeroForces Compute(Vessel vessel, CelestialBody body) => Compute(vessel, body, vessel.Position, vessel.Velocity);
+    public static AeroForces Compute(Vessel vessel, CelestialBody body, double time = 0.0) => Compute(vessel, body, vessel.Position, vessel.Velocity, time);
 
     private static Incidence At(Vector3d local, Vector3d spin, double arm, double density) {
 

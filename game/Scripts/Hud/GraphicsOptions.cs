@@ -49,7 +49,8 @@ public sealed partial class GraphicsOptions : CanvasLayer {
         column.AddThemeConstantOverride("separation", 14);
         _panel.AddChild(column);
 
-        _resolution = new OptionButton { FocusMode = Control.FocusModeEnum.None };
+        _resolution = new OptionButton();
+        HudTheme.Menu(_resolution);
         _resolution.AddItem("Native");
         _resolution.AddItem("Quality");
         _resolution.AddItem("Performance");

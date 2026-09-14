@@ -17,6 +17,15 @@ public sealed class CelestialBody {
     /// data is anyway.</summary>
     public Terrain Terrain { get; set; }
 
+    public Weather Weather { get; set; }
+
+    public Vector3d SurfaceVelocityAt(Vector3d position) => Vector3d.Cross(Vector3d.UnitZ * SpinRate, position);
+
+    public Vector3d AirVelocityAt(Vector3d position, double time) => SurfaceVelocityAt(position)
+        + (Weather?.VelocityAt(this, position, time) ?? Vector3d.Zero);
+
+    public double SolidRadiusUnder(Vector3d position, double time) => Radius + Ocean.BedElevation(this, position, time);
+
     public double SurfaceGravity => Mu / (Radius * Radius);
     public double CircularVelocityAtSurface => Math.Sqrt(Mu / Radius);
     public double EscapeVelocityAtSurface => Math.Sqrt(2.0 * Mu / Radius);
@@ -73,6 +82,6 @@ public sealed class CelestialBody {
     /// <summary>Velocity of the air itself, which turns with the body. Only a hundred metres a
     /// second here, but it is the difference between air-relative and inertial speed and every
     /// aerodynamic figure is taken against the air.</summary>
-    public Vector3d AirVelocityAt(Vector3d position) => Vector3d.Cross(Vector3d.UnitZ * SpinRate, position);
+    public Vector3d AirVelocityAt(Vector3d position) => SurfaceVelocityAt(position);
 
 }

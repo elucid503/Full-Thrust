@@ -222,7 +222,6 @@ public sealed partial class Planet : Node3D {
         Texture2D rockNormal = GD.Load<Texture2D>("res://Assets/Planet/rock_normal.jpg");
         Texture2D soilColour = GD.Load<Texture2D>("res://Assets/Planet/soil_colour.jpg");
         Texture2D soilNormal = GD.Load<Texture2D>("res://Assets/Planet/soil_normal.jpg");
-        Texture2D waveNormal = GD.Load<Texture2D>("res://Assets/Planet/wave_normal.png");
         Texture2D biomes = GD.Load<Texture2D>("res://Assets/Planet/biomes.png");
         Texture2D shoreline = Shoreline(_body.Terrain);
 
@@ -258,7 +257,6 @@ public sealed partial class Planet : Node3D {
             material.SetShaderParameter("rock_normal", rockNormal);
             material.SetShaderParameter("soil_colour", soilColour);
             material.SetShaderParameter("soil_normal", soilNormal);
-            material.SetShaderParameter("wave_normal", waveNormal);
 
             material.SetShaderParameter("planet_radius", radius);
             material.SetShaderParameter("cloud_altitude", ShadowDeck);
@@ -373,6 +371,7 @@ public sealed partial class Planet : Node3D {
 
         }
 
+        SyncWeather(time);
         _ground.Sync(time, eye);
         _cloudShadows.Sync(_body, time, eye, Main.SunDirection);
         SyncEffects(time);

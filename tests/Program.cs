@@ -42,6 +42,7 @@ public static partial class Program {
         GroundSurvey();
         ScatterSweeps();
         GroundHullContacts();
+        WaterAndWind();
 
         Console.WriteLine();
         Console.WriteLine($"{_checks - _failures}/{_checks} checks passed");

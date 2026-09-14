@@ -8,9 +8,9 @@ public static class GroundCollision {
         Vector3d up = point.Normalized;
         Vector3d east = Vector3d.Cross(Math.Abs(up.Z) < 0.9 ? Vector3d.UnitZ : Vector3d.UnitX, up).Normalized;
         Vector3d north = Vector3d.Cross(up, east);
-        double height = body.SurfaceRadiusUnder(point, time);
-        double e = body.SurfaceRadiusUnder(point + east * 0.5, time) - height;
-        double n = body.SurfaceRadiusUnder(point + north * 0.5, time) - height;
+        double height = body.SolidRadiusUnder(point, time);
+        double e = body.SolidRadiusUnder(point + east * 0.5, time) - height;
+        double n = body.SolidRadiusUnder(point + north * 0.5, time) - height;
         return (up - east * (e * 2.0) - north * (n * 2.0)).Normalized;
     }
 
@@ -18,14 +18,14 @@ public static class GroundCollision {
         Vector3d normal = Normal(body, position, time);
         Vector3d local = attitude.Conjugate.Rotate(-normal);
         double across = Math.Sqrt(local.X * local.X + local.Y * local.Y);
-        Vector3d radial = across > 1e-10 ? new Vector3d(local.X / across, local.Y / across, 0) : Vector3d.UnitX;
+        Vector3d radial = across > 1e-5 ? new Vector3d(local.X / across, local.Y / across, 0) : Vector3d.Zero;
         double clearance = double.PositiveInfinity;
         Vector3d point = position;
         var stations = VesselCollision.Stations(vessel);
         for (int index = 0; index < stations.Count; index++) {
             Hull.Station ring = stations[index];
             Vector3d sample = position + attitude.Rotate(radial * ring.Radius + Vector3d.UnitZ * (ring.Z - vessel.CentreOfMassZ));
-            double height = body.HeightAboveGround(sample, time);
+            double height = sample.Length - body.SolidRadiusUnder(sample, time);
             if (height < clearance) { clearance = height; point = sample; }
         }
         return new Contact(clearance, point, Normal(body, point, time));
@@ -54,18 +54,18 @@ public static class GroundCollision {
         double before = 0;
         double hitTime = -1;
         Contact hit = At(0);
-        if (hit.Clearance <= 0.015) {
+        if (hit.Clearance <= 0.021) {
             // A supported hull must be able to lift off; a separating touch is not a new impact.
             if (hit.Clearance < -0.001 || At(1).Clearance <= hit.Clearance + 0.001) { hitTime = 0; }
         }
         for (int step = 1; hitTime < 0 && step <= steps; step++) {
             double t = (double)step / steps;
             Contact sample = At(t);
-            if (sample.Clearance <= 0.015) {
+            if (sample.Clearance <= 0.021) {
                 double low = before, high = t;
                 for (int iteration = 0; iteration < 14; iteration++) {
                     double middle = (low + high) * 0.5;
-                    if (At(middle).Clearance <= 0.015) { high = middle; } else { low = middle; }
+                    if (At(middle).Clearance <= 0.021) { high = middle; } else { low = middle; }
                 }
                 hitTime = high;
                 hit = At(high);
@@ -76,7 +76,7 @@ public static class GroundCollision {
         vessel.Position = previous + (end - previous) * hitTime;
         vessel.Orientation = Blend(attitude, endAttitude, hitTime);
         Vector3d lever = hit.Point - vessel.Position;
-        Vector3d relative = vessel.Velocity - body.AirVelocityAt(hit.Point)
+        Vector3d relative = vessel.Velocity - body.SurfaceVelocityAt(hit.Point)
             + Vector3d.Cross(vessel.Orientation.Rotate(vessel.AngularVelocity), lever);
         double closing = Math.Max(0.0, -Vector3d.Dot(relative, hit.Normal));
         Vector3d torque = vessel.Orientation.Conjugate.Rotate(Vector3d.Cross(lever, hit.Normal));
@@ -85,6 +85,30 @@ public static class GroundCollision {
         double impulse = closing / inverseMass;
         vessel.Velocity += hit.Normal * (impulse / vessel.Mass);
         vessel.AngularVelocity += inverseTorque * impulse;
+        Vector3d slip = vessel.Velocity - body.SurfaceVelocityAt(hit.Point)
+            + Vector3d.Cross(vessel.Orientation.Rotate(vessel.AngularVelocity), lever);
+        Vector3d tangent = slip - hit.Normal * Vector3d.Dot(slip, hit.Normal);
+        double speed = tangent.Length;
+        if (speed > 1e-10) {
+            Vector3d direction = tangent / speed;
+            Vector3d frictionTorque = vessel.Orientation.Conjugate.Rotate(Vector3d.Cross(lever, direction));
+            Vector3d inverseFriction = new(frictionTorque.X / vessel.Inertia.X, frictionTorque.Y / vessel.Inertia.Y, frictionTorque.Z / vessel.Inertia.Z);
+            double effective = 1.0 / vessel.Mass + Vector3d.Dot(frictionTorque, inverseFriction);
+            double friction = Math.Min(speed / effective, impulse * 0.65);
+            vessel.Velocity -= direction * (friction / vessel.Mass);
+            vessel.AngularVelocity -= inverseFriction * friction;
+        }
+        // Finite contact patches resist rolling as well as sliding; a single point cannot do this.
+        Vector3d groundSpin = vessel.Orientation.Conjugate.Rotate(Vector3d.UnitZ * body.SpinRate);
+        Vector3d angularSlip = vessel.AngularVelocity - groundSpin;
+        Vector3d momentum = new(angularSlip.X * vessel.Inertia.X, angularSlip.Y * vessel.Inertia.Y, angularSlip.Z * vessel.Inertia.Z);
+        double resistance = Math.Min(momentum.Length, impulse * vessel.Profile.MaxRadius * 0.035);
+        Vector3d rolling = momentum.Normalized * resistance;
+        vessel.AngularVelocity -= new Vector3d(rolling.X / vessel.Inertia.X, rolling.Y / vessel.Inertia.Y, rolling.Z / vessel.Inertia.Z);
+        // Consume the unspent step; rewinding every resting contact discarded the planet's motion.
+        double remainder = (time - startTime) * (1.0 - hitTime);
+        vessel.Position += vessel.Velocity * remainder;
+        vessel.Orientation = QuaternionD.Integrate(vessel.Orientation, vessel.AngularVelocity, remainder);
         // Resolve initial overlap as well as first crossing, including invulnerable/debug placements.
         for (int iteration = 0; iteration < 4; iteration++) {
             Contact overlap = Measure(body, vessel, vessel.Position, vessel.Orientation, time);

@@ -35,8 +35,11 @@ public sealed partial class DebugBridge : Node {
     private int _frameCursor;
     private int _frameCount;
     private ulong _lastFrame;
+    private bool _surfaceTrace;
 
     public override void _Ready() {
+
+        _surfaceTrace = OS.GetEnvironment("FT_SURFACE_TRACE") == "1";
 
         RenderingServer.ViewportSetMeasureRenderTime(GetViewport().GetViewportRid(), true);
 
@@ -74,6 +77,17 @@ public sealed partial class DebugBridge : Node {
     }
 
     public override void _Process(double delta) {
+
+        if (_surfaceTrace && Engine.GetProcessFrames() % 30 == 0 && Planet.Active != null && Flight.Active != null) {
+
+            Vector3d eye = FreeCamera.Flying ? FreeCamera.Active.Where : Flight.Active.Vessel.Position;
+            Vector3d fixedEye = Flight.Active.Body.ToBodyFixed(eye, Flight.Active.Time);
+            GD.Print($"Surface trace frame={Engine.GetProcessFrames()} free={FreeCamera.Flying} time={Flight.Active.Time:F3} "
+                + $"fixed=({fixedEye.X:F3},{fixedEye.Y:F3},{fixedEye.Z:F3}) altitude={eye.Length - Flight.Active.Body.Radius:F3} "
+                + $"patches={Planet.Active.PatchCount} jobs={Planet.Active.PendingJobs} "
+                + $"workers={Planet.Active.WorkerFailures}/{Planet.Active.ForestFailures}/{Planet.Active.ScatterFailures}");
+
+        }
 
         ulong now = Time.GetTicksUsec();
 

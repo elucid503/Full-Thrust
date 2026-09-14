@@ -49,12 +49,23 @@ public sealed partial class FlightTerrainChecks : Node {
             Forest forest = (Forest)typeof(Planet).GetField("_forest", Private).GetValue(Planet.Active);
             int rows = (int)typeof(Forest).GetField("_rows", Private).GetValue(forest);
             int row = (int)((28.75 + 90) / 180 * rows);
-            int columns = (int)typeof(Forest).GetMethod("Columns", Private).Invoke(forest, new object[] { row });
-            int column = (int)((-80.85 + 180) / 360 * columns);
             Type keyType = typeof(Forest).GetNestedType("Key", BindingFlags.NonPublic);
-            object key = Activator.CreateInstance(keyType, row, column);
-            object grove = typeof(Forest).GetMethod("Generate", Private).Invoke(forest, new object[] { key, default(System.Threading.CancellationToken) });
-            Transform3D[] trees = (Transform3D[])grove.GetType().GetField("Trees").GetValue(grove);
+            object grove = null;
+            Transform3D[] trees = Array.Empty<Transform3D>();
+            // Coastal landforms can leave the old fixed cell bare; find a nearby cold wooded cell.
+            for (int radius = 0; radius <= 8 && trees.Length == 0; radius++) {
+                for (int dy = -radius; dy <= radius && trees.Length == 0; dy++) {
+                    int candidateRow = row + dy;
+                    int candidateColumns = (int)typeof(Forest).GetMethod("Columns", Private).Invoke(forest, new object[] { candidateRow });
+                    int centreColumn = (int)((-80.85 + 180) / 360 * candidateColumns);
+                    for (int dx = -radius; dx <= radius && trees.Length == 0; dx++) {
+                        if (Math.Max(Math.Abs(dx), Math.Abs(dy)) != radius) { continue; }
+                        object key = Activator.CreateInstance(keyType, candidateRow, centreColumn + dx);
+                        grove = typeof(Forest).GetMethod("Generate", Private).Invoke(forest, new object[] { key, default(System.Threading.CancellationToken) });
+                        trees = (Transform3D[])grove.GetType().GetField("Trees").GetValue(grove);
+                    }
+                }
+            }
             Check(trees.Length > 0, "unstreamed test cell contains trees");
             Vector3d anchor = (Vector3d)grove.GetType().GetField("Anchor").GetValue(grove);
             Vector3d tree = anchor + Frames.Sim(trees[0].Origin);

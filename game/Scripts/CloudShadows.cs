@@ -126,6 +126,12 @@ public sealed partial class CloudShadows : Node {
 
     }
 
+    public void SetWeather(float coverage) {
+
+        foreach (ShaderMaterial material in _wakeMaterials) { material.SetShaderParameter("weather_coverage", coverage); }
+
+    }
+
     public void Sync(CelestialBody body, double time, Vector3d eye, Vector3 sun) {
 
         if (_pending && Engine.GetProcessFrames() > _pendingFrame) {
@@ -159,7 +165,7 @@ public sealed partial class CloudShadows : Node {
         bool moved = !_hasMap || (focus - _anchor).LengthSquared > 2000.0 * 2000.0;
         ulong now = Time.GetTicksMsec();
         double weatherElapsed = Math.Abs(time - _updatedTime);
-        bool weatherChanged = weatherElapsed > 0.001 && (now - _updated > 500 || weatherElapsed * CloudWind.Speed > 64.0);
+        bool weatherChanged = weatherElapsed > 0.001 && (now - _updated > 500 || weatherElapsed * (body.Weather?.WindSpeedAt(time) ?? CloudWind.Speed) > 64.0);
         if (!_pending && (moved || weatherChanged)) {
 
             if (moved) {
@@ -191,9 +197,9 @@ public sealed partial class CloudShadows : Node {
         // Carry the published cache with its clouds between refreshes. This keeps shadows moving
         // continuously at normal speed, and prevents a stale, stationary shadow during time warp.
         double elapsed = time - _visibleTime;
-        Vector3 centre = Frames.Point(body.ToInertial(CloudWind.Advect(_visibleAnchor, elapsed, body.Radius), time));
-        Vector3 east = Frames.Direction(body.ToInertial(CloudWind.Advect(_visibleEast, elapsed, body.Radius), time));
-        Vector3 north = Frames.Direction(body.ToInertial(CloudWind.Advect(_visibleNorth, elapsed, body.Radius), time));
+        Vector3 centre = Frames.Point(body.ToInertial(CloudWind.Advect(_visibleAnchor, elapsed, body.Radius, body.Weather, _visibleTime), time));
+        Vector3 east = Frames.Direction(body.ToInertial(CloudWind.Advect(_visibleEast, elapsed, body.Radius, body.Weather, _visibleTime), time));
+        Vector3 north = Frames.Direction(body.ToInertial(CloudWind.Advect(_visibleNorth, elapsed, body.Radius, body.Weather, _visibleTime), time));
         foreach (ShaderMaterial receiver in _receivers) {
 
             receiver.SetShaderParameter("shadow_centre", centre);

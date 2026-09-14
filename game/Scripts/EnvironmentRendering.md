@@ -1,3 +1,5 @@
+See [WaterBehavior.md](WaterBehavior.md) for the current shared wind, ocean shader, stable shorelines, F1 controls, and water/ground physics. It supersedes the fixed-wave and sea-level collision descriptions below.
+
 # Environmental rendering
 
 See [CloudPerformance.md](CloudPerformance.md) for the current cloud marcher, fog compositing,

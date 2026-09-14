@@ -59,6 +59,9 @@ public sealed class Vessel {
     public Vector3d ExhaustForce { get; set; }
     public Vector3d ExhaustTorque { get; set; }
 
+    public double SubmergedVolume { get; set; }
+    public bool InWater => SubmergedVolume > 0.001;
+
     /// <summary>Temperature of the leading skin, kelvin.</summary>
     public double SkinTemperature { get; set; } = Thermal.AmbientTemperature;
 

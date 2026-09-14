@@ -53,6 +53,7 @@ public sealed partial class Planet {
         public bool Water;
         public readonly List<SurfacePuff> Puffs = new();
         public bool Deluge;
+        public ulong SampleFrame = ulong.MaxValue;
         public Vector3d Outlet;
         public readonly Vector4[] Centres = new Vector4[PuffBudget];
         public readonly Vector4[] States = new Vector4[PuffBudget];
@@ -66,11 +67,15 @@ public sealed partial class Planet {
     private readonly List<SurfaceWake> _surfaceWakes = new();
     private readonly Stack<(MeshInstance3D Volume, ShaderMaterial Material)> _surfaceVolumePool = new();
     private int _surfaceWarmupFrames = 3;
+    private Shader _steamShader;
+    private Shader _waterSprayShader;
 
     private void BuildSurfaceVolumes() {
 
         BoxMesh mesh = new() { Size = Vector3.One };
         Shader shader = GD.Load<Shader>("res://Shaders/Steam.gdshader");
+        _steamShader = shader;
+        _waterSprayShader = GD.Load<Shader>("res://Shaders/WaterSpray.gdshader");
         for (int index = 0; index < 8; index++) {
 
             ShaderMaterial material = new() { Shader = shader, RenderPriority = 3 };
@@ -107,6 +112,7 @@ public sealed partial class Planet {
     public void Disturb(Vector3 nozzle, Vector3 axis, float length, float radius, float power, float spread) {
 
         double time = Flight.Active.Time;
+        _surfaceClock = time;
         Vector3d point = Frames.Origin + Frames.Sim(nozzle);
         Vector3d direction = Frames.Sim(axis.Normalized());
         double altitude = point.Length - _body.Radius;
@@ -129,6 +135,7 @@ public sealed partial class Planet {
 
         Vector3d fixedPoint = _body.ToBodyFixed(hit.Point, time);
         float reach = Math.Max(radius + (float)hit.Distance * spread, 0.5f);
+        if (hit.Water) { reach = Math.Min(reach, 12.0f); }
         float strength = power * (1.0f - (float)hit.Distance / length);
         LaunchSite site = Flight.Active.Site;
         Vector3d pad = site.Up * (_body.Radius + site.Height);
@@ -148,7 +155,7 @@ public sealed partial class Planet {
         SurfaceWake wake = null;
         foreach (SurfaceWake candidate in _surfaceWakes) {
 
-            if ((fixedPoint - candidate.Point).Length < Math.Max(candidate.Radius + reach, 12.0)) {
+            if (candidate.Water == hit.Water && (fixedPoint - candidate.Point).Length < Math.Max(candidate.Radius + reach, 12.0)) {
 
                 wake = candidate;
                 break;
@@ -171,7 +178,7 @@ public sealed partial class Planet {
 
         }
 
-        if (wake.Time == _surfaceClock) {
+        if (wake.SampleFrame == Engine.GetProcessFrames()) {
 
             wake.Radius = Math.Max(wake.Radius, (float)(fixedPoint - wake.Point).Length + reach);
             wake.Power = Math.Min(wake.Power + strength, 3.0f);
@@ -183,6 +190,7 @@ public sealed partial class Planet {
 
         if (_surfaceClock - wake.Time > 0.2) { wake.Started = _surfaceClock; }
         wake.Point = fixedPoint;
+        wake.SampleFrame = Engine.GetProcessFrames();
         wake.Normal = _body.ToBodyFixed(hit.Normal, time);
         wake.Time = _surfaceClock;
         wake.Radius = reach;
@@ -201,7 +209,7 @@ public sealed partial class Planet {
 
         }
 
-        _surfaceClock += Math.Min(GetProcessDeltaTime(), 0.1);
+        _surfaceClock = time;
 
         int count = 0;
         for (int i = 0; i < 8; i++) {
@@ -209,8 +217,8 @@ public sealed partial class Planet {
             double age = time - _wakeTimes[i];
             if (_wakeRadii[i] <= 0.0f || age < 0.0 || age >= 4.0) { continue; }
 
-            Vector3d fixedPoint = CloudWind.Advect(_wakePoints[i] + _wakeDirections[i] * (age * 12.0), age, _body.Radius);
-            Vector3d fixedAxis = CloudWind.Advect(_wakeDirections[i], age, _body.Radius);
+            Vector3d fixedPoint = CloudWind.Advect(_wakePoints[i] + _wakeDirections[i] * (age * 12.0), age, _body.Radius, _body.Weather, time - age);
+            Vector3d fixedAxis = CloudWind.Advect(_wakeDirections[i], age, _body.Radius, _body.Weather, time - age);
             Vector3 point = Frames.Direction(_body.ToInertial(fixedPoint, time));
             Vector3 axis = Frames.Direction(_body.ToInertial(fixedAxis, time));
             float strength = _wakePowers[i] * (float)(Landscape.Smooth(0.0, 0.15, age) * (1.0 - Landscape.Smooth(2.0, 4.0, age)));
@@ -231,9 +239,9 @@ public sealed partial class Planet {
 
             SurfaceWake wake = _surfaceWakes[w];
             double idle = _surfaceClock - wake.Time;
-            float strength = wake.Power * (float)Math.Exp(-idle / 1.0);
+            float strength = wake.Power * (float)Math.Exp(-idle / (wake.Water ? 0.25 : 1.0));
             wake.Puffs.RemoveAll(puff => _surfaceClock - puff.Born >= PuffLife);
-            if (idle < 0.15 && _surfaceClock >= wake.NextEmission && wake.Puffs.Count < PuffBudget) {
+            if (!wake.Water && idle < 0.15 && _surfaceClock >= wake.NextEmission && wake.Puffs.Count < PuffBudget) {
 
                 bool steam = wake.Water || wake.Deluge;
                 Vector3d up = wake.Normal;
@@ -262,7 +270,7 @@ public sealed partial class Planet {
 
             }
 
-            if (idle > PuffLife && wake.Puffs.Count == 0) {
+            if (idle > (wake.Water ? 1.5 : PuffLife) && wake.Puffs.Count == 0) {
 
                 RecycleSurfaceVolume(wake);
                 _surfaceWakes.RemoveAt(w);
@@ -271,7 +279,7 @@ public sealed partial class Planet {
 
             }
 
-            Vector3 impact = Frames.Direction(_body.ToInertial(wake.Point, time));
+            Vector3 impact = Frames.Point(_body.ToInertial(wake.Point, time));
             if (wake.Water && strength > waterStrength) {
 
                 water = new Vector4(impact.X, impact.Y, impact.Z, wake.Radius);
@@ -282,6 +290,15 @@ public sealed partial class Planet {
             if (wake.Volume == null) {
 
                 (wake.Volume, wake.Material) = _surfaceVolumePool.Pop();
+                wake.Material.Shader = wake.Water ? _waterSprayShader : _steamShader;
+                wake.Material.SetShaderParameter("flow_noise", _smokeNoise);
+
+            }
+
+            if (wake.Water) {
+
+                SyncWaterSpray(wake, time, Math.Min(strength, 1.0f));
+                continue;
 
             }
 
@@ -354,6 +371,34 @@ public sealed partial class Planet {
         material.SetShaderParameter("wake_states", _wakeStates);
         material.SetShaderParameter("water_impact", water);
         material.SetShaderParameter("impact_strength", strength);
+
+    }
+
+    private void SyncWaterSpray(SurfaceWake wake, double time, float strength) {
+
+        Vector3d point = _body.ToInertial(wake.Point, time);
+        double elevation = _body.Terrain.Elevation(wake.Point);
+        double level = Ocean.Sample(_body, wake.Point, elevation, time).Height;
+        point += point.Normalized * level;
+        Vector3 up = Frames.Direction(point.Normalized);
+        Frames.Horizon(up, out Vector3 right, out Vector3 forward);
+        Basis basis = new(right, up, forward);
+        Vector3 wind = basis.Inverse() * Frames.Direction(_body.Weather?.VelocityAt(_body, point, time) ?? Vector3d.Zero);
+        float height = Math.Clamp(wake.Radius * 0.25f, 0.6f, 2.5f);
+        float width = wake.Radius * 3.0f + wind.Length() * 0.3f;
+        Vector3 low = new(-width, 0.0f, -width);
+        Vector3 high = new(width, height * 2.5f, width);
+        wake.Volume.Visible = strength > 0.002f;
+        wake.Volume.Transform = new Transform3D(basis, Frames.Point(point));
+        wake.Volume.CustomAabb = new Aabb(low, high - low);
+        wake.Material.SetShaderParameter("bounds_min", low);
+        wake.Material.SetShaderParameter("bounds_max", high);
+        wake.Material.SetShaderParameter("spray_radius", wake.Radius);
+        wake.Material.SetShaderParameter("spray_height", height);
+        wake.Material.SetShaderParameter("spray_strength", strength);
+        wake.Material.SetShaderParameter("spray_wind", wind);
+        wake.Material.SetShaderParameter("effect_time", (float)time);
+        wake.Material.SetShaderParameter("daylight", Math.Max(up.Dot(Main.SunDirection), 0.0f));
 
     }
 

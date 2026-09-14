@@ -6,6 +6,7 @@ uniform sampler3D detail_noise : filter_linear, repeat_enable;
 uniform float base_radius = 1275400.0;
 uniform float top_radius = 1281200.0;
 uniform mat3 cloud_frame = mat3(1.0);
+uniform float weather_coverage = 0.0;
 uniform vec3 coastal_weather_direction = vec3(0.143, 0.478, 0.867);
 
 vec3 cloud_unspin(vec3 p) {
@@ -24,7 +25,7 @@ vec2 weather_at(vec3 p) {
     float coastal_weather = 1.0 - smoothstep(30000.0, 100000.0, length(up - coastal_weather_direction) * base_radius);
     float coverage = clamp(mix((cover - 0.22) * 1.35, 0.28 + cover * 0.64, coastal_weather)
         + (weather - 0.5) * 0.5, 0.0, 0.92);
-    return vec2(coverage, weather);
+    return vec2(clamp(coverage + weather_coverage, 0.0, 0.98), weather);
 
 }
 
