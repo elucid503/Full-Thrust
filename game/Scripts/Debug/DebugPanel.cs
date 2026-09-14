@@ -74,6 +74,8 @@ public sealed partial class DebugPanel : CanvasLayer {
         Chip("REFUEL", () => Flight.Fill(_flight.Vessel));
         Chip("HALT", _flight.Halt);
         Chip("RESTART", _flight.Restart);
+
+        Section("PLACE");
         Row();
         Chip("PAD", ToPad);
         Chip("ENTRY", () => Orbit(90_000.0, 0.99));
