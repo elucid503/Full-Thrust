@@ -39,6 +39,7 @@ public static partial class Program {
         NozzleExpansion();
         VesselContacts();
         ExhaustContacts();
+        EngineDynamics();
         GroundSurvey();
         ScatterSweeps();
         GroundHullContacts();
@@ -416,6 +417,7 @@ public static partial class Program {
         lightBooster.PropellantMass *= 0.05;
         Vessel landingBooster = new Vessel("landing booster", new[] { lightBooster }) { Throttle = 1.0 };
         for (int engine = 1; engine < lightBooster.EngineCount; engine++) { lightBooster.SetEngine(engine, false); }
+        landingBooster.AdvanceEngines(new CelestialBody { Radius = 1000.0 }, 2.0);
         double landingTwr = landingBooster.CurrentThrust / (landingBooster.Mass * Home.SurfaceGravity);
         Expect("one booster engine at five percent fuel has manageable TWR", landingTwr is > 1.5 and < 2.4, $"{landingTwr:F2}");
         Near("dry hardware remains in integrated mass", lightBooster.Properties.Mass, landingBooster.Mass, 1e-8);

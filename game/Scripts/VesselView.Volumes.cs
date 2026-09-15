@@ -9,12 +9,14 @@ namespace FullThrust.Game;
 
 public sealed partial class VesselView {
 
+    private static readonly EngineLimits RcsLimits = new();
     private const float NozzleMouth = 0.081f;
     private const float SheathFlux = 150_000.0f;
 
     private sealed class Engine {
 
         public int Index { get; init; }
+        public string FuelName { get; set; }
         public float Power { get; set; }
         public float Transient { get; set; }
         public Node3D Pivot { get; init; }
@@ -34,11 +36,13 @@ public sealed partial class VesselView {
         public float Radius { get; init; }
         public float Duty { get; set; }
         public float Command { get; set; }
+        public EngineState Valve { get; } = new();
 
     }
 
     private static readonly Dictionary<(double, float), double> ExitMachCache = new Dictionary<(double, float), double>();
 
+    private readonly Dictionary<MeshInstance3D, PlumeFlow> _plumeFlows = new();
     private static BoxMesh _proxy;
     private static NoiseTexture3D _noise;
     private static int _seeds;
@@ -51,6 +55,13 @@ public sealed partial class VesselView {
         if (_vessel != null) {
 
             Views.Remove(_vessel);
+            foreach (ImageTexture mask in _exhaustMasks.Values) { mask.Dispose(); }
+            foreach (Piece piece in _pieces) {
+
+                piece.Soot?.Texture.Dispose();
+                piece.Soot?.Image.Dispose();
+
+            }
 
         }
 
@@ -60,6 +71,7 @@ public sealed partial class VesselView {
     private MeshInstance3D _wake;
     private ShaderMaterial _wakeMaterial;
     private OmniLight3D _entryLight;
+    private double _lastExhaustTime;
     private float _effectTime;
     private float _effectDelta;
     private float _projectionAge;
@@ -118,6 +130,7 @@ public sealed partial class VesselView {
         material.SetShaderParameter("flame_colour", chemistry.Flame);
         material.SetShaderParameter("afterburn", chemistry.Afterburn);
         material.SetShaderParameter("luminosity", chemistry.Luminosity);
+        material.SetShaderParameter("soot_yield", chemistry.Soot);
 
     }
 
@@ -186,7 +199,6 @@ public sealed partial class VesselView {
         }
 
     }
-
 
     private static TriangleMesh JetSurface(Node3D node) {
 
@@ -333,11 +345,12 @@ public sealed partial class VesselView {
     private void SyncPlume() {
 
         foreach (VesselView view in Views.Values) { view.PrepareExhaustColliders(); }
+        _maskUpdates = 0;
         PlumeObstacles = 0;
-        _effectDelta = Mathf.Min((float)GetProcessDeltaTime(), 0.1f);
+        double now = Flight.Active.Time;
+        _effectDelta = Mathf.Max((float)(now - _lastExhaustTime), 0.0f);
+        _lastExhaustTime = now;
         _effectTime += _effectDelta;
-        float demand = _vessel.ThrustFraction > 0.0 ? (float)(_vessel.ThrustSetting / _vessel.ThrustFraction) : 0.0f;
-        _thrust = Mathf.Lerp(_thrust, demand, 1.0f - Mathf.Exp(-_effectDelta / 0.065f));
 
         (float pressure, float density) = Air();
 
@@ -349,22 +362,30 @@ public sealed partial class VesselView {
 
             }
 
-            bool armed = piece.Stage == _vessel.Active;
             Chemistry chemistry = Chemistry.For(piece.Stage.Fuel);
             float air = Mathf.Clamp(density / 1.225f, 0.0f, 1.0f);
 
             foreach (Engine engine in piece.Engines) {
 
-                float wanted = armed && piece.Stage.IsEngineLit(engine.Index) ? _thrust : 0.0f;
+                EngineState state = piece.Stage.EngineStates[engine.Index];
+                if (engine.FuelName != piece.Stage.Fuel?.Name) {
+
+                    Colour(engine.PlumeMaterial, chemistry);
+                    engine.FuelName = piece.Stage.Fuel?.Name;
+
+                }
                 float previous = engine.Power;
-                engine.Power = Mathf.Lerp(previous, wanted, 1.0f - Mathf.Exp(-_effectDelta / (wanted > previous ? 0.09f : 0.22f)));
-                engine.Transient = Mathf.Max(engine.Transient * Mathf.Exp(-_effectDelta / 0.45f), Mathf.Abs(wanted - previous));
+                engine.Power = _vessel.Intact ? (float)state.Power : 0.0f;
+                engine.Transient = Mathf.Max(engine.Transient * Mathf.Exp(-_effectDelta / 0.2f), Mathf.Abs(engine.Power - previous));
+                engine.PlumeMaterial.SetShaderParameter("purge", (float)state.Purge);
+                engine.PlumeMaterial.SetShaderParameter("burnoff", (float)state.Burnoff);
 
             }
 
             foreach (Engine engine in piece.Engines) {
 
-                bool burning = engine.Power > 0.003f;
+                EngineState state = piece.Stage.EngineStates[engine.Index];
+                bool burning = _vessel.Intact && (engine.Power > 0.0001f || state.Purge > 0.0001 || state.Burnoff > 0.0001);
                 engine.Plume.Visible = burning;
                 engine.Light.Visible = burning;
                 if (!burning) { continue; }
@@ -395,21 +416,22 @@ public sealed partial class VesselView {
                 engine.PlumeMaterial.SetShaderParameter("cluster_mix", Mathf.Min(coupling, 2.0f));
                 engine.PlumeMaterial.SetShaderParameter("cluster_transient", Mathf.Min(transient, 2.0f));
                 DriveVolume(engine.Plume, engine.PlumeMaterial, piece.Stage.ChamberPressure, piece.Stage.ExpansionRatio,
-                    chemistry, engine.Power, piece.BellRadius, pressure, density, false);
+                    chemistry, engine.Power, piece.BellRadius, pressure, density, false, 1.0f, state.Purge + state.Burnoff > 0.00001);
 
                 engine.Light.LightColor = chemistry.Core.Lerp(chemistry.Flame, air * chemistry.Afterburn);
-                engine.Light.LightEnergy = engine.Power * chemistry.Luminosity * 1.15f / Mathf.Sqrt(piece.Engines.Count);
+                engine.Light.LightEnergy = (engine.Power + (float)state.Burnoff * 0.25f) * chemistry.Luminosity * 1.15f / Mathf.Sqrt(piece.Engines.Count);
 
             }
 
         }
 
         SyncJets(pressure, density);
+        SyncSoot();
 
     }
 
     private void DriveVolume(MeshInstance3D volume, ShaderMaterial material, double chamberPressure, double expansionRatio,
-        Chemistry chemistry, float throttle, float bellRadius, float pressure, float density, bool jet) {
+        Chemistry chemistry, float throttle, float bellRadius, float pressure, float density, bool jet, float duty = 1.0f, bool purging = false) {
 
         var key = (expansionRatio, chemistry.Gamma);
 
@@ -421,31 +443,41 @@ public sealed partial class VesselView {
         }
 
         Exhaust exhaust = Nozzle.ExpandFromMach(chamberPressure, mach, chemistry.Gamma, throttle, pressure, bellRadius);
-        float exit = Mathf.Max(bellRadius * (float)exhaust.Contraction, bellRadius * 0.2f);
-        float vacuum = pressure > 0.0f ? Mathf.Clamp((float)Math.Log10(Math.Max(exhaust.PressureRatio, 1.0)) / 3.0f, 0.0f, 1.0f) : 1.0f;
+        CelestialBody body = Flight.Active.Body;
+        Vector3d relative = body.AirVelocityAt(_vessel.Position) - _vessel.Velocity
+            + (body.Weather?.VelocityAt(body, _vessel.Position, Flight.Active.Time) ?? Vector3d.Zero);
+        Vector3 wind = volume.GlobalBasis.Inverse() * Frames.Direction(relative);
+        PlumeFlow flow = PlumeFlow.Solve(exhaust, bellRadius, throttle, density, Frames.Sim(wind), jet);
+        _plumeFlows[volume] = flow;
+        float exit = (float)flow.ExitRadius;
+        float spread = (float)flow.Spread;
+        float length = (float)flow.Length;
+        float radius = (exit + length * spread) * 1.5f;
+        if (flow.Opposing > 0.001) { radius = Mathf.Max(radius, (float)flow.BlanketRadius * 2.5f); }
+        material.SetShaderParameter("reaction_control", jet);
+        material.SetShaderParameter("purge_radius", bellRadius);
+        float vacuum = pressure > 0.0f ? Mathf.Clamp((float)Math.Log10(Math.Max(exhaust.PressureRatio, 1.0)) / 4.0f, 0.0f, 1.0f) : 1.0f;
         float air = Mathf.Clamp(density / 1.225f, 0.0f, 1.0f);
-        float turn = Mathf.Max((float)exhaust.TurnAngle, 0.0f);
-        float spread = Mathf.Lerp(0.10f + air * 0.075f, Mathf.Tan(Mathf.Min(turn * 0.42f, 0.72f)), vacuum);
-        float length = bellRadius * (jet ? 28.0f : 112.0f) * (0.45f + 0.55f * Mathf.Sqrt(throttle));
-        float radius = (exit + length * spread) * 2.1f;
+        Vector3 crossflow = Frames.Direction(flow.Bend);
+        float cells = pressure > 0.0f && exhaust.ShockCellLength > 0.0
+            ? Mathf.Clamp((float)Math.Abs(Math.Log(exhaust.PressureRatio)), 0.0f, 1.0f) * (1.0f - vacuum) : 0.0f;
+        material.SetShaderParameter("opposing", (float)flow.Opposing);
+        material.SetShaderParameter("standoff", (float)flow.Standoff);
+        material.SetShaderParameter("blanket_radius", (float)flow.BlanketRadius);
+        material.SetShaderParameter("daylight", Mathf.Max(Main.SunDirection.Dot(Frames.Direction(_vessel.Position.Normalized)), 0.0f));
 
-        if (!jet && _vessel.Intact) {
+        Vector3d nozzle = NozzlePosition(volume);
+        float surfaceReach = Mathf.Min(length, (float)flow.Standoff);
+        var surface = ExhaustInteraction.Surface(body, nozzle, Frames.Sim(-volume.GlobalBasis.Y), surfaceReach, Flight.Active.Time);
+        float impactPower = throttle * duty * (jet ? Mathf.Min(bellRadius * bellRadius / 0.16f, 1.0f) : 1.0f);
+        if (_vessel.Intact && impactPower > 0.001f) {
 
-            Planet.Active?.Disturb(volume.GlobalPosition, -volume.GlobalBasis.Y, length, exit, throttle, spread);
+            Planet.Active?.Disturb(volume.GlobalPosition, -volume.GlobalBasis.Y, surfaceReach, exit, impactPower, spread, surface);
 
         }
 
-        float cells = pressure > 0.0f && exhaust.ShockCellLength > 0.0
-            ? Mathf.Clamp((float)Math.Abs(Math.Log(exhaust.PressureRatio)), 0.0f, 1.0f) * (1.0f - vacuum) : 0.0f;
-
-        Vector3 wind = volume.GlobalBasis.Inverse() * Frames.Direction(Flight.Active.Body.AirVelocityAt(_vessel.Position) - _vessel.Velocity);
-        wind.Y = 0.0f;
-        float momentum = (float)(chamberPressure * throttle * Nozzle.PressureRatio(mach, chemistry.Gamma) * chemistry.Gamma * mach * mach);
-        float bend = Mathf.Clamp(density * wind.LengthSquared() / Mathf.Max(momentum, 1.0f), 0.0f, 0.6f);
-        Vector3 crossflow = wind.LengthSquared() > 0.001f ? wind.Normalized() * (length * bend) : Vector3.Zero;
-
         material.SetShaderParameter("brightness", jet ? 1.15f : 1.25f);
-        material.SetShaderParameter("throttle", throttle);
+        material.SetShaderParameter("throttle", throttle * duty);
         material.SetShaderParameter("exit_radius", exit);
         material.SetShaderParameter("plume_length", length);
         material.SetShaderParameter("spread", spread);
@@ -455,26 +487,34 @@ public sealed partial class VesselView {
         material.SetShaderParameter("cell_strength", cells);
         material.SetShaderParameter("crossflow", crossflow);
         material.SetShaderParameter("effect_time", _effectTime);
+        material.SetShaderParameter("sample_phase", (float)(Godot.Engine.GetProcessFrames() % 8) * 0.61803399f);
 
         Vector3 low = new Vector3(-radius, -length, -radius) + crossflow.Min(Vector3.Zero);
-        Vector3 high = new Vector3(radius, 0.0f, radius) + crossflow.Max(Vector3.Zero);
+        Vector3 high = new Vector3(radius, (float)(flow.Opposing * flow.BlanketRadius * 3.0), radius) + crossflow.Max(Vector3.Zero);
+        // Purge gas survives chamber collapse and must fade inside, rather than against, its proxy.
+        if (purging) {
 
-        Ground(volume, material, length, exit, ref low, ref high);
+            low = low.Min(new Vector3(-bellRadius * 11.0f, -bellRadius * 16.0f, -bellRadius * 11.0f));
+            high = high.Max(new Vector3(bellRadius * 11.0f, 0.0f, bellRadius * 11.0f));
+
+        }
+
+        Ground(volume, material, length, exit, nozzle, surface, ref low, ref high);
         _exhaustShapes[volume] = (length, spread, exit);
         MeshObstacle(volume, material, length, exit, spread);
         Bounds(volume, material, low, high);
 
     }
 
-    private void Ground(MeshInstance3D volume, ShaderMaterial material, float length, float exit, ref Vector3 low, ref Vector3 high) {
+    private void Ground(MeshInstance3D volume, ShaderMaterial material, float length, float exit, Vector3d nozzle, ExhaustInteraction.SurfaceHit? hit, ref Vector3 low, ref Vector3 high) {
 
         CelestialBody body = Flight.Active.Body;
-        Vector3d nozzle = _vessel.Position + Frames.Sim(volume.GlobalPosition - GlobalPosition);
-        var hit = ExhaustInteraction.Surface(body, nozzle, Frames.Sim(-volume.GlobalBasis.Y), length, Flight.Active.Time);
         Vector3 up = volume.GlobalBasis.Inverse() * Frames.Direction(hit?.Normal ?? nozzle.Normalized);
         float impactDistance = (float)(hit?.Distance ?? length);
         float strength = hit.HasValue ? 1.0f - impactDistance / length : 0.0f;
-        float altitude = hit.HasValue ? up.Y * impactDistance : (float)body.HeightAboveGround(nozzle, Flight.Active.Time);
+        float altitude = hit.HasValue ? up.Y * impactDistance
+            : ExhaustInteraction.CanReachSurface(body, nozzle, Frames.Sim(-volume.GlobalBasis.Y), length)
+                ? (float)body.HeightAboveGround(nozzle, Flight.Active.Time) : 1000000.0f;
         material.SetShaderParameter("ground_water", hit.HasValue && hit.Value.Water ? 1.0f : 0.0f);
 
         material.SetShaderParameter("ground_normal", up);
@@ -506,8 +546,8 @@ public sealed partial class VesselView {
     private void SyncJets(float pressure, float density) {
 
         bool armed = _vessel.HasRcs;
-        double limit = _vessel.ControlTorqueLimit;
-        Vector3 torque = armed && limit > 0.0 ? Frames.Direction(_vessel.ControlTorque) / (float)limit : Vector3.Zero;
+        double limit = _vessel.ThrusterTorqueLimit;
+        Vector3 torque = armed && limit > 0.0 ? Frames.Direction(_vessel.AppliedRcsTorque) / (float)limit : Vector3.Zero;
         Vector3 push = armed ? Frames.Direction(_vessel.TranslationCommand).Clamp(-Vector3.One, Vector3.One) : Vector3.Zero;
         Vector3 centre = new Vector3(0.0f, (float)_vessel.CentreOfMassZ, 0.0f);
 
@@ -527,14 +567,16 @@ public sealed partial class VesselView {
 
                 // RCS valves pulse at chamber pressure; duty changes emission, not the nozzle's pressure regime.
                 jet.Command = wanted;
-                jet.Duty = Mathf.Lerp(jet.Duty, wanted, 1.0f - Mathf.Exp(-_effectDelta / (wanted > jet.Duty ? 0.025f : 0.07f)));
-                jet.Volume.Visible = jet.Duty > 0.012f;
+                jet.Valve.Advance(wanted, RcsLimits, _effectDelta, armed && piece.Stage.HasReactionControl, true);
+                jet.Duty = (float)jet.Valve.Power;
+                jet.Material.SetShaderParameter("purge", (float)jet.Valve.Purge * 0.18f);
+                jet.Material.SetShaderParameter("burnoff", 0.0f);
+                jet.Volume.Visible = jet.Duty > 0.001f || jet.Valve.Purge > 0.005;
 
                 if (jet.Volume.Visible) {
 
                     DriveVolume(jet.Volume, jet.Material, piece.Stage.RcsChamberPressure, piece.Stage.RcsExpansionRatio,
-                        Chemistry.Hydrazine, 1.0f, jet.Radius, pressure, density, true);
-                    jet.Material.SetShaderParameter("throttle", jet.Duty);
+                        Chemistry.Hydrazine, 1.0f, jet.Radius, pressure, density, true, jet.Duty, jet.Valve.Purge > 0.00001);
 
                 }
 
@@ -615,6 +657,7 @@ public sealed partial class VesselView {
             material.SetShaderParameter("wake_length", wake);
             material.SetShaderParameter("ablation", ablation);
             material.SetShaderParameter("effect_time", _effectTime);
+        material.SetShaderParameter("sample_phase", (float)(Godot.Engine.GetProcessFrames() % 8) * 0.61803399f);
             material.SetShaderParameter("air_hot_colour", spectrum.Hot);
             material.SetShaderParameter("air_cool_colour", spectrum.Cool);
             material.SetShaderParameter("ablation_colour", spectrum.Ablation);

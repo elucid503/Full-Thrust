@@ -12,6 +12,7 @@ namespace FullThrust.Game;
 /// of its own without a single vertex being rebuilt.</summary>
 public sealed partial class VesselView : Node3D {
 
+    public const uint HardwareLayer = 4;
     private const int RadialSegments = 96;
     private const int NozzleSegments = 32;
 
@@ -64,11 +65,13 @@ public sealed partial class VesselView : Node3D {
         public Node3D Node { get; init; }
 
         public float BellRadius { get; set; }
+        public SootCoating Soot;
         public readonly List<Engine> Engines = new List<Engine>();
 
         public readonly List<Jet> Jets = new List<Jet>();
         public List<(Node3D Node, TriangleMesh Surface)> ExhaustSurfaces;
-        public double ExhaustRadius;
+        public Vector3 ExhaustLow;
+        public Vector3 ExhaustHigh;
         public EntryField SingleEntry;
         public EntryField StackEntry;
         public readonly List<StandardMaterial3D> Skins = new List<StandardMaterial3D>();
@@ -84,7 +87,6 @@ public sealed partial class VesselView : Node3D {
     private MeshInstance3D _sheath;
     private ShaderMaterial _sheathMaterial;
 
-    private float _thrust;
     private float _sheathHeat;
 
     public Vessel Vessel => _vessel;
@@ -109,6 +111,11 @@ public sealed partial class VesselView : Node3D {
             Piece piece = BuildStage(stage);
 
             _body.AddChild(piece.Node);
+            foreach (Node child in piece.Node.FindChildren("*", "MeshInstance3D", true, false)) {
+
+                if (child is MeshInstance3D mesh && mesh.Layers != 2) { mesh.Layers |= HardwareLayer; }
+
+            }
 
             _pieces.Add(piece);
 
@@ -194,39 +201,15 @@ public sealed partial class VesselView : Node3D {
 
     }
 
-    // Torque is in body axes. An aft-mounted engine tilts opposite the demanded rotation;
-    // roll does not deflect this parallel cluster. The actuator settles without frame-rate dependence.
+    // Physics owns the actuator; the mesh displays exactly the same rotation.
     private void SyncGimbals() {
-
-        float blend = 1.0f - Mathf.Exp(-(float)GetProcessDeltaTime() / 0.09f);
 
         foreach (Piece piece in _pieces) {
 
-            if (piece.Engines.Count == 0) {
-
-                continue;
-
-            }
-
-            Vector3 demand = Vector3.Zero;
-
-            if (piece.Stage == _vessel.Active && _vessel.CurrentThrust > 0.0 && _vessel.ControlTorqueLimit > 0.0) {
-
-                demand = Frames.Direction(_vessel.ControlTorque / _vessel.ControlTorqueLimit);
-                demand.Y = 0.0f;
-                demand = demand.LimitLength();
-
-            }
-
-            float magnitude = demand.Length();
-
             foreach (Engine engine in piece.Engines) {
 
-                float range = (float)(piece.Stage.GimbalRange * piece.Stage.GimbalLimit(engine.Index));
-                Quaternion wanted = magnitude > 0.00001f && piece.Stage.IsEngineLit(engine.Index)
-                    ? new Quaternion(-demand / magnitude, Mathf.Asin(magnitude * Mathf.Sin(range)))
-                    : Quaternion.Identity;
-                engine.Pivot.Quaternion = engine.Pivot.Quaternion.Slerp(wanted, blend).Normalized();
+                EngineState state = piece.Stage.EngineStates[engine.Index];
+                engine.Pivot.Quaternion = Frames.Rotation(QuaternionD.FromAxisAngle(state.Gimbal.Normalized, state.Gimbal.Length));
 
             }
 
@@ -1407,8 +1390,8 @@ public sealed partial class VesselView : Node3D {
 
         for (int i = 0; i < count; i++) {
 
-            float angle = Mathf.Tau * i / count;
-            Vector3 offset = new Vector3(Mathf.Cos(angle) * ring, 0.0f, Mathf.Sin(angle) * ring);
+            Vector3 offset = Frames.Direction(piece.Stage.EngineStates[piece.Engines.Count].Mount);
+            offset.Y = 0.0f;
             Node3D pivot = new Node3D {
 
                 Name = $"EngineGimbal{piece.Engines.Count + 1}",

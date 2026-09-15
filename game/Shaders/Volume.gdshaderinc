@@ -4,6 +4,7 @@ uniform sampler2D depth_buffer : hint_depth_texture, filter_nearest;
 uniform sampler3D flow_noise : filter_linear, repeat_enable;
 uniform float seed = 0.0;
 uniform float effect_time = 0.0;
+uniform float sample_phase = 0.0;
 
 varying vec3 volume_position;
 varying flat vec3 volume_camera;
@@ -69,5 +70,46 @@ vec4 flow_eddies(vec3 p) {
 float bell(float x) {
 
     return exp(-x * x);
+
+}
+
+// Ray clipping against a finite circular cone. Its convex support leaves one occupied interval.
+vec2 cone_interval(vec3 o, vec3 d, vec2 interval, float reach, float radius, float spread) {
+
+    if (abs(d.y) > 0.000001) {
+
+        vec2 ends = vec2(-o.y, -reach - o.y) / d.y;
+        interval = vec2(max(interval.x, min(ends.x, ends.y)), min(interval.y, max(ends.x, ends.y)));
+
+    } else if (o.y > 0.0 || o.y < -reach) { return vec2(0.0); }
+    float r = radius - spread * o.y;
+    float a = dot(d.xz, d.xz) - spread * spread * d.y * d.y;
+    float b = 2.0 * (dot(o.xz, d.xz) + r * spread * d.y);
+    float c = dot(o.xz, o.xz) - r * r;
+    float discriminant = b * b - 4.0 * a * c;
+    if (abs(a) < 0.000001) {
+
+        if (abs(b) > 0.000001) {
+
+            if (b > 0.0) { interval.y = min(interval.y, -c / b); }
+            else { interval.x = max(interval.x, -c / b); }
+
+        } else if (c > 0.0) { return vec2(0.0); }
+
+    } else if (discriminant >= 0.0) {
+
+        vec2 roots = vec2(-b - sqrt(discriminant), -b + sqrt(discriminant)) / (2.0 * a);
+        roots = vec2(min(roots.x, roots.y), max(roots.x, roots.y));
+        if (a > 0.0) { interval = vec2(max(interval.x, roots.x), min(interval.y, roots.y)); }
+        else {
+
+            float middle = (interval.x + interval.y) * 0.5;
+            if (middle < (roots.x + roots.y) * 0.5) { interval.y = min(interval.y, roots.x); }
+            else { interval.x = max(interval.x, roots.y); }
+
+        }
+
+    } else if (a > 0.0) { return vec2(0.0); }
+    return interval;
 
 }

@@ -16,19 +16,62 @@ public sealed partial class VesselView {
     private readonly Dictionary<MeshInstance3D, float> _exhaustMaskTimes = new();
     private readonly HashSet<MeshInstance3D> _blockedPlumes = new();
     private double _exhaustRadius;
+    private Vector3 _exhaustCentre;
+    private Vector3 _exhaustLow;
+    private Vector3 _exhaustHigh;
+    private int _maskUpdates;
+    private readonly Queue<MeshInstance3D> _maskQueue = new();
+    private readonly HashSet<MeshInstance3D> _queuedMasks = new();
+    private ulong _colliderFrame = ulong.MaxValue;
+    private readonly Dictionary<MeshInstance3D, int> _maskSignatures = new();
+
+    private static Vector3d BoundsCentre(VesselView view) => view._vessel.Position + view._vessel.Orientation.Rotate(
+        Frames.Sim(view._exhaustCentre) - Vector3d.UnitZ * view._vessel.CentreOfMassZ);
+
+    private static double BoundsRadius(VesselView view) => view._exhaustRadius;
+
+    private bool InExhaustCone(Vector3d origin, Vector3d axis, double length, double radius, double spread, VesselView target) {
+
+        Vector3d offset = BoundsCentre(target) - origin;
+        double bound = BoundsRadius(target);
+        double along = Vector3d.Dot(offset, axis);
+        if (along < -bound || along > length + bound) { return false; }
+        double width = bound + radius + Math.Clamp(along + bound, 0.0, length) * spread;
+        return (offset - axis * along).LengthSquared < width * width;
+
+    }
+
+    private bool HasExhaustTarget(ExhaustInteraction.Emitter emitter) {
+
+        foreach (VesselView view in Views.Values) {
+
+            if (view != this && view._vessel.Intact && InExhaustCone(emitter.Position, emitter.Axis, emitter.Length, emitter.Radius, emitter.Spread, view)) { return true; }
+
+        }
+        return false;
+
+    }
 
     private void BakeExhaustSurfaces() {
 
         _exhaustSurfaces.Clear();
         _exhaustColliders.Clear();
-        _exhaustRadius = 0.0;
+        Vector3 low = Vector3.One * float.PositiveInfinity;
+        Vector3 high = Vector3.One * float.NegativeInfinity;
+        _colliderFrame = ulong.MaxValue;
         foreach (Piece piece in _pieces) {
 
             if (piece.ExhaustSurfaces == null) { BakePieceExhaust(piece); }
             _exhaustSurfaces.AddRange(piece.ExhaustSurfaces);
-            _exhaustRadius = Math.Max(_exhaustRadius, piece.ExhaustRadius);
+            low = low.Min(piece.ExhaustLow);
+            high = high.Max(piece.ExhaustHigh);
 
         }
+
+        _exhaustLow = low - Vector3.One * 0.5f;
+        _exhaustHigh = high + Vector3.One * 0.5f;
+        _exhaustCentre = (low + high) * 0.5f;
+        _exhaustRadius = (high - low).Length() * 0.5 + 0.5;
 
     }
 
@@ -61,12 +104,15 @@ public sealed partial class VesselView {
         }
 
         piece.ExhaustSurfaces = new();
+        piece.ExhaustLow = Vector3.One * float.PositiveInfinity;
+        piece.ExhaustHigh = Vector3.One * float.NegativeInfinity;
         foreach (var group in groups) {
 
             Transform3D transform = DatumTransform(group.Key);
             foreach (Vector3 point in group.Value) {
 
-                piece.ExhaustRadius = Math.Max(piece.ExhaustRadius, transform.Origin.Length() + (transform.Basis * point).Length());
+                piece.ExhaustLow = piece.ExhaustLow.Min(transform * point);
+                piece.ExhaustHigh = piece.ExhaustHigh.Max(transform * point);
 
             }
 
@@ -80,6 +126,8 @@ public sealed partial class VesselView {
 
     private void PrepareExhaustColliders() {
 
+        if (_colliderFrame == Godot.Engine.GetProcessFrames()) { return; }
+        _colliderFrame = Godot.Engine.GetProcessFrames();
         _exhaustColliders.Clear();
         foreach (var mesh in _exhaustSurfaces) {
 
@@ -108,6 +156,29 @@ public sealed partial class VesselView {
     private Vector3d NozzlePosition(MeshInstance3D volume) => _vessel.Position + _vessel.Orientation.Rotate(
         Frames.Sim(DatumTransform(volume).Origin) - Vector3d.UnitZ * _vessel.CentreOfMassZ);
 
+    private static bool SegmentBounds(Vector3 from, Vector3 to, Vector3 low, Vector3 high) {
+
+        float enter = 0.0f, leave = 1.0f;
+        Vector3 delta = to - from;
+        for (int axis = 0; axis < 3; axis++) {
+
+            if (Mathf.Abs(delta[axis]) < 0.000001f) {
+
+                if (from[axis] < low[axis] || from[axis] > high[axis]) { return false; }
+                continue;
+
+            }
+            float a = (low[axis] - from[axis]) / delta[axis];
+            float b = (high[axis] - from[axis]) / delta[axis];
+            enter = Mathf.Max(enter, Mathf.Min(a, b));
+            leave = Mathf.Min(leave, Mathf.Max(a, b));
+            if (leave < enter) { return false; }
+
+        }
+        return true;
+
+    }
+
     private ExhaustInteraction.Hit? TraceExhaust(Vector3d origin, Vector3d direction, double reach, out Vector3 normal) {
 
         ExhaustInteraction.Hit? nearest = null;
@@ -118,14 +189,16 @@ public sealed partial class VesselView {
             if (view == this || !view._vessel.Intact) { continue; }
 
             Vessel target = view._vessel;
-            Vector3d offset = target.Position - origin;
+            Vector3d offset = BoundsCentre(view) - origin;
             double along = Math.Clamp(Vector3d.Dot(offset, direction), 0.0, reach);
-            double radius = view._exhaustRadius + Math.Abs(target.CentreOfMassZ);
+            double radius = BoundsRadius(view);
             if ((offset - direction * along).LengthSquared > radius * radius) { continue; }
 
             Vector3 localOrigin = Frames.Direction(target.Orientation.Conjugate.Rotate(origin - target.Position))
                 + Vector3.Up * (float)target.CentreOfMassZ;
             Vector3 localEnd = localOrigin + Frames.Direction(target.Orientation.Conjugate.Rotate(direction)) * (float)reach;
+
+            if (!SegmentBounds(localOrigin, localEnd, view._exhaustLow, view._exhaustHigh)) { continue; }
 
             foreach (var mesh in view._exhaustColliders) {
 
@@ -170,11 +243,15 @@ public sealed partial class VesselView {
                 foreach (Engine engine in piece.Engines) {
 
                     if (piece.Stage != source.Active || source.CurrentThrust <= 0.0) { continue; }
-                    if (!piece.Stage.IsEngineLit(engine.Index) || !view._exhaustShapes.TryGetValue(engine.Plume, out var shape)) { continue; }
+                    if (!view._exhaustShapes.TryGetValue(engine.Plume, out var shape)) { continue; }
+                    EngineState state = piece.Stage.EngineStates[engine.Index];
+                    if (state.Power <= 0.0) { continue; }
 
-                    Vector3d axis = source.Orientation.Rotate(Frames.Sim(-view.DatumTransform(engine.Plume).Basis.Y)).Normalized;
-                    var emitter = new ExhaustInteraction.Emitter(view.NozzlePosition(engine.Plume), axis,
-                        shape.Radius, shape.Length, shape.Spread * 2.0, source.CurrentThrust / Math.Max(source.EnginesLit, 1));
+                    Vector3d axis = -source.Orientation.Rotate(state.Direction);
+                    Vector3d nozzle = source.Position + source.Orientation.Rotate(state.Mount + state.Direction * engine.Plume.Position.Y - Vector3d.UnitZ * source.CentreOfMassZ);
+                    var emitter = new ExhaustInteraction.Emitter(nozzle, axis,
+                        shape.Radius, shape.Length, shape.Spread * 2.0, piece.Stage.ThrustNewtons / Math.Max(piece.Stage.EngineCount, 1) * state.Power * piece.Stage.PressureThrustFactor);
+                    if (!view.HasExhaustTarget(emitter)) { continue; }
                     ExhaustInteraction.Accumulate(emitter, (origin, direction, reach) => view.TraceExhaust(origin, direction, reach, out _));
 
                 }
@@ -186,6 +263,7 @@ public sealed partial class VesselView {
                     Vector3d axis = source.Orientation.Rotate(Frames.Sim(-view.DatumTransform(jet.Volume).Basis.Y)).Normalized;
                     var emitter = new ExhaustInteraction.Emitter(view.NozzlePosition(jet.Volume), axis,
                         shape.Radius, shape.Length, shape.Spread * 2.0, piece.Stage.RcsThrustNewtons * jet.Command / piece.Jets.Count);
+                    if (!view.HasExhaustTarget(emitter)) { continue; }
                     ExhaustInteraction.Accumulate(emitter, (origin, direction, reach) => view.TraceExhaust(origin, direction, reach, out _));
 
                 }
@@ -200,32 +278,61 @@ public sealed partial class VesselView {
 
         bool nearby = false;
         Vector3d nozzle = NozzlePosition(volume);
+        Vector3d axis = _vessel.Orientation.Rotate(Frames.Sim(-DatumTransform(volume).Basis.Y)).Normalized;
+        HashCode signature = new();
         foreach (VesselView view in Views.Values) {
 
-            if (view == this || !view._vessel.Intact) { continue; }
-            double reach = length * 1.5 + view._exhaustRadius + Math.Abs(view._vessel.CentreOfMassZ);
-            nearby |= (view._vessel.Position - nozzle).LengthSquared < reach * reach;
+            if (view == this || !view._vessel.Intact || !InExhaustCone(nozzle, axis, length, exit, spread * 2.0, view)) { continue; }
+            nearby = true;
+            Transform3D relative = volume.GlobalTransform.AffineInverse() * view._body.GlobalTransform;
+            signature.Add(view.GetInstanceId());
+            signature.Add(relative.Origin.Snapped(Vector3.One * 0.025f));
+            signature.Add(relative.Basis.X.Snapped(Vector3.One * 0.002f));
+            signature.Add(relative.Basis.Y.Snapped(Vector3.One * 0.002f));
 
         }
+        signature.Add(Mathf.RoundToInt(length * 20.0f));
+        signature.Add(Mathf.RoundToInt(spread * 500.0f));
+        int fingerprint = signature.ToHashCode();
 
         if (!nearby) {
 
             material.SetShaderParameter("ship_enabled", false);
             _blockedPlumes.Remove(volume);
             _exhaustMaskTimes.Remove(volume);
+            _queuedMasks.Remove(volume);
             return;
 
         }
 
-        if (_exhaustMaskTimes.TryGetValue(volume, out float updated) && _effectTime - updated < 0.04f) {
+        while (_maskQueue.Count > 0 && (!IsInstanceValid(_maskQueue.Peek()) || !_maskQueue.Peek().Visible || !_queuedMasks.Contains(_maskQueue.Peek()))) {
 
+            _queuedMasks.Remove(_maskQueue.Dequeue());
+
+        }
+        bool unchanged = _maskSignatures.TryGetValue(volume, out int previous) && previous == fingerprint;
+        if ((unchanged && _exhaustMaskTimes.ContainsKey(volume))
+            || (_exhaustMaskTimes.TryGetValue(volume, out float updated) && _effectTime - updated < 0.06f)) {
+
+            if (unchanged) { _queuedMasks.Remove(volume); }
             if (_blockedPlumes.Contains(volume)) { PlumeObstacles++; }
             return;
 
         }
 
+        if (_queuedMasks.Add(volume)) { _maskQueue.Enqueue(volume); }
+        if (_maskUpdates >= 1 || _maskQueue.Peek() != volume) {
+
+            if (_blockedPlumes.Contains(volume)) { PlumeObstacles++; }
+            return;
+
+        }
+        _maskQueue.Dequeue();
+        _queuedMasks.Remove(volume);
+        _maskUpdates++;
+        _maskSignatures[volume] = fingerprint;
         _exhaustMaskTimes[volume] = _effectTime;
-        const int size = 24;
+        int size = exit < 0.15f ? 12 : 20;
         float slope = Mathf.Max(spread * 2.0f, 0.02f);
         float apex = exit / Mathf.Max(spread, 0.01f);
         Basis rotation = new Basis(Frames.Rotation(_vessel.Orientation)) * DatumTransform(volume).Basis;

@@ -9,6 +9,7 @@ public readonly struct Chemistry {
 
     /// <summary>Ratio of specific heats of the combustion products through the bell.</summary>
     public float Gamma { get; init; }
+    public float Soot { get; init; }
 
     public Color Core { get; init; }
     public Color Tail { get; init; }
@@ -23,6 +24,7 @@ public readonly struct Chemistry {
     public static readonly Chemistry Kerosene = new Chemistry {
 
         Gamma = 1.22f,
+        Soot = 1.0f,
 
         Core = new Color(1.00f, 0.84f, 0.66f),
         Tail = new Color(1.00f, 0.40f, 0.14f),
@@ -49,6 +51,7 @@ public readonly struct Chemistry {
     public static readonly Chemistry Methane = new Chemistry {
 
         Gamma = 1.23f,
+        Soot = 0.035f,
 
         Core = new Color(0.72f, 0.80f, 1.00f),
         Tail = new Color(0.86f, 0.52f, 0.62f),

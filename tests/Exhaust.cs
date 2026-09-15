@@ -7,10 +7,18 @@ public static partial class Program {
     private static void ExhaustTerrain(Terrain terrain) {
 
         CelestialBody body = new CelestialBody { Radius = Home.Radius, Terrain = terrain, RotationPeriodSeconds = Home.RotationPeriodSeconds };
+        Terrain raised = terrain.CreateSession();
+        double before = raised.Ceiling;
+        raised.Add(new Terrain.Plateau { Centre = Vector3d.UnitX, Height = before + 200.0, InnerRadius = 100.0, OuterRadius = 200.0 });
+        Near("terrain ceiling includes authored high pads", raised.Ceiling, before + 200.0, 1e-8);
+        CelestialBody modified = new() { Radius = body.Radius, Terrain = raised };
+        Expect("surface broadphase retains tall authored pads", ExhaustInteraction.CanReachSurface(modified, Vector3d.UnitX * (body.Radius + raised.Ceiling + 10.0), -Vector3d.UnitX, 20.0), "pad was rejected");
+        Expect("high altitude exhaust bypasses terrain traversal", !ExhaustInteraction.CanReachSurface(body, Vector3d.UnitX * (body.Radius + terrain.Ceiling + 1000.0), -Vector3d.UnitX, 50.0), "distant surface accepted");
         foreach (var site in new[] { (Latitude: 28.0, Longitude: 86.9, Water: false), (Latitude: 30.0, Longitude: -40.0, Water: true) }) {
 
             Vector3d up = Site(site.Latitude, site.Longitude);
             double radius = terrain.SurfaceRadius(up);
+            Expect("conservative terrain ceiling contains surveyed relief", radius <= body.Radius + terrain.Ceiling, $"radius={radius}");
             var hit = ExhaustInteraction.Surface(body, up * (radius + 12.0), -up, 30.0, 0.0);
             Expect("exhaust contacts surveyed terrain or sea level", hit.HasValue, "no contact");
             if (hit.HasValue) {

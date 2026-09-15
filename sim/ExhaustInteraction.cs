@@ -9,9 +9,18 @@ public static class ExhaustInteraction {
     public readonly record struct Emitter(Vector3d Position, Vector3d Axis, double Radius, double Length, double Spread, double Thrust);
     public readonly record struct SurfaceHit(Vector3d Point, Vector3d Normal, double Distance, bool Water);
 
+    public static bool CanReachSurface(CelestialBody body, Vector3d origin, Vector3d direction, double reach) {
+
+        double along = Math.Clamp(-Vector3d.Dot(origin, direction), 0.0, reach);
+        double ceiling = body.Radius + (body.Terrain?.Ceiling ?? 0.0);
+        return (origin + direction * along).LengthSquared <= ceiling * ceiling;
+
+    }
+
     public static SurfaceHit? Surface(CelestialBody body, Vector3d origin, Vector3d direction, double reach, double time) {
 
         direction = direction.Normalized;
+        if (!CanReachSurface(body, origin, direction, reach)) { return null; }
         double previous = 0.0;
         if (body.HeightAboveGround(origin, time) < -0.1) { return null; }
 

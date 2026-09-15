@@ -53,7 +53,10 @@ public sealed partial class Planet : Node3D {
     private MeshInstance3D _air;
 
     public override void _ExitTree() {
+
+        foreach (SurfaceWake wake in _surfaceWakes) { wake.Field?.Dispose(); }
         if (Active == this) { Active = null; }
+
     }
 
     public int WorkerFailures => (_ground?.WorkerFailures ?? 0) + (_mapGround?.WorkerFailures ?? 0);

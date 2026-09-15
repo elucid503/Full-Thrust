@@ -65,6 +65,7 @@ public sealed class Terrain {
 
     private readonly double _step;
     private readonly double _floor;
+    private readonly double _surveyCeiling;
 
     private readonly double _radius;
     private readonly double _northPole;
@@ -72,7 +73,7 @@ public sealed class Terrain {
 
     private Plateau[] _plateaus = Array.Empty<Plateau>();
 
-    private Terrain(ushort[] counts, int width, int height, double step, double floor, double radius) {
+    private Terrain(ushort[] counts, int width, int height, double step, double floor, double radius, double surveyCeiling = double.NaN) {
 
         _counts = counts;
         _width = width;
@@ -80,6 +81,14 @@ public sealed class Terrain {
         _step = step;
         _floor = floor;
         _radius = radius;
+        if (double.IsNaN(surveyCeiling)) {
+
+            ushort maximum = 0;
+            foreach (ushort count in counts) { maximum = Math.Max(maximum, count); }
+            surveyCeiling = floor + maximum * step;
+
+        }
+        _surveyCeiling = surveyCeiling;
         for (int column = 0; column < width; column++) {
 
             _northPole += floor + counts[column] * step;
@@ -95,11 +104,24 @@ public sealed class Terrain {
     /// bounding volumes off these rather than guessing.</summary>
     public double Floor => _floor;
 
+    /// <summary>Conservative surface ceiling including bounded procedural relief and launch pads.</summary>
+    public double Ceiling {
+
+        get {
+
+            double ceiling = _surveyCeiling + RidgeAmplitude + RollingAmplitude * 1.9 + 10.0;
+            foreach (Plateau plateau in Volatile.Read(ref _plateaus)) { ceiling = Math.Max(ceiling, plateau.Height); }
+            return Math.Max(ceiling, 0.0);
+
+        }
+
+    }
+
     public int SurveyWidth => _width;
     public int SurveyHeight => _height;
 
     /// <summary>Shares the immutable survey while keeping launch-site modifications local to a flight.</summary>
-    public Terrain CreateSession() => new Terrain(_counts, _width, _height, _step, _floor, _radius);
+    public Terrain CreateSession() => new Terrain(_counts, _width, _height, _step, _floor, _radius, _surveyCeiling);
 
     public bool SharesSurvey(Terrain other) => other != null && ReferenceEquals(_counts, other._counts);
 

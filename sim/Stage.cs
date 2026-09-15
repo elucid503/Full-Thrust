@@ -5,7 +5,7 @@ namespace FullThrust.Sim;
 /// <summary>One separable element of a vessel: its own mould line, its own tank, its own engines
 /// and its own thrusters. A stage authors its geometry in the stack's coordinates, so nothing has
 /// to be shifted when the stack is assembled and nothing moves when it comes apart.</summary>
-public sealed class Stage {
+public sealed partial class Stage {
 
     public string Name { get; init; }
 
@@ -212,6 +212,7 @@ public sealed class Stage {
         Array.Fill(_engines, true);
         _gimbalLimits = new double[count];
         Array.Fill(_gimbalLimits, 1.0);
+        BuildEngineStates();
 
     }
 

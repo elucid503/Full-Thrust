@@ -14,7 +14,7 @@ public enum VesselFate {
 /// <summary>A stack of stages flown as one rigid body. Mass, geometry and aerodynamics are all
 /// re-derived from whatever stages are still attached, so separating one changes every figure
 /// aboard without anything having to be told about it.</summary>
-public sealed class Vessel {
+public sealed partial class Vessel {
 
     public const double StandardGravity = 9.80665;
 
@@ -174,7 +174,7 @@ public sealed class Vessel {
     public double PropellantCapacity => Active.PropellantCapacity;
 
     public double ThrustNewtons => Active.ThrustNewtons;
-    public double SpecificImpulse => Active.SpecificImpulse;
+    public double SpecificImpulse => Active.SpecificImpulse * Active.PressureThrustFactor;
 
     public double MixtureRatio => Active.MixtureRatio;
 
@@ -201,7 +201,7 @@ public sealed class Vessel {
 
     public void SetEngine(int index, bool lit) => Active.SetEngine(index, lit);
 
-    public double MassFlowRate => SpecificImpulse > 0.0 ? ThrustNewtons / (SpecificImpulse * StandardGravity) : 0.0;
+    public double MassFlowRate => Active.SpecificImpulse > 0.0 ? ThrustNewtons / (Active.SpecificImpulse * StandardGravity) : 0.0;
 
     /// <summary>What the live stage can still spend, by the rocket equation.</summary>
     public double DeltaV {
@@ -247,11 +247,11 @@ public sealed class Vessel {
 
     }
 
-    public double CurrentThrust => Active.PropellantMass > 0.0 ? ThrustNewtons * ThrustFraction * Math.Clamp(Throttle, 0.0, 1.0) : 0.0;
+    public double CurrentThrust => Intact && Active.PropellantMass > 0.0 ? Active.EngineCount > 0 ? Active.DeliveredThrust : ThrustNewtons * Math.Clamp(Throttle, 0.0, 1.0) : 0.0;
 
     /// <summary>Propellant the engines are drawing right now. Taken from the thrust actually being
     /// made, so a shut engine cannot burn and the two can never disagree.</summary>
-    public double CurrentMassFlow => SpecificImpulse > 0.0 ? CurrentThrust / (SpecificImpulse * StandardGravity) : 0.0;
+    public double CurrentMassFlow => !Intact || PropellantMass <= 0.0 ? 0.0 : Active.EngineCount > 0 ? Active.DeliveredFlow : SpecificImpulse > 0.0 ? CurrentThrust / (SpecificImpulse * StandardGravity) : 0.0;
 
     /// <summary>Fraction of the rating actually being made. This, not the throttle lever, is what
     /// the plume follows: a shut or dry engine is making nothing however far the lever is open.</summary>
@@ -395,7 +395,7 @@ public sealed class Vessel {
     /// <summary>Whether anything aboard can raise an attitude moment at all.</summary>
     public bool HasControl => ControlTorqueLimit > 0.0;
 
-    public bool HasRcs => RcsEnabled && ThrusterTorqueLimit > 0.0;
+    public bool HasRcs => Intact && RcsEnabled && ThrusterTorqueLimit > 0.0;
 
     /// <summary>Translation force the clusters are currently commanding, in world axes.</summary>
     public Vector3d RcsForce {
@@ -436,9 +436,11 @@ public sealed class Vessel {
 
             double share = limit > 0.0 ? thrusters / limit : 0.0;
 
-            double attitude = limit > 0.0 ? ControlTorque.Length / (limit * Math.Sqrt(3.0)) : 0.0;
+            double attitude = _actuatorsAdvanced && Active.EngineCount > 0
+                ? (thrusters > 0.0 ? AppliedRcsTorque.Length / (thrusters * Math.Sqrt(3.0)) : 0.0)
+                : (limit > 0.0 ? ControlTorque.Length / (limit * Math.Sqrt(3.0)) * share : 0.0);
 
-            return Math.Clamp(attitude * share + Clamped(TranslationCommand).Length / Math.Sqrt(3.0), 0.0, 1.0);
+            return Math.Clamp(attitude + Clamped(TranslationCommand).Length / Math.Sqrt(3.0), 0.0, 1.0);
 
         }
 
@@ -465,7 +467,7 @@ public sealed class Vessel {
 
     }
 
-    public bool IsAccelerating => CurrentThrust > 0.0 || RcsForce.LengthSquared > 0.0 || ExhaustForce.LengthSquared > 0.0;
+    public bool IsAccelerating => (Throttle > 0.0 && EnginesLit > 0 && Active.CanCommandEngines && PropellantMass > 0.0) || Active.HasEngineTransient || CurrentThrust > 0.0 || RcsForce.LengthSquared > 0.0 || ExhaustForce.LengthSquared > 0.0;
 
     /// <summary>The stage taking the flow. Which end of the stack is forward decides it, which is
     /// why a capsule keeps its shield's rating whichever way round it happens to be pointing.</summary>

@@ -172,19 +172,22 @@ public sealed partial class EnginePanel : Control {
         bool lit = stage.IsEngineLit(engine);
 
         double rating = stage.EngineCount > 0 ? stage.ThrustNewtons / stage.EngineCount : 0.0;
-        double thrust = lit && stage.PropellantMass > 0.0 ? rating * Math.Clamp(_vessel.Throttle, 0.0, 1.0) : 0.0;
-        double flow = stage.SpecificImpulse > 0.0 ? thrust / (stage.SpecificImpulse * Vessel.StandardGravity) : 0.0;
+        EngineState state = stage.EngineStates[engine];
+        double power = _vessel.Intact && stage.PropellantMass > 0.0 ? state.Power : 0.0;
+        double thrust = rating * power * stage.PressureThrustFactor;
+        double flow = stage.SpecificImpulse > 0.0 ? rating * power / (stage.SpecificImpulse * Vessel.StandardGravity) : 0.0;
 
         Vector3 direction = VesselView.Active?.EngineDirection(engine) ?? Vector3.Down;
         float deflection = Mathf.RadToDeg(Mathf.Acos(Mathf.Clamp(-direction.Y, -1.0f, 1.0f)));
         double limit = stage.GimbalRange * stage.GimbalLimit(engine) * 180.0 / Math.PI;
 
-        string status = !lit ? "SHUT" : thrust > 0.0 ? "FIRING" : "READY";
+        string status = state.Phase is EnginePhase.Shutdown or EnginePhase.Purging or EnginePhase.Igniting or EnginePhase.Exhausted
+            ? state.Phase.ToString().ToUpperInvariant() : !lit ? "SHUT" : thrust > 0.0 ? "FIRING" : "READY";
 
         rows.Add(("STATUS", status));
         rows.Add(("THRUST", $"{thrust / 1000.0:F1} / {rating / 1000.0:F1} kN"));
         rows.Add(("FLOW", $"{flow:F2} kg/s"));
-        rows.Add(("IMPULSE", $"{stage.SpecificImpulse:F0} s"));
+        rows.Add(("IMPULSE", $"{stage.SpecificImpulse * stage.PressureThrustFactor:F0} s"));
         rows.Add(("GIMBAL", limit <= 0.0 ? "LOCKED" : $"{deflection:F1}° / {limit:F1}°"));
 
         actions.Add((lit ? "SHUT" : "ARM", () => _vessel.SetEngine(engine, !lit)));
@@ -225,8 +228,6 @@ public sealed partial class EnginePanel : Control {
 
         DrawStyleBox(HudTheme.Panel(0.0f), new Rect2(Vector2.Zero, Size));
 
-        float throttle = (float)Math.Clamp(_vessel.Throttle, 0.0, 1.0);
-
         bool dry = _vessel.PropellantMass <= 0.0;
         bool burning = _vessel.CurrentThrust > 0.0;
 
@@ -242,6 +243,7 @@ public sealed partial class EnginePanel : Control {
             DrawCircle(mount, 1.4f, HudTheme.Faint);
 
             bool lit = _vessel.IsEngineLit(index);
+            float power = _vessel.Intact && !dry ? (float)_vessel.Active.EngineStates[index].Power : 0.0f;
             bool picked = index == _hovered || (index < _subjects.Count && _popover.Shows(_subjects[index]));
 
             // Shut is the quiet state, armed is legible, burning is the loud one. A dry stage warns
@@ -252,13 +254,13 @@ public sealed partial class EnginePanel : Control {
                 : burning ? HudTheme.Ink
                 : HudTheme.Dim;
 
-            if (lit && burning) {
+            if (power > 0.001f) {
 
-                DrawCircle(at, Bell - 2.0f, HudTheme.Ink * new Color(1.0f, 1.0f, 1.0f, 0.12f + 0.42f * throttle));
+                DrawCircle(at, Bell - 2.0f, HudTheme.Ink * new Color(1.0f, 1.0f, 1.0f, 0.12f + 0.42f * power));
 
             }
 
-            DrawArc(at, Bell - 2.0f, 0.0f, Mathf.Tau, 40, ink, lit && burning ? 2.0f : 1.3f, true);
+            DrawArc(at, Bell - 2.0f, 0.0f, Mathf.Tau, 40, ink, power > 0.001f ? 2.0f : 1.3f, true);
 
             // A shut engine is struck through, so its state reads without a legend.
             if (!lit) {

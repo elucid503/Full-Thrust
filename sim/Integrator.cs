@@ -9,6 +9,7 @@ public static class Integrator {
         // gravity, which does not.
         vessel.Aero = Aerodynamics.Compute(vessel, body, time);
 
+        vessel.AdvanceEngines(body, dt, false);
         StepAttitude(vessel, dt);
         StepTranslation(vessel, body, dt);
         StepThermal(vessel, dt);
@@ -18,11 +19,12 @@ public static class Integrator {
     // Body-frame Euler rates for a diagonal inertia; attitude still advances on a coasting trajectory.
     public static void StepAttitude(Vessel vessel, double dt) {
 
+        vessel.AdvanceActuators(dt);
         SpendRcs(vessel, dt);
 
         Vector3d inertia = vessel.Inertia;
         Vector3d rate = vessel.AngularVelocity;
-        Vector3d torque = vessel.ControlTorque + vessel.Aero.Torque + vessel.ExhaustTorque;
+        Vector3d torque = vessel.AppliedControlTorque + vessel.Aero.Torque + vessel.ExhaustTorque;
 
         Vector3d angularAcceleration = new Vector3d(
 
@@ -76,8 +78,10 @@ public static class Integrator {
 
         double thrust = vessel.CurrentThrust;
         double flow = vessel.CurrentMassFlow;
+        double available = flow > 0.0 ? Math.Min(1.0, vessel.PropellantMass / (flow * dt)) : 1.0;
+        flow *= available;
 
-        Vector3d push = vessel.Nose * thrust + vessel.RcsForce + vessel.Aero.Force + vessel.ExhaustForce;
+        Vector3d push = (vessel.Active.EngineCount > 0 ? vessel.Orientation.Rotate(vessel.EngineForce) : vessel.Nose * thrust) * available + vessel.RcsForce + vessel.Aero.Force + vessel.ExhaustForce;
 
         double mu = body.Mu;
 
@@ -96,7 +100,6 @@ public static class Integrator {
         vessel.Position = p0 + (k1.Velocity + (k2.Velocity + k3.Velocity) * 2.0 + k4.Velocity) * sixth;
         vessel.Velocity = v0 + (k1.Acceleration + (k2.Acceleration + k3.Acceleration) * 2.0 + k4.Acceleration) * sixth;
 
-        // ponytail: propellant is debited at the step boundary, so a tank empties up to one step late; sub-step the burn if that ever matters
         vessel.PropellantMass = Math.Max(0.0, vessel.PropellantMass - flow * dt);
 
         if (flow > 0.0) {

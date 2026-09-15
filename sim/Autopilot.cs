@@ -59,7 +59,7 @@ public sealed class Autopilot {
 
         }
 
-        double maxTorque = vessel.ControlTorqueLimit;
+        Vector3d maxTorque = vessel.ControlTorqueLimits;
 
         Vector3d manual = new Vector3d(
 
@@ -73,7 +73,7 @@ public sealed class Autopilot {
 
             Hold = AttitudeHold.Off;
 
-            vessel.ControlTorque = manual * maxTorque;
+            vessel.ControlTorque = new Vector3d(manual.X * maxTorque.X, manual.Y * maxTorque.Y, manual.Z * maxTorque.Z);
 
             return;
 
@@ -89,7 +89,7 @@ public sealed class Autopilot {
 
         Vector3d error = Hold == AttitudeHold.Stability ? Vector3d.Zero : PointingError(vessel);
 
-        vessel.ControlTorque = Brake(error, vessel.AngularVelocity, vessel.Inertia, maxTorque, dt);
+        vessel.ControlTorque = Brake(error, vessel.AngularVelocity, vessel.Inertia, maxTorque, dt, vessel.GimbalTorqueLimit > 0.0 ? vessel.Active.GimbalResponseSeconds : 0.0);
 
     }
 
@@ -166,26 +166,26 @@ public sealed class Autopilot {
 
     }
 
-    // Bang-bang with a braking-distance rate limit: no gains to tune, and it cannot overshoot.
-    private Vector3d Brake(Vector3d error, Vector3d rate, Vector3d inertia, double maxTorque, double dt) {
+    // Match braking to actuator response so delayed thrust cannot excite a limit cycle.
+    private Vector3d Brake(Vector3d error, Vector3d rate, Vector3d inertia, Vector3d maxTorque, double dt, double response) {
 
         return new Vector3d(
 
-            AxisTorque(error.X, rate.X, inertia.X, maxTorque, dt),
-            AxisTorque(error.Y, rate.Y, inertia.Y, maxTorque, dt),
-            AxisTorque(error.Z, rate.Z, inertia.Z, maxTorque, dt)
+            AxisTorque(error.X, rate.X, inertia.X, maxTorque.X, dt, response),
+            AxisTorque(error.Y, rate.Y, inertia.Y, maxTorque.Y, dt, response),
+            AxisTorque(error.Z, rate.Z, inertia.Z, maxTorque.Z, dt, response)
 
         );
 
     }
 
-    private double AxisTorque(double error, double rate, double inertia, double maxTorque, double dt) {
+    private double AxisTorque(double error, double rate, double inertia, double maxTorque, double dt, double response) {
 
         double acceleration = maxTorque / inertia;
 
-        double wanted = Math.Sign(error) * Math.Min(MaxSlewRate, Math.Sqrt(2.0 * acceleration * Math.Abs(error)) * Damping);
+        double wanted = Math.Sign(error) * Math.Min(MaxSlewRate, Math.Min(Math.Sqrt(2.0 * acceleration * Math.Abs(error)) * Damping, Math.Abs(error) / Math.Max(response * 4.0, dt)));
 
-        double demand = (wanted - rate) * inertia / dt;
+        double demand = (wanted - rate) * inertia / Math.Max(dt, response * 2.0);
 
         return Math.Clamp(demand, -maxTorque, maxTorque);
 
