@@ -33,6 +33,7 @@ public sealed partial class Forest : Node3D {
     public ScatterObstacles Obstacles { get; } = new(true);
 
     private CelestialBody _body;
+    private Terrain _terrain;
     private byte[] _biomes;
     private int _width;
     private int _height;
@@ -45,7 +46,8 @@ public sealed partial class Forest : Node3D {
     private readonly HashSet<Key> _wanted = new();
     private readonly List<Key> _queue = new();
     private readonly List<Key> _remove = new();
-    private Task<Grove> _job;
+    private Task<Grove[]> _job;
+    private int _batchCount;
     private readonly CancellationTokenSource _cancellation = new();
     private Vector3d _lastEye;
     private Vector3d? _physicsFocus;
@@ -53,13 +55,14 @@ public sealed partial class Forest : Node3D {
 
     public int TreeCount { get; private set; }
     public int CellCount => _groves.Count;
-    public int Pending => _queue.Count + (_job == null ? 0 : 1);
+    public int Pending => _queue.Count + (_job == null ? 0 : _batchCount);
     public int Failures { get; private set; }
 
     public void Build(CelestialBody body, Texture2D biomes, bool distant = false) {
 
         _distant = distant;
         _body = body;
+        _terrain = body.Terrain;
         using Image image = biomes.GetImage();
         if (image.IsCompressed()) {
 
@@ -118,10 +121,9 @@ public sealed partial class Forest : Node3D {
 
             if (_job.IsCompletedSuccessfully) {
 
-                Grove grove = _job.Result;
-                if (_wanted.Contains(grove.Key)) {
+                foreach (Grove grove in _job.Result) {
 
-                    Adopt(grove);
+                    if (_wanted.Contains(grove.Key)) { Adopt(grove); }
 
                 }
 
@@ -141,9 +143,22 @@ public sealed partial class Forest : Node3D {
         }
         if (_job == null && _queue.Count > 0) {
 
-            Key key = _queue[0];
-            _queue.RemoveAt(0);
-            _job = Task.Run(() => Generate(key, _cancellation.Token));
+            // Fill several cells per worker handoff while the loading cover hides uploads.
+            _batchCount = Math.Min(_queue.Count, SceneTransition.Loading ? 8 : 1);
+            Key[] batch = _queue.GetRange(0, _batchCount).ToArray();
+            _queue.RemoveRange(0, _batchCount);
+            _job = Task.Run(() => {
+
+                Grove[] result = new Grove[batch.Length];
+                for (int i = 0; i < batch.Length; i++) {
+
+                    _cancellation.Token.ThrowIfCancellationRequested();
+                    result[i] = Generate(batch[i], _cancellation.Token);
+
+                }
+                return result;
+
+            });
 
         }
         Basis turn = new Basis(Vector3.Up, (float)_body.SpinAt(time));
@@ -309,10 +324,6 @@ public sealed partial class Forest : Node3D {
 
             return BuildGrove(key, cancellation);
 
-        } catch (OperationCanceledException) {
-
-            return new Grove { Key = key, Anchor = Vector3d.Zero, Trees = Array.Empty<Transform3D>(), Colours = Array.Empty<Color>() };
-
         } catch (ObjectDisposedException) {
 
             return new Grove { Key = key, Anchor = Vector3d.Zero, Trees = Array.Empty<Transform3D>(), Colours = Array.Empty<Color>() };
@@ -328,7 +339,7 @@ public sealed partial class Forest : Node3D {
     private Grove BuildGrove(Key key, CancellationToken cancellation) {
 
         Vector3d centre = Centre(key);
-        Vector3d anchor = centre * (_body.Radius + _body.Terrain.Elevation(centre));
+        Vector3d anchor = centre * (_body.Radius + _terrain.Elevation(centre));
         List<Transform3D> trees = new();
         List<Color> colours = new();
         uint seed = unchecked((uint)(key.Row * 73856093) ^ (uint)(key.Column * 19349663));
@@ -352,7 +363,7 @@ public sealed partial class Forest : Node3D {
                     continue;
 
                 }
-                double height = _body.Terrain.Elevation(direction);
+                double height = _terrain.Elevation(direction);
                 double snowLine = 950.0 + (80.0 - 950.0) * Smooth(0.3, 0.96, Math.Abs(direction.Z));
                 if (height < 1.0 || height > snowLine - 50.0 || Cleared(direction)) {
 
@@ -361,8 +372,8 @@ public sealed partial class Forest : Node3D {
                 }
                 Vector3d tangent = Vector3d.Cross(Math.Abs(direction.Z) < 0.9 ? Vector3d.UnitZ : Vector3d.UnitX, direction).Normalized;
                 Vector3d across = Vector3d.Cross(direction, tangent);
-                double east = _body.Terrain.Elevation((direction * _body.Radius + tangent * 12.0).Normalized);
-                double north = _body.Terrain.Elevation((direction * _body.Radius + across * 12.0).Normalized);
+                double east = _terrain.Elevation((direction * _body.Radius + tangent * 12.0).Normalized);
+                double north = _terrain.Elevation((direction * _body.Radius + across * 12.0).Normalized);
                 if (Math.Abs(east - height) + Math.Abs(north - height) > 9.0) {
 
                     continue;
@@ -384,7 +395,7 @@ public sealed partial class Forest : Node3D {
 
     }
 
-    private bool Cleared(Vector3d direction) => Landscape.OnPavement(direction, _body.Terrain, _body.Radius, 0.6);
+    private bool Cleared(Vector3d direction) => Landscape.OnPavement(direction, _terrain, _body.Radius, 0.6);
 
     private void Adopt(Grove grove) {
 

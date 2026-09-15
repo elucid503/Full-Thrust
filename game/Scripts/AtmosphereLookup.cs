@@ -8,8 +8,13 @@ public static class AtmosphereLookup {
 
     public const int Width = 256;
     public const int Height = 128;
+    private static (double, double, double, double, double, double) _key;
+    private static ImageTexture _cached;
 
     public static ImageTexture Build(double radius, double top, double rayleigh, double mie, double ozone, double ozoneWidth) {
+
+        var key = (radius, top, rayleigh, mie, ozone, ozoneWidth);
+        if (GodotObject.IsInstanceValid(_cached) && _key == key) { return _cached; }
 
         float[] pixels = new float[Width * Height * 3];
 
@@ -34,7 +39,9 @@ public static class AtmosphereLookup {
         byte[] data = new byte[pixels.Length * sizeof(float)];
         Buffer.BlockCopy(pixels, 0, data, 0, data.Length);
         using Image image = Image.CreateFromData(Width, Height, false, Image.Format.Rgbf, data);
-        return ImageTexture.CreateFromImage(image);
+        _key = key;
+        _cached = ImageTexture.CreateFromImage(image);
+        return _cached;
 
     }
 

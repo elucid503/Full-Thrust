@@ -119,3 +119,34 @@ This is a single-scene measurement; it is not an isolated tree cost or a hardwar
 The mipmapped imported-tree pass measured 5.95 ms under the same setup before adding mesh LODs.
 
 With mesh LODs enabled, the final viewport GPU mean was 6.13 ms (60 samples, same scene).
+
+# September terrain and transition polish
+
+Coastal relief approaches the datum continuously instead of being clipped at the shoreline.
+Steep faces use triplanar rock color and normals, with extra texture reads only for resolved steep
+land. Noise-contour canals have been removed; smaller coves, broad marsh depressions and restrained
+bars retain surveyed waterways. Monotone cubic survey sampling rounds sharp coastal corners while
+preserving sample heights; collision and fragment shading use the same curve.
+
+Map view has its own coarse terrain tree. The flight tree and vegetation keep tracking the flight
+camera while the map is open. A loading cover waits for terrain, vegetation and cloud textures,
+then fades in. Simulation time stays still during loading; floating-origin rebasing continues.
+
+Restart shares immutable survey storage, the shoreline GPU texture, authored tree meshes and the
+atmosphere lookup. Launch plateaus remain local to each flight. Vegetation workers return up to
+eight cells per handoff during loading and keep their usual single-cell rate during normal flight.
+Workers retain their own flight's terrain reference and canceled work is never adopted.
+
+TransitionChecks.tscn verifies retained patches, repeated map round trips, free-camera restoration
+after a distant paused move, loading-time simulation hold, and a real scene restart. Local restart
+checks measured 5.7-9.2 seconds; map-to-flight returns took 0.25-0.36 seconds including the fade.
+These timings depend on rendering load. PolishVisualChecks.tscn captures coastal water, southern
+Florida and island water. CoastalLandformChecks.tscn compares procedural detail and curved survey
+sampling against the GPU; maximum measured curved-survey disagreement was 0.038 metres.
+
+Native-crash validation: the full-scene capture encountered intermittent AccessViolation failures
+inside terrain/vegetation calculations on the installed .NET 10 host. A process with tiered JIT
+disabled completed all three captures with zero worker failures. The game runtime configuration
+now selects single-tier compilation; the following normal launch also completed those captures.
+This is a runtime workaround supported by local reproduction, not a diagnosis of an upstream bug.
+Configuration reference: https://learn.microsoft.com/en-us/dotnet/core/runtime-config/compilation

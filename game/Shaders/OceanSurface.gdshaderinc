@@ -4,6 +4,8 @@ uniform vec3 ripple_up;
 uniform vec4 ripple_detail_origin0 = vec4(0.0, 0.0, 0.0, 0.8);
 uniform vec4 ripple_detail_origin1 = vec4(0.0, 0.0, 0.0, 0.256);
 uniform vec4 ripple_detail_origin2 = vec4(0.0, 0.0, 0.0, 0.08192);
+uniform vec4 ripple_detail_origin3 = vec4(0.0, 0.0, 0.0, 6.3);
+uniform vec4 ripple_detail_origin4 = vec4(0.0, 0.0, 0.0, 23.7);
 uniform float ripple_detail_strength = 1.0;
 
 float ocean_hash(ivec3 cell) {
@@ -71,6 +73,13 @@ vec4 ocean_ripples(vec3 local_position, float footprint) {
     vec4 detail = ocean_detail_band(local_position, ripple_detail_origin0, footprint, 0.065 * ripple_detail_strength)
         + ocean_detail_band(local_position, ripple_detail_origin1, footprint, 0.047 * ripple_detail_strength)
         + ocean_detail_band(local_position, ripple_detail_origin2, footprint, 0.026 * ripple_detail_strength);
+    float distant = smoothstep(0.1, 0.8, footprint);
+    if (distant > 0.0) {
+
+        detail += (ocean_detail_band(local_position, ripple_detail_origin3, footprint, 0.065 * ripple_detail_strength)
+            + ocean_detail_band(local_position, ripple_detail_origin4, footprint, 0.045 * ripple_detail_strength)) * distant;
+
+    }
     return vec4(gradient, unresolved) + detail;
 
 }

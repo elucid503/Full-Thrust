@@ -6,7 +6,10 @@ namespace FullThrust.Game;
 
 /// <summary>Bake the artist's node transforms into one indexed, instancing-friendly surface.</summary>
 public static class TreeAssets {
+    private static readonly Dictionary<(string, int), ArrayMesh> Meshes = new();
+
     public static ArrayMesh Load(string name, int species) {
+        if (Meshes.TryGetValue((name, species), out ArrayMesh cached) && GodotObject.IsInstanceValid(cached)) { return cached; }
         Node3D scene = GD.Load<PackedScene>($"res://Assets/Trees/{name}.fbx").Instantiate<Node3D>();
         List<(Mesh Mesh, Transform3D Transform)> parts = new();
         void Collect(Node node, Transform3D parent) {
@@ -56,6 +59,7 @@ public static class TreeAssets {
         ArrayMesh result = imported.GetMesh();
         result.SetMeta("lod_count", imported.GetSurfaceLodCount(0));
         scene.Free();
+        Meshes[(name, species)] = result;
         return result;
     }
 }

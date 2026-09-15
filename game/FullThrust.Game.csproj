@@ -13,6 +13,8 @@
   <ItemGroup>
     <ProjectReference Include="../sim/FullThrust.Sim.csproj" />
     <RuntimeHostConfigurationOption Include="System.Runtime.LegacyCorruptedStateExceptionPolicy" Value="true" />
+    <!-- Single-tier JIT was stable in local terrain-worker native-crash reproductions. -->
+    <RuntimeHostConfigurationOption Include="System.Runtime.TieredCompilation" Value="false" />
   </ItemGroup>
 
 </Project>

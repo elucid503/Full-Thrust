@@ -2,6 +2,9 @@ namespace FullThrust.Sim;
 
 public static class ExhaustInteraction {
 
+    // Effective coupling allows most of the impinging jet to escape around an open stage.
+    public const double MomentumCoupling = 0.12;
+
     public readonly record struct Hit(Vessel Vessel, Vector3d Point, double Distance);
     public readonly record struct Emitter(Vector3d Position, Vector3d Axis, double Radius, double Length, double Spread, double Thrust);
     public readonly record struct SurfaceHit(Vector3d Point, Vector3d Normal, double Distance, bool Water);
@@ -62,7 +65,7 @@ public static class ExhaustInteraction {
 
             if (result is not Hit hit || !hit.Vessel.Intact || hit.Distance < 0.0 || hit.Distance > emitter.Length) { continue; }
 
-            Vector3d force = direction * (emitter.Thrust / samples);
+            Vector3d force = direction * (emitter.Thrust * MomentumCoupling / samples);
             hit.Vessel.ExhaustForce += force;
             hit.Vessel.ExhaustTorque += hit.Vessel.Orientation.Conjugate.Rotate(Vector3d.Cross(hit.Point - hit.Vessel.Position, force));
 

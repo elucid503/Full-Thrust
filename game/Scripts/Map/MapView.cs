@@ -25,6 +25,7 @@ public sealed partial class MapView : Node3D {
     public static MapView Active { get; private set; }
 
     public bool Open { get; private set; }
+    public bool ReturnToFreeCamera { get; private set; }
 
     public Camera3D Camera => _camera;
 
@@ -117,6 +118,10 @@ public sealed partial class MapView : Node3D {
 
     public void Toggle() {
 
+        if (SceneTransition.Loading) { return; }
+        SceneTransition.Begin(this);
+        if (!Open) { ReturnToFreeCamera = FreeCamera.Flying; }
+
         Open = !Open;
 
         if (Open) {
@@ -138,7 +143,8 @@ public sealed partial class MapView : Node3D {
 
         if (!Open) {
 
-            OrbitCamera.Active?.MakeCurrent();
+            if (ReturnToFreeCamera) { FreeCamera.Active.MakeCurrent(); }
+            else { OrbitCamera.Active?.MakeCurrent(); }
 
         }
 

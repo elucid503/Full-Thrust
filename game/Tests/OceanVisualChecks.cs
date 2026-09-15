@@ -13,6 +13,7 @@ public sealed partial class OceanVisualChecks : Node {
     private int _frames;
     private double _gpu;
     private int _samples;
+    private bool _aerial;
 
     public override void _Ready() {
 
@@ -35,7 +36,8 @@ public sealed partial class OceanVisualChecks : Node {
         }
         Vector3d east = Vector3d.Cross(Vector3d.UnitZ, shore).Normalized;
         Vector3d north = Vector3d.Cross(shore, east);
-        Vector3d location = shore * (flight.Body.Radius + 5.0);
+        _aerial = Array.IndexOf(OS.GetCmdlineUserArgs(), "--aerial") >= 0;
+        Vector3d location = shore * (flight.Body.Radius + (_aerial ? 2200.0 : 5.0));
         FreeCamera camera = FreeCamera.Active;
         camera.Take(OrbitCamera.Active);
         const BindingFlags fields = BindingFlags.Instance | BindingFlags.NonPublic;
@@ -43,7 +45,7 @@ public sealed partial class OceanVisualChecks : Node {
         Vector3 vertical = Frames.Direction(shore);
         Frames.Horizon(vertical, out Vector3 side, out Vector3 ahead);
         Vector3 forward = Frames.Direction((-east * 0.65 + north * 0.76).Normalized);
-        bool glint = Array.IndexOf(OS.GetCmdlineUserArgs(), "--glint") >= 0;
+        bool glint = _aerial || Array.IndexOf(OS.GetCmdlineUserArgs(), "--glint") >= 0;
         if (glint) { forward = (Main.SunDirection - vertical * Main.SunDirection.Dot(vertical)).Normalized(); }
         typeof(FreeCamera).GetField("_yaw", fields).SetValue(camera, Mathf.Atan2(-forward.Dot(side), forward.Dot(ahead)));
         typeof(FreeCamera).GetField("_pitch", fields).SetValue(camera, glint ? -Mathf.Asin(Main.SunDirection.Dot(vertical)) : -0.13f);
@@ -66,15 +68,16 @@ public sealed partial class OceanVisualChecks : Node {
         if (_frames == 410) {
 
             using Image shot = GetViewport().GetTexture().GetImage();
-            shot.SavePng("res://.artifacts/ocean-fair.png");
+            shot.SavePng(_aerial ? "res://.artifacts/ocean-aerial-fair.png" : "res://.artifacts/ocean-fair.png");
             GD.Print($"Ocean fair GPU {_gpu / _samples:F2} ms");
             Flight.Active.Body.Weather.SetPreset(WeatherPreset.Gale, -500.0);
+            if (_aerial) { _main.GetNode<Node3D>("Planet/Clouds").Hide(); }
 
         }
         if (_frames == 580) {
 
             using Image shot = GetViewport().GetTexture().GetImage();
-            shot.SavePng("res://.artifacts/ocean-gale.png");
+            shot.SavePng(_aerial ? "res://.artifacts/ocean-aerial-gale.png" : "res://.artifacts/ocean-gale.png");
             DebugPanel panel = _main.GetNode<DebugPanel>("Debug");
             panel._UnhandledKeyInput(new InputEventKey { Keycode = Key.F1, Pressed = true });
 

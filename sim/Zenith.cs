@@ -19,11 +19,10 @@ public static class Zenith {
 
     public const double StageTop = PayloadDatum;
 
-    public const double DryMass = 3700.0;
+    public const double DryMass = 9000.0;
 
-    // The complete engine cluster and its turbomachinery, carried where it sits rather than smeared over
-    // the shell: on a stage this size the engine is nearly half the dry mass on the bottom metre.
-    public const double EngineMass = 1500.0;
+    // Cluster hardware stays concentrated at the thrust structure as the tanks empty.
+    public const double EngineMass = 3000.0;
 
     public const int EngineCount = 6;
 
@@ -64,9 +63,7 @@ public static class Zenith {
 
     private const int BellStations = 14;
 
-    // Sea level thrust against a loaded stack of ninety-eight tonnes: a liftoff thrust-to-weight of
-    // 1.56. Lower than this and the burn is long enough that gravity takes more of it than the drag
-    // saved is worth, which is exactly what the first flown ascent did at 1.3.
+    // Retain launch authority while the heavier structure reduces late-burn acceleration.
     public const double ThrustNewtons = 1_500_000.0;
     public const double SpecificImpulse = 300.0;
 
@@ -236,7 +233,7 @@ public static class Zenith {
 
             // A metre-and-a-half powerhead sitting on the thrust structure: a solid of that size
             // about its own centre, a little under the deck it bolts to.
-            Ballast = new MassProperties(EngineMass, EngineDeck - 0.55, new Vector3d(420.0, 420.0, 320.0)),
+            Ballast = new MassProperties(EngineMass, EngineDeck - 0.55, new Vector3d(840.0, 840.0, 640.0)),
 
             PropellantMass = capacity,
             PropellantCapacity = capacity,

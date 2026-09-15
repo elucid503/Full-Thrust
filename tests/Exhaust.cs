@@ -40,13 +40,13 @@ public static partial class Program {
         }
 
         ExhaustInteraction.Accumulate(emitter, Plane);
-        Close("intercepted momentum pushes away from the nozzle", target.ExhaustForce, -Vector3d.UnitZ * 61_000.0, 1.0e-7);
-        Near("intercepted momentum never exceeds engine thrust", target.ExhaustForce.Length, emitter.Thrust, 1.0e-7);
+        Close("intercepted momentum pushes away from the nozzle", target.ExhaustForce, -Vector3d.UnitZ * 7_320.0, 1.0e-7);
+        Expect("impingement transfers a small bounded share of thrust", target.ExhaustForce.Length / emitter.Thrust is > 0.05 and < 0.20, $"{target.ExhaustForce.Length} N");
 
         target.ExhaustForce = Vector3d.Zero;
         target.ExhaustTorque = Vector3d.Zero;
         ExhaustInteraction.Accumulate(emitter with { Position = nozzle + Vector3d.UnitX * 3.0 }, Plane);
-        Expect("off-centre exhaust generates target torque", target.ExhaustTorque.Y > 170_000.0, $"got {target.ExhaustTorque.Y}");
+        Expect("off-centre exhaust generates bounded target torque", target.ExhaustTorque.Y is > 20_000.0 and < 24_000.0, $"got {target.ExhaustTorque.Y}");
         Vector3d velocity = target.Velocity;
         Integrator.Step(target, new CelestialBody { Radius = 100.0, Mu = 0.0 }, 0.01);
         Expect("integrator applies exhaust acceleration", target.Velocity.Z < velocity.Z, $"got {target.Velocity.Z}");

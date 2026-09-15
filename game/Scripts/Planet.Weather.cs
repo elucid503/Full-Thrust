@@ -41,9 +41,9 @@ public sealed partial class Planet {
         material.SetShaderParameter("ripple_states", states);
         material.SetShaderParameter("ripple_up", Frames.Direction(Weather.Origin));
         material.SetShaderParameter("ripple_detail_strength", (float)Math.Pow(Math.Max(wind, 0.15) / 10.0, 0.55));
-        for (int band = 0; band < 3; band++) {
+        for (int band = 0; band < 5; band++) {
 
-            double scale = 0.8 * Math.Pow(0.32, band);
+            double scale = band switch { 3 => 6.3, 4 => 23.7, _ => 0.8 * Math.Pow(0.32, band) };
             Vector3d drift = Weather.Along * (time * (0.16 + band * 0.07)) + Weather.Axis * (time * 0.053);
             Vector3d cell = (fixedOrigin - drift) / scale;
             Vector3 offset = Frames.Direction(new Vector3d(WrapCell(cell.X), WrapCell(cell.Y), WrapCell(cell.Z)));

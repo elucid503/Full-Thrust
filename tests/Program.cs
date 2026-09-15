@@ -412,6 +412,13 @@ public static partial class Program {
         Expect("the stack is slender", vessel.Inertia.X > vessel.Inertia.Z * 4.0, $"transverse {vessel.Inertia.X:F0}, axial {vessel.Inertia.Z:F0}");
 
         Near("dry mass is the three stages", vessel.DryMass, Zenith.DryMass + Meridian.DryMass + Aegis.DryMass, 1e-9);
+        Stage lightBooster = Zenith.BuildStage();
+        lightBooster.PropellantMass *= 0.05;
+        Vessel landingBooster = new Vessel("landing booster", new[] { lightBooster }) { Throttle = 1.0 };
+        for (int engine = 1; engine < lightBooster.EngineCount; engine++) { lightBooster.SetEngine(engine, false); }
+        double landingTwr = landingBooster.CurrentThrust / (landingBooster.Mass * Home.SurfaceGravity);
+        Expect("one booster engine at five percent fuel has manageable TWR", landingTwr is > 1.5 and < 2.4, $"{landingTwr:F2}");
+        Near("dry hardware remains in integrated mass", lightBooster.Properties.Mass, landingBooster.Mass, 1e-8);
         Near("attitude authority is every cluster", vessel.ThrusterTorqueLimit, StackTorque, 1e-9);
 
         // A shut engine has nothing to swing, so a coasting stack is on its thrusters alone.

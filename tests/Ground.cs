@@ -64,6 +64,27 @@ public static partial class Program {
         }
 
         Vector3d coastProbe = Site(28.52, -80.55);
+        Terrain session = terrain.CreateSession();
+        Expect("restart reuses immutable survey storage", session.SharesSurvey(terrain), "survey copied");
+        session.Add(new Terrain.Plateau { Centre = coastProbe, Height = 100.0, InnerRadius = 10.0, OuterRadius = 20.0 });
+        Near("session terrain edits stay isolated", terrain.Plateaus.Count, 0, 0);
+        Near("another restart starts without old plateaus", session.CreateSession().Plateaus.Count, 0, 0);
+        int shoreSamples = 0;
+        for (int i = 0; i < 1000; i++) {
+
+            Vector3d sample = Site(28.52, -80.70 + i * 0.0003);
+            double height = terrain.Elevation(sample, 0.0, out double coast);
+            if (Math.Abs(coast) >= 2.0) { continue; }
+            shoreSamples++;
+            if (Math.Abs(height - coast) > 0.05 || height * coast < 0.0) {
+
+                Expect("coastal relief joins the shoreline without a wall", false, $"{height:F3} m over {coast:F3} m coast");
+                break;
+
+            }
+
+        }
+        Expect("shoreline continuity probes cover shallow terrain", shoreSamples > 50, $"{shoreSamples} samples");
         double detailedGround = terrain.Elevation(coastProbe, 0.0, out double closeCoast);
         terrain.Elevation(coastProbe, 1000.0, out double distantCoast);
         Near("shoreline reference is independent of terrain detail LOD", closeCoast, distantCoast, 1e-12);
@@ -100,6 +121,19 @@ public static partial class Program {
     private static void ShorelineLandforms() {
 
         Section("shoreline landforms");
+        for (int i = 0; i <= 100; i++) {
+
+            double t = i / 100.0;
+            Near("survey interpolation retains linear slopes", CoastalLandforms.Interpolate(-10.0, 0.0, 10.0, 20.0, t), t * 10.0, 1e-10);
+            double peak = CoastalLandforms.Interpolate(-200.0, 1.0, 2.0, -200.0, t);
+            Expect("island interpolation cannot overshoot its survey", peak >= 1.0 && peak <= 2.0, $"{peak:F4}");
+            double ocean = CoastalLandforms.Interpolate(200.0, -2.0, -1.0, 200.0, t);
+            Expect("ocean interpolation cannot invent dry land", ocean >= -2.0 && ocean <= -1.0, $"{ocean:F4}");
+
+        }
+        double leftSlope = (CoastalLandforms.Interpolate(-3, -2, 1, 2, 1.0) - CoastalLandforms.Interpolate(-3, -2, 1, 2, 0.99999)) / 0.00001;
+        double rightSlope = (CoastalLandforms.Interpolate(-2, 1, 2, 3, 0.00001) - CoastalLandforms.Interpolate(-2, 1, 2, 3, 0.0)) / 0.00001;
+        Near("shoreline slope is continuous across survey cells", leftSlope, rightSlope, 0.0001);
         double minimum = double.MaxValue;
         double maximum = double.MinValue;
         for (int i = 0; i < 48; i++) {
@@ -111,6 +145,7 @@ public static partial class Program {
             Near("coast is deterministic", elevation, CoastalLandforms.Elevation(direction, Home.Radius, 0.0), 0.0);
             Near("deep ocean unaffected", CoastalLandforms.Elevation(direction, Home.Radius, -40.0), -40.0, 0.0);
             Near("inland survey unaffected", CoastalLandforms.Elevation(direction, Home.Radius, 40.0), 40.0, 0.0);
+            Expect("coastal detail cannot carve canals through two metre land", CoastalLandforms.Elevation(direction, Home.Radius, 2.0) > 0.0, "artificial canal");
 
         }
         Expect("shore refinement creates coves and headlands", minimum < -0.5 && maximum > 0.5, $"{minimum:F2} to {maximum:F2}");

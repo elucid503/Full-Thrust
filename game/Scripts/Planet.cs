@@ -23,6 +23,10 @@ public sealed partial class Planet : Node3D {
     private CelestialBody _body;
 
     private Ground _ground;
+    private Ground _mapGround;
+    private bool _mapOpen;
+    private static Terrain _shorelineSurvey;
+    private static Texture2D _sharedShoreline;
     private Forest _forest;
     private Forest _canopy;
     private GroundScatter _scatter;
@@ -52,8 +56,10 @@ public sealed partial class Planet : Node3D {
         if (Active == this) { Active = null; }
     }
 
-    public int WorkerFailures => _ground?.WorkerFailures ?? 0;
-    public int PendingJobs => _ground?.PendingJobs ?? 0;
+    public int WorkerFailures => (_ground?.WorkerFailures ?? 0) + (_mapGround?.WorkerFailures ?? 0);
+    public int PendingJobs => (_ground?.PendingJobs ?? 0) + (_mapGround?.PendingJobs ?? 0);
+    public bool SurfaceReady => (_mapOpen ? _mapGround : _ground)?.SurfaceReady == true
+        && (_mapOpen || (ForestPending == 0 && ScatterPending == 0));
 
     public int PatchCount => _ground?.PatchCount ?? 0;
     public int DeepestLevel => _ground?.DeepestLevel ?? 0;
@@ -121,6 +127,9 @@ public sealed partial class Planet : Node3D {
         AddChild(_ground);
 
         _ground.Build(body, _faces);
+        _mapGround = new Ground { Name = "MapSurface", Visible = false };
+        AddChild(_mapGround);
+        _mapGround.Build(body, _faces);
         _forest = new Forest { Name = "Forest" };
         AddChild(_forest);
         _forest.Build(body, GD.Load<Texture2D>("res://Assets/Planet/biomes.png"));
@@ -193,6 +202,12 @@ public sealed partial class Planet : Node3D {
 
     private static Texture2D Shoreline(Terrain terrain) {
 
+        if (terrain.SharesSurvey(_shorelineSurvey) && _sharedShoreline != null) {
+
+            return _sharedShoreline;
+
+        }
+
         int width = terrain.SurveyWidth;
         int height = terrain.SurveyHeight;
         byte[] pixels = new byte[width * height * 2];
@@ -210,7 +225,9 @@ public sealed partial class Planet : Node3D {
 
         // One shared half-float survey keeps coastlines independent of mesh LOD.
         using Image image = Image.CreateFromData(width, height, false, Image.Format.Rh, pixels);
-        return ImageTexture.CreateFromImage(image);
+        _shorelineSurvey = terrain;
+        _sharedShoreline = ImageTexture.CreateFromImage(image);
+        return _sharedShoreline;
 
     }
 
@@ -344,7 +361,7 @@ public sealed partial class Planet : Node3D {
 
     }
 
-    public void Sync(double time, Vector3d eye) {
+    public void Sync(double time, Vector3d eye, Vector3d? flightEye = null) {
 
         if (_shapeReady && _cloudShape != _sharedCloudShape) {
 
@@ -372,17 +389,22 @@ public sealed partial class Planet : Node3D {
         }
 
         SyncWeather(time);
-        _ground.Sync(time, eye);
+        _mapOpen = flightEye.HasValue;
+        _ground.Visible = !_mapOpen;
+        _mapGround.Visible = _mapOpen;
+        _ground.Sync(time, flightEye ?? eye);
+        if (_mapOpen) { _mapGround.Sync(time, eye); }
         _cloudShadows.Sync(_body, time, eye, Main.SunDirection);
         SyncEffects(time);
 
         Basis cloudFrame = CloudWind.Frame(_body, time);
-        float altitude = (float)Math.Max(0.0, _body.HeightAboveGround(eye, time));
+        Vector3d scatterEye = flightEye ?? eye;
+        float altitude = (float)Math.Max(0.0, _body.HeightAboveGround(scatterEye, time));
         float materialAltitude = (float)Math.Max(0.0, eye.Length - _body.Radius);
-        _forest.Sync(time, eye, altitude);
-        _canopy.Sync(time, eye, altitude);
-        _scatter.Sync(time, eye, altitude);
-        _broadScatter.Sync(time, eye, altitude);
+        _forest.Sync(time, scatterEye, altitude);
+        _canopy.Sync(time, scatterEye, altitude);
+        _scatter.Sync(time, scatterEye, altitude);
+        _broadScatter.Sync(time, scatterEye, altitude);
         double spin = _body.SpinAt(time);
         Vector2 rotation = new Vector2((float)Math.Cos(spin), (float)Math.Sin(spin));
 

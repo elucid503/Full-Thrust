@@ -42,6 +42,8 @@ public sealed partial class Main : Node3D {
 
     public override void _Ready() {
 
+        SceneTransition.Begin(this);
+
         _flight = GetNode<Flight>("Flight");
         _planet = GetNode<Planet>("Planet");
         _complex = GetNode<LaunchComplex>("Complex");
@@ -179,7 +181,10 @@ public sealed partial class Main : Node3D {
 
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
 
-        _flight.Advance(delta);
+        if (!SceneTransition.Loading) { _flight.Advance(delta); }
+        // Camera cuts and paused loading still need a precise floating origin.
+        Frames.Anchor = FreeCamera.Flying ? _free.Where : null;
+        Frames.Rebase(_flight.Vessel.Position);
 
         FlightMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 
@@ -206,7 +211,7 @@ public sealed partial class Main : Node3D {
 
         _camera.Sync(focus, Frames.Point(Vector3d.Zero), clearance);
 
-        _free.Fly(delta);
+        _free.Fly(SceneTransition.Loading ? 0.0 : delta);
         _map.Sync(delta);
 
         // Two bounded cascades retain trunk/rock contact shadows without covering kilometres of scatter.
@@ -235,7 +240,8 @@ public sealed partial class Main : Node3D {
         SyncSky(eye);
 
         long planetStarted = System.Diagnostics.Stopwatch.GetTimestamp();
-        _planet.Sync(_flight.Time, eye);
+        Vector3d flightEye = _map.ReturnToFreeCamera ? _free.Where : Frames.Origin + Frames.Sim(_camera.Eye);
+        _planet.Sync(_flight.Time, eye, _map.Open ? flightEye : null);
         PlanetMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - planetStarted) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
         _complex.Sync(_flight.Time, eye);
 

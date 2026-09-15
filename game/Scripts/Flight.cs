@@ -38,6 +38,7 @@ public sealed partial class Flight : Node {
     public static readonly double[] WarpFactors = { 1.0, 2.0, 5.0, 10.0, 50.0, 100.0, 1000.0 };
 
     public static Flight Active { get; private set; }
+    private static Terrain _survey;
 
     // Every tracked state represents the same mission time, whether burning or coasting.
     public sealed class Tracked {
@@ -90,6 +91,7 @@ public sealed partial class Flight : Node {
     public override void _Ready() {
 
         Active = this;
+        Frames.Anchor = null;
 
         Body = BodyCatalog.Home;
         Body.Terrain = Survey();
@@ -744,7 +746,7 @@ public sealed partial class Flight : Node {
     /// <summary>Starts the flight over. The one way back from a vehicle that has been lost.</summary>
     public void Restart() {
 
-        GetTree().ReloadCurrentScene();
+        SceneTransition.Restart(this);
 
     }
 
@@ -906,6 +908,8 @@ public sealed partial class Flight : Node {
 
     public override void _UnhandledKeyInput(InputEvent @event) {
 
+        if (SceneTransition.Loading) { return; }
+
         if (@event is not InputEventKey key || !key.Pressed || key.Echo) {
 
             return;
@@ -1037,6 +1041,8 @@ public sealed partial class Flight : Node {
     // disk. Sixty megabytes once at load; every patch of ground and every contact test reads it.
     private static Terrain Survey() {
 
+        if (_survey != null) { return _survey.CreateSession(); }
+
         using FileAccess file = FileAccess.Open("res://Assets/Planet/elevation.r16", FileAccess.ModeFlags.Read);
 
         if (file == null) {
@@ -1049,7 +1055,8 @@ public sealed partial class Flight : Node {
 
         using System.IO.MemoryStream stream = new System.IO.MemoryStream(file.GetBuffer((long)file.GetLength()));
 
-        return Terrain.Load(stream, BodyCatalog.Home.Radius);
+        _survey = Terrain.Load(stream, BodyCatalog.Home.Radius);
+        return _survey.CreateSession();
 
     }
 

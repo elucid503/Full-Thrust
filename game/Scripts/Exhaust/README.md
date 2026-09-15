@@ -68,3 +68,13 @@ Continuous-core tuning: cluster merging remains near the engines, while shared d
 Inside-plume performance: ray sampling scales smoothly from 12 samples inside the proxy to the authored budget one proxy width away. The continuous upstream core skips turbulent noise evaluation. At 1280x720, the same paused six-engine burn viewed axially from inside measured 34.2 ms GPU / 28 FPS before and 10.6-11.9 ms / 60-63 FPS after. Before/after captures: game/.artifacts/plume-inside-before.png and plume-inside-adaptive.png.
 
 Plume diameter correction: removed downstream core contraction and capped early expansion. The hot core now widens gradually throughout its reach. Merged Gaussian width includes twice the squared radial RMS nozzle offset, preserving the cluster second moment rather than narrowing it during merging. Verified the atmospheric cluster burn in game/.artifacts/plume-width.png; shader compilation and diff checks passed.
+
+September mass and contact polish: Zenith dry mass is 9,000 kg (including 3,000 kg of engine
+hardware); Meridian dry mass is 3,600 kg. Launch thrust and fuel capacity are unchanged. Dry mass
+continues through the same centre-of-mass and inertia calculations as fuel, with the Zenith engine
+inertia scaled to its new hardware mass. The simulation regression bounds one-engine booster TWR
+at five percent fuel between 1.5 and 2.4 while preserving full-stack launch authority.
+
+Exhaust impingement uses 12% effective momentum coupling to represent flow escaping around the
+struck vehicle. It is a gameplay coupling approximation, not a resolved fluid solution. Force and
+torque share the same factor and the existing bounded ray budget, hit geometry, and shutdown rules.

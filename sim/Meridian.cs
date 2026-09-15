@@ -20,10 +20,9 @@ public static class Meridian {
 
     public const double StageTop = 8.62;
 
-    public const double DryMass = 2400.0;
+    public const double DryMass = 3600.0;
 
-    // The engine is a fifth of the dry mass concentrated on the deck. Modelled where it sits rather
-    // than smeared over the shell, because a stage's centre of mass is mostly a question of it.
+    // Engine hardware is concentrated on the deck; tank and adapter mass follows the shell.
     public const double EngineMass = 520.0;
 
     public const double ShellMass = DryMass - EngineMass;

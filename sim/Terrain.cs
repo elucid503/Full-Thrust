@@ -98,6 +98,11 @@ public sealed class Terrain {
     public int SurveyWidth => _width;
     public int SurveyHeight => _height;
 
+    /// <summary>Shares the immutable survey while keeping launch-site modifications local to a flight.</summary>
+    public Terrain CreateSession() => new Terrain(_counts, _width, _height, _step, _floor, _radius);
+
+    public bool SharesSurvey(Terrain other) => other != null && ReferenceEquals(_counts, other._counts);
+
     public double SurveyElevation(int column, int row) {
 
         if ((uint)column >= _width || (uint)row >= _height) {
@@ -381,6 +386,19 @@ public sealed class Terrain {
         double lower = Count(left, bottom) + (Count(right, bottom) - Count(left, bottom)) * fx;
 
         double sampled = _floor + (upper + (lower - upper) * fy) * _step;
+        double smoothing = 1.0 - Smoothstep(8.0, 28.0, Math.Abs(sampled));
+        if (smoothing > 0.0 && _width >= 4 && _height >= 4) {
+
+            // Match fragment sampling without smoothing away small islands or inventing overshoot.
+            int before = (left + _width - 1) % _width;
+            int after = (right + 1) % _width;
+            double Row(int row) => CoastalLandforms.Interpolate(Count(before, row), Count(left, row),
+                Count(right, row), Count(after, row), fx);
+            double curved = _floor + CoastalLandforms.Interpolate(Row(Math.Clamp(y0 - 1, 0, _height - 1)),
+                Row(top), Row(bottom), Row(Math.Clamp(y0 + 2, 0, _height - 1)), fy) * _step;
+            sampled += (curved - sampled) * smoothing;
+
+        }
         double polar = Math.Min(v, 1.0 - v) * _height;
         if (polar < 0.5) {
 
@@ -395,9 +413,13 @@ public sealed class Terrain {
     private double Count(int x, int y) => _counts[y * _width + x];
 
     // Relief preserves the refined shoreline shared with the surface shader.
-    private static double PreserveCoast(double measured, double detailed) => measured >= 0.0
-        ? Math.Max(detailed, 0.01)
-        : Math.Min(detailed, -0.01);
+    private static double PreserveCoast(double measured, double detailed) {
+
+        // Relief must reach zero continuously instead of being cut into vertical walls at the shore.
+        double relief = (detailed - measured) * Smoothstep(0.0, 24.0, Math.Abs(measured));
+        return measured + Math.Clamp(relief, -Math.Abs(measured) * 0.9, Math.Abs(measured) * 0.9);
+
+    }
 
     private static double Square(double value) => value * value;
 

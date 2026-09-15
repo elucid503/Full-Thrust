@@ -156,6 +156,7 @@ public sealed partial class Ground : Node3D {
     private long _adoptionDeadline;
     public int WorkerFailures { get; private set; }
     public int PendingJobs => _jobs.Count;
+    public bool SurfaceReady { get; private set; }
 
     /// <summary>Patches standing in the scene, and how far the tree has gone down. Both are read
     /// straight out by the debug bridge, which is where the tuning is done from.</summary>
@@ -248,6 +249,7 @@ public sealed partial class Ground : Node3D {
 
         PatchCount = 0;
         DeepestLevel = 0;
+        SurfaceReady = true;
 
         foreach (Patch root in _roots) {
 
@@ -296,6 +298,7 @@ public sealed partial class Ground : Node3D {
         // opens a hole in the ground while four meshes are being built.
         if (patch.Children == null) {
 
+            SurfaceReady = false;
             Request(patch);
 
             if (_jobs.Count >= PendingLimit) {
@@ -309,6 +312,8 @@ public sealed partial class Ground : Node3D {
         }
 
         if (!patch.Grown) {
+
+            SurfaceReady = false;
 
             Request(patch);
 
@@ -402,11 +407,14 @@ public sealed partial class Ground : Node3D {
 
         if (patch.Job != null || _jobs.Count >= PendingLimit) {
 
+            SurfaceReady = false;
+
             return;
 
         }
 
         int face = patch.Face;
+        SurfaceReady = false;
 
         double s = patch.S;
         double t = patch.T;
@@ -442,6 +450,9 @@ public sealed partial class Ground : Node3D {
         patch.Instance = Assemble(surface, _materials[patch.Face]);
         patch.Instance.ExtraCullMargin = 12.0f;
         patch.Instance.SetInstanceShaderParameter("mesh_spacing", (float)(patch.Edge / Grid));
+        Vector3d anchor = surface.Anchor;
+        patch.Instance.SetInstanceShaderParameter("material_origin", new Vector3(
+            (float)(anchor.X % 4096.0), (float)(anchor.Z % 4096.0), (float)(-anchor.Y % 4096.0)));
 
         AddChild(patch.Instance);
 
@@ -530,6 +541,7 @@ public sealed partial class Ground : Node3D {
             patch.Instance.Transform = new Transform3D(turn, Frames.Point(_body.ToInertial(patch.Anchor, time)));
             float arrival = patch.ActivatedAt < 0.0 ? 0.0f : (float)Math.Clamp(1.0 - (Time.GetTicksMsec() * 0.001 - patch.ActivatedAt) / 0.3, 0.0, 1.0);
             float morph = Math.Max(arrival, patch.Coarseness);
+            if (arrival > 0.0f) { SurfaceReady = false; }
             if (morph != patch.LastMorph) {
 
                 patch.Instance.SetInstanceShaderParameter("lod_morph", morph);

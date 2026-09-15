@@ -2,6 +2,18 @@ namespace FullThrust.Sim;
 
 public static class CoastalLandforms {
 
+    /// <summary>A continuous-slope survey segment that stays between its two central samples.</summary>
+    public static double Interpolate(double a, double b, double c, double d, double t) {
+
+        double before = b - a;
+        double span = c - b;
+        double after = d - c;
+        double low = before * span > 0.0 ? 2.0 * before * span / (before + span) : 0.0;
+        double high = span * after > 0.0 ? 2.0 * span * after / (span + after) : 0.0;
+        return b + t * (low + t * (3.0 * span - 2.0 * low - high + t * (low + high - 2.0 * span)));
+
+    }
+
     public static double Elevation(Vector3d unit, double radius, double surveyed) {
 
         double influence = 1.0 - Smooth(8.0, 28.0, Math.Abs(surveyed));
@@ -24,12 +36,12 @@ public static class CoastalLandforms {
         double qx = px * (1.0 / 700.0) + region * 3.0;
         double qy = py * (1.0 / 700.0) - region * 2.0;
         double qz = pz * (1.0 / 700.0) + region;
-        double coves = (Value(qx, qy, qz) - 0.5) * 7.0 + (Value(px * (1.0 / 180.0), py * (1.0 / 180.0), pz * (1.0 / 180.0)) - 0.5) * 2.2;
+        double coves = (Value(qx, qy, qz) - 0.5) * 2.4 + (Value(px * (1.0 / 180.0), py * (1.0 / 180.0), pz * (1.0 / 180.0)) - 0.5) * 0.6;
         double wetland = (1.0 - Smooth(0.38, 0.62, region)) * (1.0 - Smooth(0.55, 0.80, Math.Abs(unit.Z)));
-        double creek = 1.0 - Smooth(0.02, 0.10, Math.Abs(Value(px * (1.0 / 310.0) + region * 2.0, py * (1.0 / 310.0), pz * (1.0 / 310.0) + region) - 0.5));
-        double tidal = -creek * wetland * 2.8 * (1.0 - Smooth(3.0, 9.0, Math.Abs(surveyed)));
+        // Broad marsh depressions preserve survey drainage without carving closed noise-contour canals.
+        double tidal = -wetland * 0.45 * (1.0 - Smooth(0.5, 2.0, Math.Abs(surveyed)));
         double bars = Math.Max(0.0, Math.Sin(-surveyed * 1.4 + Value(px * (1.0 / 240.0), py * (1.0 / 240.0), pz * (1.0 / 240.0)) * 4.0));
-        bars *= Smooth(-9.0, -5.0, surveyed) * (1.0 - Smooth(-1.0, 1.0, surveyed)) * 1.3;
+        bars *= Smooth(-9.0, -5.0, surveyed) * (1.0 - Smooth(-1.0, 1.0, surveyed)) * 0.35;
         return surveyed + (coves + tidal + bars) * influence;
 
     }

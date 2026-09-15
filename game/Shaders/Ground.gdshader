@@ -66,7 +66,8 @@ uniform float snow_band = 180.0;
 uniform vec3 shallow_colour : source_color = vec3(0.045, 0.155, 0.178);
 uniform vec3 deep_colour : source_color = vec3(0.003, 0.012, 0.029);
 
-uniform float shallow_depth = 52.0;
+uniform float shallow_depth = 12.0;
+uniform float shallow_strength : hint_range(0.0, 1.0) = 0.12;
 
 
 // A mirror-smooth sea aliases into sparkle the moment one wave falls under a pixel. The waves are
@@ -113,13 +114,16 @@ instance uniform float lod_morph : instance_index(0) = 0.0;
 #include "res://Shaders/CloudShadowSampling.gdshaderinc"
 
 instance uniform float mesh_spacing : instance_index(1) = 1.0;
+instance uniform vec3 material_origin : instance_index(2) = vec3(0.0);
 varying float ocean_room;
+varying vec3 material_position;
 
 #include "res://Shaders/LandscapeNoise.gdshaderinc"
 
 void vertex() {
 
     VERTEX += CUSTOM0.xyz * lod_morph;
+    material_position = VERTEX + material_origin;
     surface_elevation = CUSTOM0.w;
     world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
     ocean_room = 1.0 - step(0.0, CUSTOM0.w);
@@ -215,6 +219,7 @@ void fragment() {
     float slope = 1.0 - clamp(dot(world_normal, up), 0.0, 1.0);
 
     float bare = smoothstep(rock_slope_low, rock_slope_high, slope);
+    float cliff = smoothstep(0.28, 0.65, slope);
 
     float latitude = abs(up.y);
     float regional_snow_line = mix(950.0, 80.0, smoothstep(0.3, 0.96, latitude));
@@ -234,7 +239,7 @@ void fragment() {
     float vegetation = smoothstep(0.18, 0.80, biome.r + (mosaic - 0.5) * 0.5)
         * (1.0 - bare) * (1.0 - snow);
     float close_detail = close_detail_strength * (1.0 - smoothstep(300.0, 1200.0, length(VERTEX)))
-        * (1.0 - smoothstep(0.12, 1.2, footprint)) * (1.0 - sea) * (1.0 - snow);
+        * (1.0 - smoothstep(0.12, 1.2, footprint)) * (1.0 - sea) * (1.0 - snow) * (1.0 - cliff);
     vec2 detail_dx = dFdx(near_uv);
     vec2 detail_dy = dFdy(near_uv);
     vec2 metres_dx = dFdx(UV2);
@@ -345,6 +350,33 @@ void fragment() {
 
     }
 
+    // Vertical faces need height-bearing projections instead of stretched top-down terrain UVs.
+    if (cliff > 0.001 && detail > 0.001 && sea < 0.999) {
+
+        vec3 fixed_normal = vec3(terrain_rotation.x * world_normal.x - terrain_rotation.y * world_normal.z,
+            world_normal.y, terrain_rotation.y * world_normal.x + terrain_rotation.x * world_normal.z);
+        vec3 weights = pow(abs(fixed_normal), vec3(4.0));
+        weights /= max(dot(weights, vec3(1.0)), 0.0001);
+        vec3 p = material_position / detail_fine;
+        vec3 rock = texture(rock_colour, p.yz).rgb * weights.x
+            + texture(rock_colour, p.xz).rgb * weights.y + texture(rock_colour, p.xy).rgb * weights.z;
+        vec3 nx = texture(rock_normal, p.yz).rgb * 2.0 - 1.0;
+        vec3 ny = texture(rock_normal, p.xz).rgb * 2.0 - 1.0;
+        vec3 nz = texture(rock_normal, p.xy).rgb * 2.0 - 1.0;
+        vec3 bumped = normalize(vec3(nx.z * fixed_normal.x, nx.x + fixed_normal.y, nx.y + fixed_normal.z) * weights.x
+            + vec3(ny.x + fixed_normal.x, ny.z * fixed_normal.y, ny.y + fixed_normal.z) * weights.y
+            + vec3(nz.x + fixed_normal.x, nz.y + fixed_normal.y, nz.z * fixed_normal.z) * weights.z);
+        vec3 bumped_world = vec3(terrain_rotation.x * bumped.x + terrain_rotation.y * bumped.z,
+            bumped.y, -terrain_rotation.y * bumped.x + terrain_rotation.x * bumped.z);
+        vec3 bumped_view = mat3(VIEW_MATRIX) * bumped_world;
+        vec3 cliff_relief = vec3(dot(bumped_view, normalize(TANGENT)), dot(bumped_view, normalize(BINORMAL)), dot(bumped_view, normalize(NORMAL)));
+        float grain = dot(rock, vec3(0.2126, 0.7152, 0.0722));
+        vec3 cliff_colour = rock_tint * (1.0 + (grain - 0.5) * detail_contrast * 2.0);
+        ground = mix(ground, cliff_colour, cliff * detail);
+        relief = mix(relief, cliff_relief, cliff * detail);
+
+    }
+
     if (procedural > 0.0 && sea < 0.999) {
 
         local_ground = ground;
@@ -390,29 +422,31 @@ void fragment() {
         world_position.y, terrain_rotation.y * world_position.x + terrain_rotation.x * world_position.z);
     vec4 ripples = vec4(0.0);
     if (sea > 0.001) { ripples = ocean_ripples(local_fixed, footprint); }
-    vec3 fixed_gradient = geometric_wave.yzw + ripples.xyz * smoothstep(0.0, 0.5, depth);
+    float coherent_swell = 1.0 - smoothstep(0.5, 3.0, footprint);
+    vec3 fixed_gradient = geometric_wave.yzw * coherent_swell + ripples.xyz * smoothstep(0.0, 0.5, depth);
     vec3 wave_gradient = vec3(terrain_rotation.x * fixed_gradient.x + terrain_rotation.y * fixed_gradient.z,
         fixed_gradient.y, -terrain_rotation.y * fixed_gradient.x + terrain_rotation.x * fixed_gradient.z);
     wave_gradient += ocean_pressure(world_position - water_impact.xyz, up, water_impact.w, impact_strength).yzw;
-    vec2 wave_slope = vec2(dot(wave_gradient, normalize(mat3(INV_VIEW_MATRIX) * TANGENT)),
-        dot(wave_gradient, normalize(mat3(INV_VIEW_MATRIX) * BINORMAL)));
-    vec3 swell = vec3(-wave_slope, 1.0);
+    // Water must not inherit the sloping land normals of shoreline triangles.
+    vec3 water_view_normal = mat3(VIEW_MATRIX) * normalize(up - wave_gradient);
+    vec3 swell = vec3(dot(water_view_normal, normalize(TANGENT)),
+        dot(water_view_normal, normalize(BINORMAL)), dot(water_view_normal, normalize(NORMAL)));
     float swell_fade = 1.0 - smoothstep(swell_near, swell_far, footprint);
     float wave_variance = ripples.w;
+    for (int i = 0; i < 4; i++) {
+
+        float slope = min(ocean_modes[i].y, depth * 0.08) * ocean_modes[i].x / ocean_radius;
+        wave_variance += 0.25 * slope * slope * (1.0 - coherent_swell * coherent_swell);
+
+    }
     vec3 impact_offset = world_position - water_impact.xyz;
     impact_offset -= up * dot(impact_offset, up);
     float impact_distance = length(impact_offset);
     float impact = exp(-pow(impact_distance / max(water_impact.w * 1.6, 1.0), 2.0)) * impact_strength;
 
-    float sounding_step = max(fwidth(depth), 0.0001);
-
-    float shelf = 1.0 - smoothstep(shallow_depth * 0.5, shallow_depth * 3.0, sounding_step);
-
-    float shallow = exp(-depth / shallow_depth) * shelf;
-
-    float shoals = landscape_noise(habitat_position / 420.0);
-    vec3 shelf_colour = mix(shallow_colour, vec3(0.035, 0.105, 0.085), coastal * 0.6);
-    vec3 water = mix(deep_colour, shelf_colour * mix(0.75, 1.18, shoals), shallow * shallow);
+    float shore_tint = 1.0 - smoothstep(40.0, 180.0, max(-coast_distance, 0.0));
+    float shallow = exp(-depth / shallow_depth);
+    vec3 water = mix(deep_colour, shallow_colour, shallow * shallow * shallow_strength * shore_tint);
     float aeration = impact * smoothstep(0.0, 0.4, depth) * 0.55;
     water = mix(water, vec3(0.19, 0.28, 0.29), aeration);
 
@@ -442,8 +476,8 @@ void fragment() {
 
     float wind_roughness = mix(0.3, 1.25, clamp(ocean_wind / 25.0, 0.0, 1.0));
     float swell_roughness = sqrt(pow(mix(sea_roughness_far, sea_roughness_near, swell_fade) * wind_roughness, 2.0) + wave_variance);
-    vec3 dn_dx = dFdx(perturbed);
-    vec3 dn_dy = dFdy(perturbed);
+    vec3 dn_dx = dFdx(water_view_normal);
+    vec3 dn_dy = dFdy(water_view_normal);
     swell_roughness = sqrt(min(swell_roughness * swell_roughness + 0.35 * (dot(dn_dx, dn_dx) + dot(dn_dy, dn_dy)), 0.36));
     swell_roughness = mix(swell_roughness, 0.42, aeration);
 

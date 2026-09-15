@@ -12,7 +12,9 @@ cloud phase. Aerodynamics samples the same wind at each integration step. Surfac
 and water remain relative to the rotating planet, independently of atmospheric wind.
 
 `sim/Ocean.cs` and `Shaders/OceanField.gdshaderinc` evaluate the same four spherical
-gravity waves (roughly 16–128 m). Integer angular cycles close each wave around the planet;
+gravity waves (roughly 19–137 m). Irregular wavelength spacing, curved crests, and spatially
+varying packet strength prevent the aerial reflection from forming a repeating grid.
+Integer angular cycles close each wave around the planet;
 analytical gradients and orbital velocities drive shading and hull interaction. CPU-reduced
 time phases retain precision during long missions. Wave directions spread around the wind;
 amplitudes and small-wave roughness respond to sea state. Each component is limited to 8%
@@ -25,16 +27,26 @@ texture, breaking up the long regular ridges in reflections. Their time and orig
 reduced in doubles before the shader uses small local coordinates. Camera movement and
 floating-origin rebases therefore preserve the pattern. Unresolved wave slopes contribute to
 roughness; the specular lobe no longer forces a 0.158 minimum effective roughness on water.
+As the pixel footprint grows, 6.3 m and 23.7 m irregular bands take over distant normals.
+Coherent swell slopes blend into roughness between 0.5 and 3 m per pixel, preventing
+the aerial sun reflection from resolving only four repetitive wave trains. This adds no textures.
 
 The dispersion uses the deep-water gravity-wave relation described in
 [NOAA's wave measurement procedures](https://www.ndbc.noaa.gov/wavemeas.pdf).
 The shoreline is fixed at the datum. There is no tide or shoreline wash. Every fragment
 uses the same geographic elevation field; it does not blend with interpolated vertex heights
-as mesh LOD changes. Four texel fetches with full-precision interpolation avoid the hardware
-filter's quantized shoreline steps, without larger textures or extra geometry.
+as mesh LOD changes. Near sea level, monotone cubic survey interpolation rounds cell corners
+without overshooting the survey or removing its island peaks. Physics uses the same curve.
+The coastal path uses 16 texel fetches, blending back to four full-precision bilinear fetches
+between 8 and 28 metres from sea level. No vertex texture fetches or extra geometry are added.
 The wet-sand band is static. Offshore waves taper to zero at the coast
 and cannot flood dry land. This does not model beach erosion, refracting/breaking surf,
 rain, lightning, or a circulating ocean.
+
+Water normals follow the ocean's radial surface and wave gradient even on triangles next to
+sloping land. Roughness derivatives use that same normal, avoiding reflection bands shaped like
+terrain triangles. Shallow tint is limited to 12% strength, a 12-metre depth scale, and a shore
+distance fade from 40 to 180 metres. It no longer paints a green shelf across broad shallow areas.
 
 Water exhaust contact uses a small Gaussian pressure depression, local aeration, and a low,
 wind-swept spray sheet. It fades with a 0.25-second time constant after contact stops and

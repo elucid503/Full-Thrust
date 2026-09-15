@@ -17,9 +17,9 @@ public static class Ocean {
 
     public static Wave Component(CelestialBody body, double time, int index) {
 
-        double spread = index switch { 1 => 0.32, 2 => -0.4, 3 => 0.65, _ => 0.0 };
+        double spread = index switch { 1 => 0.57, 2 => -0.68, 3 => 1.1, _ => 0.0 };
         Vector3d along = Weather.Along * Math.Cos(spread) + Weather.Axis * Math.Sin(spread);
-        double wavelength = 128.0 / Math.Pow(2.0, index);
+        double wavelength = index switch { 1 => 79.0, 2 => 43.0, 3 => 19.0, _ => 137.0 };
         double cycles = Math.Round(Math.Tau * body.Radius / wavelength);
         double speed = body.Weather?.SeaSpeedAt(time) ?? 10.0;
         double strength = 0.04 + 0.96 * Math.Pow(speed / 10.0, 1.5);
@@ -48,7 +48,17 @@ public static class Ocean {
             double x = Vector3d.Dot(up, Weather.Origin);
             double y = Vector3d.Dot(up, wave.Along);
             double radiusSquared = x * x + y * y;
-            double phase = wave.Cycles * Math.Atan2(y, x) + wave.Phase;
+            Vector3d across = Vector3d.Cross(Weather.Origin, wave.Along);
+            double z = Vector3d.Dot(up, across);
+            Vector3d acrossGradient = (across - up * z) / body.Radius;
+            Vector3d alongGradient = (wave.Along - up * y) / body.Radius;
+            double bendCycles = Math.Round(wave.Cycles * 0.23);
+            double packetAlong = Math.Round(wave.Cycles * 0.17);
+            double packetAcross = Math.Round(wave.Cycles * 0.13);
+            double bend = z * bendCycles + index * 2.31;
+            double packet = y * packetAlong + z * packetAcross + index * 4.17;
+            double envelope = 0.6 + 0.4 * Math.Sin(packet);
+            double phase = wave.Cycles * Math.Atan2(y, x) + wave.Phase + 1.8 * Math.Sin(bend);
             double sine = Math.Sin(phase);
             double cosine = Math.Cos(phase);
             double k = wave.Cycles / body.Radius;
@@ -56,11 +66,13 @@ public static class Ocean {
             double resolved = 1.0 - Smooth(wavelength * 0.12, wavelength * 0.35, spacing);
             double amplitude = Math.Min(wave.Amplitude, depth * 0.08) * Smooth(0.0025, 0.04, radiusSquared) * resolved;
             Vector3d phaseGradient = (wave.Along * x - Weather.Origin * y) * (k / Math.Max(radiusSquared, 0.0025));
-            height += amplitude * sine;
-            gradient += phaseGradient * (amplitude * cosine);
-            vertical -= amplitude * wave.Frequency * cosine;
-            if (wave.Amplitude < depth * 0.08) { vertical += amplitude * strengthRate / strength * sine; }
-            velocity += phaseGradient.Normalized * (amplitude * wave.Frequency * sine);
+            phaseGradient += acrossGradient * (1.8 * bendCycles * Math.Cos(bend));
+            Vector3d envelopeGradient = (alongGradient * packetAlong + acrossGradient * packetAcross) * (0.4 * Math.Cos(packet));
+            height += amplitude * envelope * sine;
+            gradient += (phaseGradient * (envelope * cosine) + envelopeGradient * sine) * amplitude;
+            vertical -= amplitude * envelope * wave.Frequency * cosine;
+            if (wave.Amplitude < depth * 0.08) { vertical += amplitude * envelope * strengthRate / strength * sine; }
+            velocity += phaseGradient.Normalized * (amplitude * envelope * wave.Frequency * sine);
 
         }
 

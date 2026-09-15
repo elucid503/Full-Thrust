@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Reflection;
 
 using FullThrust.Sim;
 
@@ -51,6 +53,34 @@ public sealed partial class CoastalLandformChecks : Node {
 
             }
             GD.Print($"Coastal landforms: {count} GPU samples agree with collision terrain; max error {worst:F4} m");
+            using FileStream stream = File.OpenRead(ProjectSettings.GlobalizePath("res://Assets/Planet/elevation.r16"));
+            Terrain terrain = Terrain.Load(stream, radius);
+            Texture2D shoreline = (Texture2D)typeof(Planet).GetMethod("Shoreline", BindingFlags.NonPublic | BindingFlags.Static)
+                .Invoke(null, new object[] { terrain });
+            for (int i = 0; i < count; i++) {
+
+                double lat = (i < count / 2 ? 28.52 : 25.30) * Math.PI / 180.0;
+                double lon = (i < count / 2 ? -80.70 + i * 0.008 : -80.9 + (i - count / 2) * 0.008) * Math.PI / 180.0;
+                Vector3d unit = new(Math.Cos(lat) * Math.Cos(lon), Math.Cos(lat) * Math.Sin(lon), Math.Sin(lat));
+                probes[i] = new Vector4((float)(unit.X * radius), (float)(unit.Z * radius), (float)(-unit.Y * radius), 0.0f);
+                terrain.Elevation(unit, 0.0, out expected[i]);
+
+            }
+            material.Shader = new Shader { Code = "shader_type canvas_item; render_mode unshaded;\nuniform sampler2D shoreline_map : filter_linear; uniform float planet_radius; uniform vec4 probes[48];\n#include \"res://Shaders/LandscapeNoise.gdshaderinc\"\n#include \"res://Shaders/CoastalLandforms.gdshaderinc\"\n#include \"res://Shaders/ShorelineSampling.gdshaderinc\"\nvoid fragment() { float h = shoreline_height(probes[int(FRAGCOORD.x)].xyz); COLOR = vec4((h + 40.0) / 80.0, 0.0, 0.0, 1.0); }" };
+            material.SetShaderParameter("shoreline_map", shoreline);
+            material.SetShaderParameter("planet_radius", (float)radius);
+            material.SetShaderParameter("probes", probes);
+            await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            using Image curved = viewport.GetTexture().GetImage();
+            worst = 0.0;
+            for (int i = 0; i < count; i++) {
+
+                worst = Math.Max(worst, Math.Abs(curved.GetPixel(i, 2).R * 80.0 - 40.0 - expected[i]));
+
+            }
+            if (worst > 0.08) { throw new InvalidOperationException($"Curved survey CPU/GPU disagreement: {worst:F4} m"); }
+            GD.Print($"Curved shoreline: {count} GPU samples match physics; max error {worst:F4} m");
             GetTree().Quit();
 
         } catch (Exception exception) {

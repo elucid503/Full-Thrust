@@ -51,6 +51,14 @@ public static partial class Program {
         Ocean.Surface wave = Ocean.Sample(body, point, bed, 123.0);
         double numerical = (Ocean.Sample(body, point, bed, 123.0 + dt).Height - Ocean.Sample(body, point, bed, 123.0 - dt).Height) / (2.0 * dt);
         Near("water vertical velocity follows visible waves", Vector3d.Dot(wave.Velocity, fixedUp), numerical, 1e-5);
+        Vector3d east = Vector3d.Cross(Vector3d.UnitZ, fixedUp).Normalized;
+        foreach (Vector3d direction in new[] { east, Vector3d.Cross(fixedUp, east) }) {
+
+            double slope = (Ocean.Sample(body, point + direction * 0.02, bed, 123.0).Height
+                - Ocean.Sample(body, point - direction * 0.02, bed, 123.0).Height) / 0.04;
+            Near("curved swell slope follows wave height", Vector3d.Dot(wave.Gradient, direction), slope, 2e-5);
+
+        }
 
         body.Weather = new Weather();
         body.Weather.SetPreset(WeatherPreset.Calm, -1000.0);
