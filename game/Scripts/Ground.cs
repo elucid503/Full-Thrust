@@ -417,7 +417,7 @@ public sealed partial class Ground : Node3D {
         double radius = _radius;
         patch.Cancellation = new CancellationTokenSource();
         CancellationToken cancellation = patch.Cancellation.Token;
-        patch.Job = Task.Run(() => Tessellate(terrain, radius, face, s, t, span, cancellation), cancellation);
+        patch.Job = Task.Run(() => Tessellate(terrain, radius, face, s, t, span, cancellation));
         _jobs.Add(patch.Job);
 
     }
@@ -475,9 +475,6 @@ public sealed partial class Ground : Node3D {
             child.Instance?.QueueFree();
             child.Instance = null;
             child.Cancellation?.Cancel();
-            child.Cancellation?.Dispose();
-            child.Cancellation = null;
-            child.Job = null;
 
         }
 
@@ -565,6 +562,28 @@ public sealed partial class Ground : Node3D {
     [ThreadStatic] private static double[] _coastalHeights;
 
     private static Surface Tessellate(Terrain terrain, double radius, int face, double s, double t, double span, CancellationToken cancellation) {
+
+        try {
+
+            return BuildSurface(terrain, radius, face, s, t, span, cancellation);
+
+        } catch (OperationCanceledException) {
+
+            return null;
+
+        } catch (ObjectDisposedException) {
+
+            return null;
+
+        } catch (AccessViolationException) {
+
+            return null;
+
+        }
+
+    }
+
+    private static Surface BuildSurface(Terrain terrain, double radius, int face, double s, double t, double span, CancellationToken cancellation) {
 
         int side = Grid + 3;
 
@@ -852,7 +871,6 @@ public sealed partial class Ground : Node3D {
 
             Prune(root);
             root.Cancellation?.Cancel();
-            root.Cancellation?.Dispose();
 
         }
 

@@ -133,6 +133,20 @@ public static partial class Program {
         }
         Expect("ground friction arrests surface sliding", (resting.Velocity - ground.SurfaceVelocityAt(resting.Position)).Length < 0.2,
             $"slip {(resting.Velocity - ground.SurfaceVelocityAt(resting.Position)).Length}");
+        string shader = File.ReadAllText(Repository("game/Shaders/Ground.gdshader"));
+        int vertex = shader.IndexOf("void vertex()", StringComparison.Ordinal);
+        int open = shader.IndexOf('{', vertex);
+        int depth = 0;
+        int close = -1;
+        for (int i = open; i < shader.Length; i++) {
+
+            if (shader[i] == '{') { depth++; }
+            else if (shader[i] == '}') { depth--; if (depth == 0) { close = i; break; } }
+
+        }
+        Expect("terrain vertices do not fetch the shoreline survey",
+            close > open && !shader.AsSpan(open, close - open).Contains("shoreline_", StringComparison.Ordinal),
+            "Ground.gdshader vertex samples shoreline_map");
 
     }
 

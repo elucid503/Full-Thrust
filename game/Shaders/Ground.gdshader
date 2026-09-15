@@ -114,11 +114,8 @@ instance uniform float lod_morph : instance_index(0) = 0.0;
 
 instance uniform float mesh_spacing : instance_index(1) = 1.0;
 varying float ocean_room;
-varying float coastal_gradient;
 
 #include "res://Shaders/LandscapeNoise.gdshaderinc"
-#include "res://Shaders/CoastalLandforms.gdshaderinc"
-#include "res://Shaders/ShorelineSampling.gdshaderinc"
 
 void vertex() {
 
@@ -130,7 +127,6 @@ void vertex() {
     vec3 radial = world_position - planet_centre;
     vec3 fixed_vertex = vec3(terrain_rotation.x * radial.x - terrain_rotation.y * radial.z,
         radial.y, terrain_rotation.y * radial.x + terrain_rotation.x * radial.z);
-    coastal_gradient = shoreline_slope(normalize(fixed_vertex), shoreline_height(fixed_vertex));
     vec4 wave = ocean_wave(fixed_vertex, mesh_spacing * (1.0 + lod_morph), CUSTOM0.w);
     vec3 up = normalize(world_position - planet_centre);
     float displacement = wave.x * ocean_room * local;
@@ -166,6 +162,8 @@ float overcast(vec3 radial, vec3 up) {
 }
 
 #include "res://Shaders/TerrainDetail.gdshaderinc"
+#include "res://Shaders/CoastalLandforms.gdshaderinc"
+#include "res://Shaders/ShorelineSampling.gdshaderinc"
 
 
 void fragment() {
@@ -196,8 +194,8 @@ void fragment() {
     // Resolve the surveyed zero contour per pixel, including on distant coarse patches.
     float coast_width = max(fwidth(coast_elevation), 0.02);
     float sea = 1.0 - smoothstep(-coast_width, coast_width, coast_elevation);
-    // Fixed metre offsets avoid quantized screen derivatives moving the beach and surf with the eye.
-    float coast_slope = max(coastal_gradient, 0.002);
+    // World-space slope, not fwidth: screen derivatives crawl the beach as the eye moves.
+    float coast_slope = max(shoreline_slope(fixed_up, coast_elevation), 0.002);
     float coast_distance = coast_elevation / coast_slope;
 
     // Metres of ground under one pixel. Every fade below is driven off this rather than off the

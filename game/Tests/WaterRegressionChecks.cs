@@ -34,6 +34,20 @@ public sealed partial class WaterRegressionChecks : Node {
 
     public override void _Ready() {
 
+        string ground = FileAccess.GetFileAsString("res://Shaders/Ground.gdshader");
+        int vertex = ground.IndexOf("void vertex()", StringComparison.Ordinal);
+        int open = ground.IndexOf('{', vertex);
+        int depth = 0;
+        int close = -1;
+        for (int i = open; i < ground.Length; i++) {
+
+            if (ground[i] == '{') { depth++; }
+            else if (ground[i] == '}') { depth--; if (depth == 0) { close = i; break; } }
+
+        }
+        Check(vertex >= 0 && open > vertex && close > open, "ground shader has a vertex stage");
+        Check(!ground.Substring(open, close - open).Contains("shoreline_", StringComparison.Ordinal),
+            "terrain vertices do not fetch the shoreline survey");
         ProcessPriority = 100;
         _main = GD.Load<PackedScene>("res://Main.tscn").Instantiate<Main>();
         AddChild(_main);

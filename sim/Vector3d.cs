@@ -7,9 +7,9 @@ public readonly struct Vector3d {
     public static readonly Vector3d UnitY = new Vector3d(0.0, 1.0, 0.0);
     public static readonly Vector3d UnitZ = new Vector3d(0.0, 0.0, 1.0);
 
-    public double X { get; }
-    public double Y { get; }
-    public double Z { get; }
+    public readonly double X;
+    public readonly double Y;
+    public readonly double Z;
 
     public Vector3d(double x, double y, double z) {
 

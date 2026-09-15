@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
+using System.Threading.Tasks;
 
 using FullThrust.Sim;
 
@@ -36,9 +38,19 @@ public sealed partial class DebugBridge : Node {
     private int _frameCount;
     private ulong _lastFrame;
     private bool _surfaceTrace;
+    private static string _crashPath;
 
     public override void _Ready() {
 
+        _crashPath = Path.Combine(ProjectSettings.GlobalizePath("res://.artifacts"), "crash-last.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(_crashPath));
+        AppDomain.CurrentDomain.UnhandledException += (_, args) => WriteCrash(args.ExceptionObject);
+        TaskScheduler.UnobservedTaskException += (_, args) => {
+
+            WriteCrash(args.Exception);
+            args.SetObserved();
+
+        };
         _surfaceTrace = OS.GetEnvironment("FT_SURFACE_TRACE") == "1";
 
         RenderingServer.ViewportSetMeasureRenderTime(GetViewport().GetViewportRid(), true);
@@ -73,6 +85,19 @@ public sealed partial class DebugBridge : Node {
         _thread.Start();
 
         GD.Print($"DebugBridge listening on {url}");
+
+    }
+
+    private static void WriteCrash(object exception) {
+
+        try {
+
+            if (string.IsNullOrEmpty(_crashPath)) { return; }
+            File.WriteAllText(_crashPath, DateTime.Now.ToString("o") + "\n" + exception);
+
+        } catch {
+
+        }
 
     }
 

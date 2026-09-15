@@ -139,7 +139,7 @@ public sealed partial class GroundScatter : Node3D {
 
             Key key = _queue[0];
             _queue.RemoveAt(0);
-            _job = Task.Run(() => Generate(key, _cancellation.Token), _cancellation.Token);
+            _job = Task.Run(() => Generate(key, _cancellation.Token));
 
         }
         Basis turn = new Basis(Vector3.Up, (float)_body.SpinAt(time));
@@ -312,6 +312,28 @@ public sealed partial class GroundScatter : Node3D {
     }
 
     private Grove Generate(Key key, CancellationToken cancellation) {
+
+        try {
+
+            return BuildGrove(key, cancellation);
+
+        } catch (OperationCanceledException) {
+
+            return new Grove { Key = key, Anchor = Vector3d.Zero, Transforms = Array.Empty<Transform3D>(), Colours = Array.Empty<Color>() };
+
+        } catch (ObjectDisposedException) {
+
+            return new Grove { Key = key, Anchor = Vector3d.Zero, Transforms = Array.Empty<Transform3D>(), Colours = Array.Empty<Color>() };
+
+        } catch (AccessViolationException) {
+
+            return new Grove { Key = key, Anchor = Vector3d.Zero, Transforms = Array.Empty<Transform3D>(), Colours = Array.Empty<Color>() };
+
+        }
+
+    }
+
+    private Grove BuildGrove(Key key, CancellationToken cancellation) {
 
         Vector3d centre = Centre(key);
         Vector3d anchor = centre * (_body.Radius + _body.Terrain.Elevation(centre));

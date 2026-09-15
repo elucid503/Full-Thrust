@@ -206,7 +206,7 @@ public sealed class Terrain {
         double length = direction.Length;
         coastalHeight = 0.0;
 
-        if (length <= 0.0) {
+        if (length <= 0.0 || !double.IsFinite(length)) {
 
             return 0.0;
 

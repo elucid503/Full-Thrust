@@ -44,13 +44,19 @@ public static class Noise {
     /// <summary>Perlin noise on the unit lattice, in roughly [-1, 1].</summary>
     public static double Value(double x, double y, double z) {
 
-        int xi = (int)Math.Floor(x);
-        int yi = (int)Math.Floor(y);
-        int zi = (int)Math.Floor(z);
+        if (!double.IsFinite(x) || !double.IsFinite(y) || !double.IsFinite(z)) {
 
-        double xf = x - xi;
-        double yf = y - yi;
-        double zf = z - zi;
+            return 0.0;
+
+        }
+
+        int xi = Cell(x);
+        int yi = Cell(y);
+        int zi = Cell(z);
+
+        double xf = x - Math.Floor(x);
+        double yf = y - Math.Floor(y);
+        double zf = z - Math.Floor(z);
 
         double u = Fade(xf);
         double v = Fade(yf);
@@ -122,6 +128,13 @@ public static class Noise {
         }
 
         return sum;
+
+    }
+
+    private static int Cell(double value) {
+
+        double floor = Math.Floor(value);
+        return floor >= int.MinValue && floor <= int.MaxValue ? (int)floor : 0;
 
     }
 

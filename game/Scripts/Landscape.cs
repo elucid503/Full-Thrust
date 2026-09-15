@@ -53,19 +53,36 @@ internal static class Landscape {
 
     private static double Value(Vector3d p) {
 
-        int x = (int)Math.Floor(p.X);
-        int y = (int)Math.Floor(p.Y);
-        int z = (int)Math.Floor(p.Z);
-        double u = Smooth(0.0, 1.0, p.X - x);
-        double v = Smooth(0.0, 1.0, p.Y - y);
-        double w = Smooth(0.0, 1.0, p.Z - z);
-        double Lerp(double a, double b, double t) => a + (b - a) * t;
+        double px = p.X;
+        double py = p.Y;
+        double pz = p.Z;
+        if (!double.IsFinite(px) || !double.IsFinite(py) || !double.IsFinite(pz)) {
+
+            return 0.0;
+
+        }
+
+        int x = Cell(px);
+        int y = Cell(py);
+        int z = Cell(pz);
+        double u = Smooth(0.0, 1.0, px - Math.Floor(px));
+        double v = Smooth(0.0, 1.0, py - Math.Floor(py));
+        double w = Smooth(0.0, 1.0, pz - Math.Floor(pz));
         return Lerp(Lerp(Lerp(Hash(x, y, z), Hash(x + 1, y, z), u),
                          Lerp(Hash(x, y + 1, z), Hash(x + 1, y + 1, z), u), v),
                     Lerp(Lerp(Hash(x, y, z + 1), Hash(x + 1, y, z + 1), u),
                          Lerp(Hash(x, y + 1, z + 1), Hash(x + 1, y + 1, z + 1), u), v), w);
 
     }
+
+    private static int Cell(double value) {
+
+        double floor = Math.Floor(value);
+        return floor >= int.MinValue && floor <= int.MaxValue ? (int)floor : 0;
+
+    }
+
+    private static double Lerp(double a, double b, double t) => a + (b - a) * t;
 
     private static double Hash(int x, int y, int z) {
 

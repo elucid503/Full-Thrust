@@ -5,15 +5,14 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <RootNamespace>FullThrust.Game</RootNamespace>
 
-    <!-- The terrain builds patches on worker threads at a hundred megabytes a second while it is
-         streaming in. Workstation GC collects that on the thread that allocated it and stops the
-         world to do it, which lands as a stutter on exactly the frames the ground is paging. -->
-    <ServerGarbageCollector>true</ServerGarbageCollector>
+    <!-- Server GC plus Godot's native heaps produced AccessViolationException in terrain workers. -->
+    <ServerGarbageCollector>false</ServerGarbageCollector>
     <ConcurrentGarbageCollector>true</ConcurrentGarbageCollector>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="../sim/FullThrust.Sim.csproj" />
+    <RuntimeHostConfigurationOption Include="System.Runtime.LegacyCorruptedStateExceptionPolicy" Value="true" />
   </ItemGroup>
 
 </Project>

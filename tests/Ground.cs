@@ -214,6 +214,26 @@ public static partial class Program {
 
         Expect("parallel samples match physics exactly", mismatches == 0, $"{mismatches} mismatches");
 
+        int coastal = 0;
+        Parallel.For(0, 8192, index => {
+
+            Vector3d at = Site(28.52, -80.64 + index % 400 * 0.0004);
+            double height = terrain.Elevation(at);
+            if (!double.IsFinite(height)) {
+
+                Interlocked.Increment(ref mismatches);
+
+            } else if (Math.Abs(height) < 28.0) {
+
+                Interlocked.Increment(ref coastal);
+
+            }
+
+        });
+        Expect("coastal worker samples stay finite", mismatches == 0 && coastal > 0, $"mismatches {mismatches}, coastal {coastal}");
+        Near("non-finite coastal noise is zero", CoastalLandforms.Value(new Vector3d(double.NaN, 0.0, 0.0)), 0.0, 0.0);
+        Expect("huge coastal lattice stays finite", double.IsFinite(CoastalLandforms.Value(new Vector3d(1e20, -1e20, 1e20))), "overflowed");
+
         var snapshot = terrain.Plateaus;
 
         Parallel.For(0, 32, index => terrain.Add(new Terrain.Plateau {

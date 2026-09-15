@@ -1,6 +1,8 @@
+// Fragment-only: a 10800x5400 vertex texture fetch of this survey crashes NVIDIA drivers near water.
 float shoreline_survey(vec2 uv) {
 
     ivec2 size = textureSize(shoreline_map, 0);
+    if (size.x < 2 || size.y < 2) { return 0.0; }
     vec2 pixel = vec2(fract(uv.x), clamp(uv.y, 0.5 / float(size.y), 1.0 - 0.5 / float(size.y))) * vec2(size) - 0.5;
     ivec2 low = ivec2(floor(pixel));
     vec2 weight = fract(pixel);
