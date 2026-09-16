@@ -90,6 +90,32 @@ public sealed partial class EngineVisualChecks : Node {
 
             }
             Vessel vessel = _flight.Vessel;
+            if (OS.GetEnvironment("FT_ENGINE_CHECK") == "smoke-perf" || OS.GetEnvironment("FT_ENGINE_CHECK") == "smoke-isolate") {
+
+                bool isolate = OS.GetEnvironment("FT_ENGINE_CHECK") == "smoke-isolate";
+                GetTree().Root.Size = new Vector2I(2560, 1440);
+                DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
+                OrbitCamera.Active.Distance = 90.0f;
+                OrbitCamera.Active.Pitch = 0.15f;
+                vessel.Throttle = 1.0;
+                await Frames(isolate ? 360 : 900, 1.0 / 30.0);
+                if (!isolate) { await SmokePerformance("pad"); }
+                CloseToSteam();
+                if (isolate) { FreeCamera.Active.CullMask = 1u << 19; }
+                await SmokePerformance("inside", isolate ? 1u << 19 : 2u);
+                FreeCamera.Active.Release();
+                _flight.PlaceAt(28.52, -80.50, 17.0, 0.0);
+                await Settle();
+                vessel.Orientation = QuaternionD.FromTo(Vector3d.UnitZ, vessel.Position.Normalized);
+                vessel.Throttle = 1.0;
+                await Frames(480, 1.0 / 30.0);
+                CloseToSteam();
+                await SmokePerformance("water-inside", isolate ? 1u << 19 : 2u);
+                if (isolate) { await SmokeStress(true); }
+                GetTree().Quit();
+                return;
+
+            }
             if (OS.GetEnvironment("FT_ENGINE_CHECK") == "retro-soot") {
 
                 await RetroSoot();

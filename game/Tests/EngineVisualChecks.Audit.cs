@@ -8,6 +8,57 @@ namespace FullThrust.Game;
 
 public sealed partial class EngineVisualChecks {
 
+    private async Task SmokePerformance(string name, uint smokeLayer = 2) {
+
+        var wakes = (System.Collections.IList)typeof(Planet).GetField("_surfaceWakes", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(Planet.Active);
+        foreach (string mode in new[] { "live", "direct", "buffer", "hidden", "restored" }) {
+
+            foreach (object wake in wakes) {
+
+                MeshInstance3D mesh = (MeshInstance3D)wake.GetType().GetField("Volume").GetValue(wake);
+                mesh.Layers = mode == "hidden" ? 0u : smokeLayer;
+                SurfaceCloudScreen screen = (SurfaceCloudScreen)wake.GetType().GetField("Screen").GetValue(wake);
+                if (screen != null) { screen.Enabled = mode != "direct"; screen.MeasureGpu(); }
+                wake.GetType().GetField("NextBake").SetValue(wake, mode == "no-bake" ? double.PositiveInfinity : double.NegativeInfinity);
+
+            }
+            await Frames(30, mode == "live" ? 1.0 / 60.0 : 0.0);
+            double[] wall = new double[180], gpu = new double[180], cpu = new double[180], planet = new double[180];
+            for (int i = 0; i < wall.Length; i++) {
+
+                long start = System.Diagnostics.Stopwatch.GetTimestamp();
+                await Frames(1, mode == "live" ? 1.0 / 60.0 : 0.0);
+                wall[i] = System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+                gpu[i] = RenderingServer.ViewportGetMeasuredRenderTimeGpu(GetViewport().GetViewportRid());
+                if (mode != "direct" && mode != "hidden") {
+
+                    foreach (object wake in wakes) {
+
+                        SurfaceCloudScreen screen = (SurfaceCloudScreen)wake.GetType().GetField("Screen").GetValue(wake);
+                        if (screen != null) { gpu[i] += screen.GpuMilliseconds; }
+
+                    }
+
+                }
+                cpu[i] = _main.UpdateMilliseconds;
+                planet[i] = _main.PlanetMilliseconds;
+
+            }
+            Array.Sort(wall); Array.Sort(gpu); Array.Sort(cpu); Array.Sort(planet);
+            GD.Print($"SMOKE {name} {mode}: wall={wall[90]:F2}/{wall[171]:F2} GPU={gpu[90]:F2}/{gpu[171]:F2} CPU={cpu[90]:F2}/{cpu[171]:F2} planet={planet[90]:F2}/{planet[171]:F2} ms p50/p95; wakes={wakes.Count}");
+            foreach (object wake in wakes) {
+
+                ShaderMaterial material = (ShaderMaterial)wake.GetType().GetField("Material").GetValue(wake);
+                SurfaceCloudScreen screen = (SurfaceCloudScreen)wake.GetType().GetField("Screen").GetValue(wake);
+                GD.Print($"BUFFER enabled={material.GetShaderParameter("screen_enabled")} GPU={screen?.GpuMilliseconds:F3}ms");
+
+            }
+            if (mode != "hidden") { await Capture((smokeLayer == 2 ? "perf-" : "isolated-") + name + "-" + mode); }
+
+        }
+
+    }
+
     private void CloseCamera(Vector3d focus, Vector3d offset) {
 
         FreeCamera camera = FreeCamera.Active;
@@ -96,7 +147,7 @@ public sealed partial class EngineVisualChecks {
 
     }
 
-    private async Task SmokeStress() {
+    private async Task SmokeStress(bool profile = false) {
 
         Vector3d up = _flight.Body.ToBodyFixed(_flight.Vessel.Position, _flight.Time).Normalized;
         Vector3d side = Vector3d.Cross(up, Vector3d.UnitZ).Normalized;
@@ -122,6 +173,35 @@ public sealed partial class EngineVisualChecks {
         };
         CloseCamera(_flight.Vessel.Position, new Vector3d(60.0, -60.0, 20.0));
         await Frames(360, 1.0 / 30.0);
+        if (profile) {
+
+            CloseCamera(_flight.Vessel.Position, new Vector3d(14.0, -18.0, 12.0));
+            FreeCamera.Active.CullMask = 1u << 19;
+            await Frames(90);
+            var wakes = (System.Collections.IList)typeof(Planet).GetField("_surfaceWakes", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(Planet.Active);
+            var retained = new System.Collections.Generic.HashSet<object>();
+            foreach (object wake in wakes) { retained.Add(wake); }
+            await Frames(120);
+            foreach (object wake in wakes) {
+
+                if (!retained.Contains(wake)) { throw new InvalidOperationException("Steady overflow replaced a retained smoke volume"); }
+
+            }
+            GD.Print($"SMOKE overflow stability: {wakes.Count} volumes retained for 120 frames with nine impact sites");
+            await SmokePerformance("eight-overlap", 1u << 19);
+            _surfaceTestInjection = null;
+            _flight.Vessel.Throttle = 0.0;
+            await Frames(390, 1.0 / 30.0);
+            if (wakes.Count != 0) { throw new InvalidOperationException("Smoke volumes did not expire"); }
+            foreach (Node child in Planet.Active.GetChildren()) {
+
+                if (child is SurfaceCloudScreen) { throw new InvalidOperationException("Expired smoke retained a render buffer"); }
+
+            }
+            await Capture("eight-buffers-cleared");
+            return;
+
+        }
         await Measure("eight-water-impacts");
         await MeasureWithoutSmoke("eight-water-impacts-no-smoke");
         _surfaceTestInjection = null;

@@ -67,7 +67,15 @@ public sealed partial class Planet {
         public MeshInstance3D Spray;
         public ShaderMaterial SprayMaterial;
         public SurfaceCloudVolume Field;
+        public SurfaceCloudScreen Screen;
         public double NextBake = double.NegativeInfinity;
+
+        public void SetCloud(StringName name, Variant value) {
+
+            Material.SetShaderParameter(name, value);
+            Screen?.Material.SetShaderParameter(name, value);
+
+        }
 
     }
 
@@ -112,6 +120,10 @@ public sealed partial class Planet {
         wake.Material?.SetShaderParameter("cloud_field", default(Variant));
         wake.Field?.Dispose();
         wake.Field = null;
+        wake.Screen?.QueueFree();
+        wake.Screen = null;
+        wake.Material?.SetShaderParameter("screen_enabled", false);
+        wake.Material?.SetShaderParameter("cloud_screen", default(Variant));
         if (wake.Spray != null) { wake.Spray.QueueFree(); wake.Spray = null; }
         if (wake.Volume == null) { return; }
         wake.Volume.Visible = false;
@@ -177,6 +189,27 @@ public sealed partial class Planet {
 
         if (wake == null) {
 
+            if (_surfaceWakes.Count >= 8) {
+
+                Camera3D camera = GetViewport().GetCamera3D();
+                Vector3d eye = camera != null ? Frames.Origin + Frames.Sim(camera.GlobalPosition) : Flight.Active.Vessel.Position;
+                Vector3d fixedEye = _body.ToBodyFixed(eye, time);
+                SurfaceWake replace = null;
+                double weakest = double.PositiveInfinity;
+                foreach (SurfaceWake candidate in _surfaceWakes) {
+
+                    double score = candidate.Power / (25.0 + (candidate.Point - fixedEye).LengthSquared);
+                    score *= Math.Exp(-Math.Max(_surfaceClock - candidate.Time, 0.0) / 2.0);
+                    if (score < weakest) { weakest = score; replace = candidate; }
+
+                }
+                double incoming = strength / (25.0 + (fixedPoint - fixedEye).LengthSquared);
+                // Hysteresis prevents competing jets from reallocating every volume every frame.
+                if (incoming <= weakest * 1.5) { return; }
+                RecycleSurfaceVolume(replace);
+                _surfaceWakes.Remove(replace);
+
+            }
             wake = new SurfaceWake {
 
                 Started = _surfaceClock, Created = _surfaceClock, Point = fixedPoint, Anchor = fixedPoint, Time = double.NegativeInfinity,
@@ -184,13 +217,6 @@ public sealed partial class Planet {
 
             };
             _surfaceWakes.Add(wake);
-
-            if (_surfaceWakes.Count > 8) {
-
-                RecycleSurfaceVolume(_surfaceWakes[0]);
-                _surfaceWakes.RemoveAt(0);
-
-            }
 
         }
 
@@ -318,6 +344,8 @@ public sealed partial class Planet {
             if (wake.Volume == null) {
 
                 (wake.Volume, wake.Material) = _surfaceVolumePool.Pop();
+                wake.Screen = new SurfaceCloudScreen();
+                AddChild(wake.Screen);
                 wake.Material.Shader = _steamShader;
                 wake.Material.SetShaderParameter("flow_noise", _smokeNoise);
 
@@ -391,10 +419,10 @@ public sealed partial class Planet {
             }
             if (wake.Field?.Complete() == true) {
 
-                wake.Material.SetShaderParameter("cloud_field", wake.Field.Texture);
-                wake.Material.SetShaderParameter("cloud_enabled", true);
-                wake.Material.SetShaderParameter("field_min", wake.Field.Low);
-                wake.Material.SetShaderParameter("field_max", wake.Field.High);
+                wake.SetCloud("cloud_field", wake.Field.Texture);
+                wake.SetCloud("cloud_enabled", true);
+                wake.SetCloud("field_min", wake.Field.Low);
+                wake.SetCloud("field_max", wake.Field.High);
 
             }
             if (wake.Field?.Ready != true) { wake.Volume.Visible = false; continue; }
@@ -405,18 +433,19 @@ public sealed partial class Planet {
             low = wake.Field.Low.Min(origin - extent);
             high = wake.Field.High.Max(origin + extent);
             wake.Volume.CustomAabb = new Aabb(low, high - low);
-            wake.Material.SetShaderParameter("bounds_min", low);
-            wake.Material.SetShaderParameter("bounds_max", high);
-            wake.Material.SetShaderParameter("source_point", origin);
-            wake.Material.SetShaderParameter("source_radius", sourceRadius);
-            wake.Material.SetShaderParameter("source_power", sourcePower);
-            wake.Material.SetShaderParameter("source_wet", wake.Water || wake.Deluge ? 1.0f : 0.0f);
-            wake.Material.SetShaderParameter("ground_plane", new Vector4(normal.X, normal.Y, normal.Z, -normal.Dot(origin)));
-            wake.Material.SetShaderParameter("column_height", column);
-            wake.Material.SetShaderParameter("effect_time", (float)_surfaceClock);
-            wake.Material.SetShaderParameter("sample_phase", (float)(Godot.Engine.GetProcessFrames() % 8) * 0.61803399f);
-            wake.Material.SetShaderParameter("sun_direction", local * Main.SunDirection);
-            wake.Material.SetShaderParameter("daylight", Math.Max(upAxis.Dot(Main.SunDirection), 0.0f));
+            wake.SetCloud("bounds_min", low);
+            wake.SetCloud("bounds_max", high);
+            wake.SetCloud("source_point", origin);
+            wake.SetCloud("source_radius", sourceRadius);
+            wake.SetCloud("source_power", sourcePower);
+            wake.SetCloud("source_wet", wake.Water || wake.Deluge ? 1.0f : 0.0f);
+            wake.SetCloud("ground_plane", new Vector4(normal.X, normal.Y, normal.Z, -normal.Dot(origin)));
+            wake.SetCloud("column_height", column);
+            wake.SetCloud("effect_time", (float)_surfaceClock);
+            wake.SetCloud("sample_phase", (float)(Godot.Engine.GetProcessFrames() % 8) * 0.61803399f);
+            wake.SetCloud("sun_direction", local * Main.SunDirection);
+            wake.SetCloud("daylight", Math.Max(upAxis.Dot(Main.SunDirection), 0.0f));
+            wake.Screen.Sync(wake.Volume, wake.Material);
 
         }
 

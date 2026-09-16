@@ -114,6 +114,36 @@ Source growth remains continuous at render rate independently of background dens
 Opaque scene depth, the contact plane, and opacity termination clip the march; existing TAA
 sample jitter is retained. Water spray and surface deformation remain separate effects.
 
+### Close-up rendering and overflow
+
+Large visible smoke volumes now march into an HDR buffer at half the main 3D render resolution
+in each dimension. `SurfaceCloudScreen` restricts drawing to the projected volume bounds and
+disables the buffer for hidden, off-screen, small or orthographic views. The ordinary volume
+shader composites this premultiplied result. Pixels whose scene depth intersects the smoke
+still use full-resolution, depth-clipped integration, preserving hull and terrain occlusion.
+Both paths share `SurfaceCloud.gdshaderinc`; density, source growth and lighting are unchanged.
+Buffers follow camera/resolution changes and are freed when their wake expires. GPU timing
+queries are enabled only by the profiling fixture.
+
+At the eight-wake limit, a new source must exceed the least significant retained source's
+power/distance score by 50% before replacing it. Inactive sources lose priority gradually.
+Previously the ninth source evicted the oldest every frame; continuing sources then evicted
+each other, repeatedly allocating textures and abandoning background builds. The new admission
+rule keeps steady sources resident and prioritizes nearby effects under overload.
+
+`FT_ENGINE_CHECK=smoke-perf` measures live 2560-by-1440 scenes, then freezes the same smoke and
+camera for direct, buffered and hidden comparisons. `smoke-isolate` also excludes the background
+scene and tests nine competing contacts against eight retained volumes. It asserts that all
+eight identities survive 120 advancing frames, and that all wakes and buffers expire after cutoff.
+GPU totals include the additional smoke viewports. In `smoke-stable-final.log`, the mature
+eight-volume comparison measured 2.42 ms GPU with direct rendering, 1.64 ms buffered, and
+1.28 ms hidden (RTX 4060 Ti). This is a rendering-cost comparison, not a whole-game FPS claim:
+full-scene 1440p testing also found substantial sky-cloud and other background rendering cost.
+
+The older eight-contact timings below predate the admission fix. With the live engine's ninth
+contact they could measure continually recreated, immature volumes; use the retained-volume
+fixture above for multi-source comparisons.
+
 `FT_ENGINE_CHECK=surface` covers pad ignition, sustained burn and clearance, water ignition and
 dispersal, eight synthetic simultaneous water contacts, and dust. It also freezes each comparison
 view and hides only the smoke meshes to isolate GPU cost, leaving spray and the rest of the scene
