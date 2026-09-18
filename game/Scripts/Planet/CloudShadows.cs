@@ -103,11 +103,11 @@ public sealed partial class CloudShadows : Node {
 
     }
 
-    public void SetShape(Texture3D shape) {
+    public void SetVolume(string name, Texture3D volume) {
 
         foreach (ShaderMaterial material in _materials) {
 
-            material.SetShaderParameter("shape_noise", shape);
+            material.SetShaderParameter(name, volume);
 
         }
 

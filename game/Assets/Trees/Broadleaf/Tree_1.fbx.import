@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://gtp2bjxstu4f"
-path="res://.godot/imported/Tree_1.fbx-793d97831dacedb5e8435b2e3cb16ea1.scn"
+path="res://.godot/imported/Tree_1.fbx-1deacbd7a3a36bee9cc34f2b5d43a37a.scn"
 
 [deps]
 
 source_file="res://Assets/Trees/Broadleaf/Tree_1.fbx"
-dest_files=["res://.godot/imported/Tree_1.fbx-793d97831dacedb5e8435b2e3cb16ea1.scn"]
+dest_files=["res://.godot/imported/Tree_1.fbx-1deacbd7a3a36bee9cc34f2b5d43a37a.scn"]
 
 [params]
 

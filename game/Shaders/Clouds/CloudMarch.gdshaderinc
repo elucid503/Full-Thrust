@@ -119,7 +119,7 @@ vec4 cloud_radiance(vec3 origin, vec3 ray, float scene_distance, float angular_f
     vec3 radiance = vec3(0.0);
     float weighted_distance = 0.0;
     float cursor = start;
-    vec2 previous_weather = weather_at(origin + ray * cursor);
+    vec2 previous_weather = weather_at(origin + ray * cursor, max(1.0, cursor * angular_footprint));
     float previous_envelope = cloud_bound_at_height(origin + ray * cursor, max(1.0, cursor * angular_footprint), previous_weather,
         (ray_height(ray * cursor) - (base_radius - planet_radius)) / (top_radius - base_radius));
     const int interval_budget = 96;
@@ -131,7 +131,7 @@ vec4 cloud_radiance(vec3 origin, vec3 ray, float scene_distance, float angular_f
         if (cursor >= gap_start && cursor < gap_end) {
 
             cursor = gap_end;
-            previous_weather = weather_at(origin + ray * cursor);
+            previous_weather = weather_at(origin + ray * cursor, max(1.0, cursor * angular_footprint));
             previous_envelope = cloud_bound_at_height(origin + ray * cursor, max(1.0, cursor * angular_footprint), previous_weather,
                 (ray_height(ray * cursor) - (base_radius - planet_radius)) / (top_radius - base_radius));
 
@@ -142,7 +142,7 @@ vec4 cloud_radiance(vec3 origin, vec3 ray, float scene_distance, float angular_f
         step_length = min(step_length, boundary - cursor);
         if (step_length <= 0.0) { break; }
         float sample_footprint = max(1.0, (cursor + step_length) * angular_footprint);
-        vec2 next_weather = weather_at(origin + ray * (cursor + step_length));
+        vec2 next_weather = weather_at(origin + ray * (cursor + step_length), sample_footprint);
         float next_envelope = cloud_bound_at_height(origin + ray * (cursor + step_length), sample_footprint, next_weather,
             (ray_height(ray * (cursor + step_length)) - (base_radius - planet_radius)) / (top_radius - base_radius));
         float middle_envelope = cloud_bound_at_height(origin + ray * (cursor + step_length * 0.5), sample_footprint,

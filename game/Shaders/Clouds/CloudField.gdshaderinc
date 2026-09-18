@@ -2,7 +2,7 @@
 #ifndef CLOUD_COMPUTE
 uniform sampler2D cloud_map : filter_linear_mipmap, repeat_enable;
 uniform sampler3D shape_noise : filter_linear_mipmap, repeat_enable;
-uniform sampler3D detail_noise : filter_linear, repeat_enable;
+uniform sampler3D detail_noise : filter_linear_mipmap, repeat_enable;
 uniform float base_radius = 1275400.0;
 uniform float top_radius = 1281200.0;
 uniform mat3 cloud_frame = mat3(1.0);
@@ -16,13 +16,33 @@ vec3 cloud_unspin(vec3 p) {
 
 }
 
-vec2 weather_at(vec3 p) {
+// Two texels under a footprint at most: any finer, and the march strides past a distant cloud
+// on one frame and through it the next, while the map's jitter flickers it under TAA.
+float noise_lod(float footprint, float frequency, float texels) {
+
+    return log2(max(1.0, footprint * frequency * texels * 3.0));
+
+}
+
+float shape_lod_at(float footprint, float frequency) {
+
+    return noise_lod(footprint, frequency, float(textureSize(shape_noise, 0).x));
+
+}
+
+float detail_lod_at(float footprint, float frequency) {
+
+    return noise_lod(footprint, frequency, float(textureSize(detail_noise, 0).x));
+
+}
+
+vec2 weather_at(vec3 p, float footprint) {
 
     vec3 fixed_p = cloud_unspin(p);
     vec3 up = normalize(fixed_p);
     vec2 uv = vec2(atan(-up.z, up.x) / TAU + 0.5, 0.5 - asin(clamp(up.y, -1.0, 1.0)) / PI);
     float cover = pow(textureLod(cloud_map, uv, 3.0).r, 0.65);
-    float weather = textureLod(shape_noise, up * base_radius * 0.000007, 0.0).r;
+    float weather = textureLod(shape_noise, up * base_radius * 0.000007, shape_lod_at(footprint, 0.000007)).r;
     float coastal_weather = 1.0 - smoothstep(30000.0, 100000.0, length(up - coastal_weather_direction) * base_radius);
     float coverage = clamp(mix((cover - 0.22) * 1.35, 0.28 + cover * 0.64, coastal_weather)
         + (weather - 0.5) * 0.5, 0.0, 0.92);
@@ -48,14 +68,14 @@ vec4 cloud_base_sample(vec3 p, float footprint, vec2 conditions, float height, b
     vec3 warp = sin(regional.yzx * vec3(1.31, 0.91, 1.73) + sin(regional.zxy * 0.67)) * 6500.0;
     warp += (weather - 0.5) * 11000.0 * vec3(0.63, -0.51, 0.58);
 
-    float shape_lod = log2(max(1.0, footprint * 0.00010 * float(textureSize(shape_noise, 0).x) * 1.5));
+    float shape_lod = shape_lod_at(footprint, 0.00010);
     float shape = textureLod(shape_noise, (fixed_p + warp) * 0.00010, shape_lod).r;
     float billow_resolved = 1.0 - smoothstep(120.0, 600.0, footprint);
     float billow = envelope_only ? 0.0 : 0.5;
-    if (!envelope_only && billow_resolved > 0.001) { billow = textureLod(detail_noise, (fixed_p + warp * 0.3) * 0.00043, 0.0).r; }
+    if (!envelope_only && billow_resolved > 0.001) { billow = textureLod(detail_noise, (fixed_p + warp * 0.3) * 0.00043, detail_lod_at(footprint, 0.00043)).r; }
     float meso_resolved = 1.0 - smoothstep(45.0, 160.0, footprint);
     float meso = envelope_only ? 0.0 : 0.5;
-    if (!envelope_only && meso_resolved > 0.001) { meso = textureLod(detail_noise, fixed_p * 0.0014, 0.0).r; }
+    if (!envelope_only && meso_resolved > 0.001) { meso = textureLod(detail_noise, fixed_p * 0.0014, detail_lod_at(footprint, 0.0014)).r; }
     shape += (0.5 - billow) * 0.28 * billow_resolved + (0.5 - meso) * 0.20 * meso_resolved;
     float sheet = smoothstep(0.35, 0.72, coverage) * (1.0 - convection * 0.45);
     shape = mix(shape, shape * 0.45 + 0.36, sheet);
@@ -106,7 +126,7 @@ float density_from_base(vec3 p, float footprint, vec4 base) {
     if (close > 0.002) {
 
         vec3 fixed_p = cloud_unspin(p);
-        float fray = textureLod(detail_noise, fixed_p * 0.0045, 0.0).r;
+        float fray = textureLod(detail_noise, fixed_p * 0.0045, detail_lod_at(footprint, 0.0045)).r;
 
         body = max(body - fray * 0.35 * close * (1.0 - body), 0.0);
 
@@ -127,7 +147,7 @@ float density_at(vec3 p, float footprint) {
 
     float radius = length(p);
     if (radius <= base_radius || radius >= top_radius) { return 0.0; }
-    return density_in_weather(p, footprint, weather_at(p));
+    return density_in_weather(p, footprint, weather_at(p, footprint));
 
 }
 
@@ -143,7 +163,7 @@ float cloud_transmittance(vec3 p, vec3 sun, float extinction_coefficient) {
     if (length(p) < base_radius && inner > 0.0) { start = max(0.0, -b + sqrt(inner)); }
     float stride = max(finish - start, 0.0) / 6.0;
     float optical = 0.0;
-    vec2 conditions = weather_at(p + sun * (start + stride * 3.0));
+    vec2 conditions = weather_at(p + sun * (start + stride * 3.0), max(stride, 1200.0));
     for (int i = 0; i < 6; i++) {
 
         vec3 sample_position = p + sun * (start + (float(i) + 0.5) * stride);

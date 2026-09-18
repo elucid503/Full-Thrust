@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cps30tpn4xpvd"
-path="res://.godot/imported/wave_normal.png-b117249f3b29098952ce031befd0ac26.ctex"
+path="res://.godot/imported/wave_normal.png-d9bdb9bd47d8810e865675287dce5ef3.ctex"
 metadata={
 "vram_texture": false
 }
@@ -11,7 +11,7 @@ metadata={
 [deps]
 
 source_file="res://Assets/Planet/Ground/wave_normal.png"
-dest_files=["res://.godot/imported/wave_normal.png-b117249f3b29098952ce031befd0ac26.ctex"]
+dest_files=["res://.godot/imported/wave_normal.png-d9bdb9bd47d8810e865675287dce5ef3.ctex"]
 
 [params]
 

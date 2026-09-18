@@ -16,6 +16,22 @@ public static class Frames {
     /// origin back to the vessel a frame after the camera has taken it away.</summary>
     public static Vector3d? Anchor { get; set; }
 
+    // The origin is pinned to the ground, not to inertial space: a pad turns at ninety metres a
+    // second, and an origin left behind drags every shadow texel and float rounding through the
+    // scene each frame. Held body-fixed and read back at the current spin.
+    private static Vector3d _fixedOrigin = Vector3d.Zero;
+    private static CelestialBody _body;
+    private static double _time;
+
+    public static void Follow(CelestialBody body, double time) {
+
+        _body = body;
+        _time = time;
+
+        Origin = body.ToInertial(_fixedOrigin, time);
+
+    }
+
     public static void Rebase(Vector3d focus) {
 
         if (Anchor.HasValue) {
@@ -24,13 +40,16 @@ public static class Frames {
 
         }
 
-        if ((focus - Origin).LengthSquared < RebaseDistance * RebaseDistance) {
+        Vector3d fixedFocus = _body != null ? _body.ToBodyFixed(focus, _time) : focus;
+
+        if ((fixedFocus - _fixedOrigin).LengthSquared < RebaseDistance * RebaseDistance) {
 
             return;
 
         }
 
-        Origin = focus;
+        _fixedOrigin = fixedFocus;
+        Origin = _body != null ? _body.ToInertial(_fixedOrigin, _time) : focus;
 
     }
 

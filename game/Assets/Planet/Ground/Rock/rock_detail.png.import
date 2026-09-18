@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://xbackr874wln"
-path="res://.godot/imported/rock_detail.png-66dad64f61d808a935fd6527defba5c4.ctex"
+path="res://.godot/imported/rock_detail.png-0f33470ef945de5d7e00206fa204f3bf.ctex"
 metadata={
 "vram_texture": false
 }
@@ -11,7 +11,7 @@ metadata={
 [deps]
 
 source_file="res://Assets/Planet/Ground/Rock/rock_detail.png"
-dest_files=["res://.godot/imported/rock_detail.png-66dad64f61d808a935fd6527defba5c4.ctex"]
+dest_files=["res://.godot/imported/rock_detail.png-0f33470ef945de5d7e00206fa204f3bf.ctex"]
 
 [params]
 

@@ -1,3 +1,5 @@
+using FullThrust.Sim;
+
 using Godot;
 
 namespace FullThrust.Game;
@@ -105,9 +107,7 @@ public sealed partial class OrbitCamera : Node3D {
 
     /// <summary>Swings the arm and then lifts the eye clear of the ground, so a chase view close to
     /// the surface cannot end up looking at the inside of a hill.</summary>
-    public void Sync(Vector3 focus, Vector3 centre, float floor) {
-
-        Vector3 vertical = (focus - centre).Normalized();
+    public void Sync(Vector3 focus, Vector3 vertical, float floor) {
 
         Frames.Horizon(vertical, out Vector3 side, out Vector3 ahead);
 
@@ -119,13 +119,15 @@ public sealed partial class OrbitCamera : Node3D {
 
         Vector3 eye = focus + arm * Distance;
 
-        Vector3 radial = eye - centre;
+        // In double: a radius of a million metres cut to float steps by an eighth of a metre, and
+        // an eye held on the floor would step with it every frame.
+        Vector3d radial = Frames.Origin + Frames.Sim(eye);
 
-        float height = radial.Length();
+        double height = radial.Length;
 
-        if (height > 0.0f && height < floor) {
+        if (height > 0.0 && height < floor) {
 
-            eye = centre + radial * (floor / height);
+            eye = Frames.Point(radial * (floor / height));
 
         }
 
@@ -137,12 +139,12 @@ public sealed partial class OrbitCamera : Node3D {
 
         _camera.LookAt(GlobalPosition, Mathf.Abs(look.Dot(vertical)) > 0.999f ? Vector3.Up : vertical);
 
-        FullThrust.Sim.Vessel vessel = Flight.Active?.Vessel;
+        Vessel vessel = Flight.Active?.Vessel;
 
         if (vessel != null && !Flight.Active.DebugPaused) {
 
             float altitude = (float)Flight.Active.Altitude;
-            float amplitude = (float)vessel.Throttle * (1.0f - Mathf.SmoothStep(80, 1200, altitude)) * 0.0012f;
+            float amplitude = vessel.CurrentThrust > 0.0 ? (float)vessel.Throttle * (1.0f - Mathf.SmoothStep(80, 1200, altitude)) * 0.0012f : 0.0f;
             float time = (float)(Flight.Active.Time % 100.0);
             _camera.RotateObjectLocal(Vector3.Right, amplitude * (Mathf.Sin(time * 37.0f) + 0.4f * Mathf.Sin(time * 63.0f)));
             _camera.RotateObjectLocal(Vector3.Up, amplitude * 0.6f * Mathf.Sin(time * 43.0f));

@@ -110,7 +110,7 @@ public sealed partial class Planet : Node3D {
             _sharedCloudShape = GD.Load<NoiseTexture3D>("res://Effects/Clouds/CloudShape.tres");
             _sharedCloudDetail = GD.Load<NoiseTexture3D>("res://Effects/Clouds/CloudDetail.tres");
             _sharedCloudShape.Changed += () => Callable.From(FilterCloudShape).CallDeferred();
-            _sharedCloudDetail.Changed += () => Callable.From(() => _detailReady = true).CallDeferred();
+            _sharedCloudDetail.Changed += () => Callable.From(FilterCloudDetail).CallDeferred();
 
         }
         _cloudShape = _sharedCloudShape;
@@ -362,13 +362,14 @@ public sealed partial class Planet : Node3D {
         if (_shapeReady && _cloudShape != _sharedCloudShape) {
 
             _cloudShape = _sharedCloudShape;
-            _clouds.SetShaderParameter("shape_noise", _cloudShape);
-            foreach (ShaderMaterial face in _faces) {
+            Publish("shape_noise", _cloudShape);
 
-                face.SetShaderParameter("shape_noise", _cloudShape);
+        }
 
-            }
-            _cloudShadows.SetShape(_cloudShape);
+        if (_detailReady && _cloudDetail != _sharedCloudDetail) {
+
+            _cloudDetail = _sharedCloudDetail;
+            Publish("detail_noise", _cloudDetail);
 
         }
 
@@ -424,19 +425,37 @@ public sealed partial class Planet : Node3D {
 
     }
 
-    private static void FilterCloudShape() {
+    private void Publish(string name, Texture3D volume) {
 
-        if (_shapeReady || _sharedCloudShape == null || _sharedCloudShape.HasMipmaps()) {
+        _clouds.SetShaderParameter(name, volume);
+        foreach (ShaderMaterial face in _faces) {
 
-            _shapeReady = _sharedCloudShape != null;
+            face.SetShaderParameter(name, volume);
+
+        }
+        _cloudShadows.SetVolume(name, volume);
+
+    }
+
+    private static void FilterCloudShape() => Filter(ref _sharedCloudShape, ref _shapeReady);
+
+    private static void FilterCloudDetail() => Filter(ref _sharedCloudDetail, ref _detailReady);
+
+    // Every octave is fetched at a mip matched to its footprint; without one the fine detail is
+    // sub-pixel noise from any height and re-rolls the cloud fringes with each frame's motion.
+    private static void Filter(ref Texture3D volume, ref bool ready) {
+
+        if (ready || volume == null || volume.HasMipmaps()) {
+
+            ready = volume != null;
             return;
 
         }
 
         try {
 
-            _sharedCloudShape = FilteredVolume.Build(_sharedCloudShape);
-            _shapeReady = true;
+            volume = FilteredVolume.Build(volume);
+            ready = true;
 
         }
         catch (Exception exception) {

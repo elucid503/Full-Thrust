@@ -185,6 +185,7 @@ public sealed partial class Main : Node3D {
         if (!SceneTransition.Loading) { _flight.Advance(delta); }
         // Camera cuts and paused loading still need a precise floating origin.
         Frames.Anchor = FreeCamera.Flying ? _free.Where : null;
+        Frames.Follow(_flight.Body, _flight.Time);
         Frames.Rebase(_flight.Vessel.Position);
 
         FlightMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
@@ -210,7 +211,7 @@ public sealed partial class Main : Node3D {
         // close enough to the ground under the camera at any arm length it can be swung to.
         float clearance = (float)(_flight.Body.SurfaceRadiusUnder(_flight.Vessel.Position, _flight.Time) + 2.0);
 
-        _camera.Sync(focus, Frames.Point(Vector3d.Zero), clearance);
+        _camera.Sync(focus, up, clearance);
 
         _free.Fly(SceneTransition.Loading ? 0.0 : delta);
         _map.Sync(delta);

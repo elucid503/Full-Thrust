@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bqi8knv2dpefq"
-path="res://.godot/imported/Birch_Leaves_Green.png-b707ff5259b7a16dcd192eadd1fce1ac.ctex"
+path="res://.godot/imported/Birch_Leaves_Green.png-ecd50f399ea3ddc1cb526638ea467e1d.ctex"
 metadata={
 "vram_texture": false
 }
@@ -11,7 +11,7 @@ metadata={
 [deps]
 
 source_file="res://Assets/Trees/Birch/Birch_Leaves_Green.png"
-dest_files=["res://.godot/imported/Birch_Leaves_Green.png-b707ff5259b7a16dcd192eadd1fce1ac.ctex"]
+dest_files=["res://.godot/imported/Birch_Leaves_Green.png-ecd50f399ea3ddc1cb526638ea467e1d.ctex"]
 
 [params]
 

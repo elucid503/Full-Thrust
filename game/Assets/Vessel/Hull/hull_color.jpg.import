@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bgvmj1bykgiwb"
-path.bptc="res://.godot/imported/hull_color.jpg-1dafd551924eda2ce79abcee8e5c45a4.bptc.ctex"
+path.bptc="res://.godot/imported/hull_color.jpg-b39da38574cc6189b396e9b8867f4382.bptc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
@@ -12,7 +12,7 @@ metadata={
 [deps]
 
 source_file="res://Assets/Vessel/Hull/hull_color.jpg"
-dest_files=["res://.godot/imported/hull_color.jpg-1dafd551924eda2ce79abcee8e5c45a4.bptc.ctex"]
+dest_files=["res://.godot/imported/hull_color.jpg-b39da38574cc6189b396e9b8867f4382.bptc.ctex"]
 
 [params]
 

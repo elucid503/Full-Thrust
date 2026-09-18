@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bdlhf11rfrp7m"
-path="res://.godot/imported/climate_1.png-d4b323cc63fb019a2aff4b96aafb4c0f.ctex"
+path="res://.godot/imported/climate_1.png-049e92d997edb449faefc1d2c31f0c25.ctex"
 metadata={
 "vram_texture": false
 }
@@ -11,7 +11,7 @@ metadata={
 [deps]
 
 source_file="res://Assets/Planet/Climate/climate_1.png"
-dest_files=["res://.godot/imported/climate_1.png-d4b323cc63fb019a2aff4b96aafb4c0f.ctex"]
+dest_files=["res://.godot/imported/climate_1.png-049e92d997edb449faefc1d2c31f0c25.ctex"]
 
 [params]
 

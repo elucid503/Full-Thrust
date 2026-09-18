@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://yc3q7pidvdeh"
-path="res://.godot/imported/night_0.jpg-21cb8a8fd62477fcd5159db7aebf7ff0.ctex"
+path="res://.godot/imported/night_0.jpg-ba13cc644fea8a48c323bf42d25693f1.ctex"
 metadata={
 "vram_texture": false
 }
@@ -11,7 +11,7 @@ metadata={
 [deps]
 
 source_file="res://Assets/Planet/Night/night_0.jpg"
-dest_files=["res://.godot/imported/night_0.jpg-21cb8a8fd62477fcd5159db7aebf7ff0.ctex"]
+dest_files=["res://.godot/imported/night_0.jpg-ba13cc644fea8a48c323bf42d25693f1.ctex"]
 
 [params]
 

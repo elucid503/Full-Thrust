@@ -1,3 +1,0 @@
-1. Cloud flickering in map
-2. Shadow flickering
-3. Camera shaking

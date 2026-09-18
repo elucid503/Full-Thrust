@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dx3ht3k8aehnd"
-path="res://.godot/imported/surface_1.jpg-0c63a0fc19682560ed00af8db3412a71.ctex"
+path="res://.godot/imported/surface_1.jpg-117e473c3ac4ef7529c48bfa0cd329c4.ctex"
 metadata={
 "vram_texture": false
 }
@@ -11,7 +11,7 @@ metadata={
 [deps]
 
 source_file="res://Assets/Planet/Surface/surface_1.jpg"
-dest_files=["res://.godot/imported/surface_1.jpg-0c63a0fc19682560ed00af8db3412a71.ctex"]
+dest_files=["res://.godot/imported/surface_1.jpg-117e473c3ac4ef7529c48bfa0cd329c4.ctex"]
 
 [params]
 

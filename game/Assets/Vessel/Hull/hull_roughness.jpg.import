@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cwsh7uw1x6ims"
-path.bptc="res://.godot/imported/hull_roughness.jpg-d7495f62a9d2e44c1d58b9975a22715a.bptc.ctex"
+path.bptc="res://.godot/imported/hull_roughness.jpg-dd7893e06e2bfd727ff6312ebf1b0611.bptc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
@@ -12,7 +12,7 @@ metadata={
 [deps]
 
 source_file="res://Assets/Vessel/Hull/hull_roughness.jpg"
-dest_files=["res://.godot/imported/hull_roughness.jpg-d7495f62a9d2e44c1d58b9975a22715a.bptc.ctex"]
+dest_files=["res://.godot/imported/hull_roughness.jpg-dd7893e06e2bfd727ff6312ebf1b0611.bptc.ctex"]
 
 [params]
 
