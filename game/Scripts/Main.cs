@@ -314,7 +314,7 @@ public sealed partial class Main : Node3D {
 
     private Godot.Environment BuildEnvironment() {
 
-        _starfield = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Sky.gdshader") };
+        _starfield = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Atmosphere/Sky.gdshader") };
 
         _starfield.SetShaderParameter("star_map", GD.Load<Texture2D>("res://Assets/Sky/stars.png"));
 

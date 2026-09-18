@@ -1,0 +1,11 @@
+[gd_resource type="ShaderMaterial" load_steps=2 format=3]
+
+[ext_resource type="Shader" path="res://Shaders/Exhaust/Plume.gdshader" id="1"]
+
+[resource]
+render_priority = 3
+shader = ExtResource("1")
+shader_parameter/length_radii = 70.0
+shader_parameter/air_spread = 0.045
+shader_parameter/vacuum_spread = 0.16
+shader_parameter/brightness = 2.0

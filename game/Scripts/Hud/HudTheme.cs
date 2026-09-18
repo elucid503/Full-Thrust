@@ -51,11 +51,11 @@ public static class HudTheme {
 
     static HudTheme() {
 
-        Label = GD.Load<Font>("res://Assets/Fonts/IBMPlexSansCondensed-Regular.ttf");
-        Strong = GD.Load<Font>("res://Assets/Fonts/IBMPlexSansCondensed-SemiBold.ttf");
+        Label = GD.Load<Font>("res://Assets/Fonts/IBMPlex/IBMPlexSansCondensed-Regular.ttf");
+        Strong = GD.Load<Font>("res://Assets/Fonts/IBMPlex/IBMPlexSansCondensed-SemiBold.ttf");
 
-        Numeral = GD.Load<Font>("res://Assets/Fonts/JetBrainsMono-Regular.ttf");
-        NumeralStrong = GD.Load<Font>("res://Assets/Fonts/JetBrainsMono-Medium.ttf");
+        Numeral = GD.Load<Font>("res://Assets/Fonts/JetBrainsMono/JetBrainsMono-Regular.ttf");
+        NumeralStrong = GD.Load<Font>("res://Assets/Fonts/JetBrainsMono/JetBrainsMono-Medium.ttf");
 
         Tick = Mark(true);
         Blank = Mark(false);
