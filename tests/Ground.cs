@@ -114,7 +114,6 @@ public static partial class Program {
         ShorelineLandforms();
         GroundConcurrency(terrain);
         GroundContact(terrain);
-        ExhaustTerrain(terrain);
 
     }
 

@@ -103,8 +103,6 @@ public sealed partial class RenderingStabilityChecks : Node {
                 Check((await Read()).R < 0.01f, $"cloud opacity {alpha} occludes only fog behind it");
 
             }
-            GeometryHistoryChecks.Run();
-            _checks++;
             GD.Print($"Rendering stability: {_checks} GPU checks passed");
             GetTree().Quit();
 

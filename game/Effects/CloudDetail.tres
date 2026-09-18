@@ -1,0 +1,16 @@
+[gd_resource type="NoiseTexture3D" load_steps=2 format=3]
+
+[sub_resource type="FastNoiseLite" id="Noise"]
+noise_type = 2
+frequency = 0.0375
+fractal_type = 0
+cellular_distance_function = 0
+cellular_return_type = 1
+
+[resource]
+width = 128
+height = 128
+depth = 128
+seamless = true
+normalize = true
+noise = SubResource("Noise")

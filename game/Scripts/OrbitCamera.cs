@@ -139,7 +139,7 @@ public sealed partial class OrbitCamera : Node3D {
 
         FullThrust.Sim.Vessel vessel = Flight.Active?.Vessel;
 
-        if (GraphicsOptions.LaunchShake && vessel != null && !Flight.Active.DebugPaused) {
+        if (vessel != null && !Flight.Active.DebugPaused) {
 
             float altitude = (float)Flight.Active.Altitude;
             float amplitude = (float)vessel.Throttle * (1.0f - Mathf.SmoothStep(80, 1200, altitude)) * 0.0012f;

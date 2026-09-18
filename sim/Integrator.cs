@@ -24,7 +24,7 @@ public static class Integrator {
 
         Vector3d inertia = vessel.Inertia;
         Vector3d rate = vessel.AngularVelocity;
-        Vector3d torque = vessel.AppliedControlTorque + vessel.Aero.Torque + vessel.ExhaustTorque;
+        Vector3d torque = vessel.AppliedControlTorque + vessel.Aero.Torque;
 
         Vector3d angularAcceleration = new Vector3d(
 
@@ -81,7 +81,7 @@ public static class Integrator {
         double available = flow > 0.0 ? Math.Min(1.0, vessel.PropellantMass / (flow * dt)) : 1.0;
         flow *= available;
 
-        Vector3d push = (vessel.Active.EngineCount > 0 ? vessel.Orientation.Rotate(vessel.EngineForce) : vessel.Nose * thrust) * available + vessel.RcsForce + vessel.Aero.Force + vessel.ExhaustForce;
+        Vector3d push = (vessel.Active.EngineCount > 0 ? vessel.Orientation.Rotate(vessel.EngineForce) : vessel.Nose * thrust) * available + vessel.RcsForce + vessel.Aero.Force;
 
         double mu = body.Mu;
 

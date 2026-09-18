@@ -58,7 +58,7 @@ public sealed partial class Main : Node3D {
         _earthshine = GetNode<DirectionalLight3D>("Earthshine");
         _earthlight = GetNode<ReflectionProbe>("Earthlight");
         _environment = GetNode<WorldEnvironment>("WorldEnvironment");
-        _environment.Compositor = null;
+        _environment.Compositor = new Compositor { CompositorEffects = new Godot.Collections.Array<CompositorEffect> { _planet.CloudPass } };
 
         _sun.LookAtFromPosition(Vector3.Zero, -SunDirection, Vector3.Up);
 
@@ -109,7 +109,7 @@ public sealed partial class Main : Node3D {
         _vessel.Build(_flight.Vessel);
         _hud.Build(_flight);
         _debug.Build(this, _flight, _free, _camera, _hud);
-        AddChild(new GraphicsOptions { Name = "GraphicsOptions" });
+        DisplayServer.WindowSetMode(DisplayServer.WindowMode.Fullscreen);
 
         _flight.Staged += Release;
         _flight.Scrubbed += Scrub;

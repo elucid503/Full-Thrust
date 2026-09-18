@@ -130,19 +130,6 @@ public static partial class Program {
         Expect("autopilot settles with physical gimbal lag", steered.AngularVelocity.Length < 0.015 && Vector3d.Dot(steered.Nose, pilot.ManeuverDirection) > 0.999,
             $"rate={steered.AngularVelocity.Length} alignment={Vector3d.Dot(steered.Nose, pilot.ManeuverDirection)}");
 
-        Exhaust atmospheric = Nozzle.Expand(11000000.0, 12.0, 1.22, 1.0, 101325.0, 0.4);
-        PlumeFlow calm = PlumeFlow.Solve(atmospheric, 0.4, 1.0, 1.225, Vector3d.Zero);
-        PlumeFlow cross = PlumeFlow.Solve(atmospheric, 0.4, 1.0, 1.225, Vector3d.UnitX * 700.0);
-        PlumeFlow retro = PlumeFlow.Solve(atmospheric, 0.4, 1.0, 1.225, Vector3d.UnitZ * 1800.0);
-        PlumeFlow forward = PlumeFlow.Solve(atmospheric, 0.4, 1.0, 1.225, -Vector3d.UnitZ * 1800.0);
-        PlumeFlow space = PlumeFlow.Solve(Nozzle.Expand(11000000.0, 12.0, 1.22, 1.0, 0.0, 0.4), 0.4, 1.0, 0.0, Vector3d.UnitZ * 5000.0);
-        Expect("crossflow bends exhaust toward moving air", cross.Bend.X > 0.0 && cross.Bend.Length < cross.Length, $"{cross.Bend}");
-        Expect("opposing flow compresses and spreads the tail", retro.Opposing > 0.9 && retro.Standoff < calm.Length, $"{retro}");
-        Near("following air does not make a retropropulsion blanket", forward.Opposing, 0.0, 0.0);
-        Expect("vacuum expands without aerodynamic bending", space.Spread > calm.Spread && space.Opposing == 0.0 && space.Bend.Length == 0.0, $"{space}");
-        Near("ordinary exhaust does not soot surfaces upstream", calm.SootExposure(Vector3d.UnitZ * 5.0), 0.0, 0.0);
-        Expect("retro flow can return soot toward the vehicle", retro.SootExposure(new Vector3d(1.0, 0.0, 1.0)) > 0.01, $"{retro.SootExposure(new Vector3d(1.0, 0.0, 1.0))}");
-
     }
 
 }

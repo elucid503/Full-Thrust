@@ -15,9 +15,6 @@ public sealed partial class Planet : Node3D {
     private const float CloudBase = 900.0f;
     private const float CloudTop = 3800.0f;
 
-    // Where the shadow is taken from, which is the middle of the deck rather than either edge.
-    private const float ShadowDeck = 1900.0f;
-
     public static Planet Active { get; private set; }
 
     private CelestialBody _body;
@@ -35,12 +32,11 @@ public sealed partial class Planet : Node3D {
 
     private ShaderMaterial[] _faces;
     private ShaderMaterial _clouds;
+    public CloudRender CloudPass { get; } = new();
     private Texture3D _cloudShape;
     private Texture3D _cloudDetail;
-    private Texture3D _smokeNoise;
     private static Texture3D _sharedCloudShape;
     private static Texture3D _sharedCloudDetail;
-    private static Texture3D _sharedSmokeNoise;
     private static bool _shapeReady;
     private static bool _detailReady;
     public bool CloudTexturesReady => _shapeReady && _detailReady;
@@ -54,7 +50,7 @@ public sealed partial class Planet : Node3D {
 
     public override void _ExitTree() {
 
-        foreach (SurfaceWake wake in _surfaceWakes) { wake.Field?.Dispose(); }
+        CloudPass.Release();
         if (Active == this) { Active = null; }
 
     }
@@ -111,17 +107,14 @@ public sealed partial class Planet : Node3D {
 
         if (_sharedCloudShape == null) {
 
-            _sharedCloudShape = Volume(256, 0.0175f, 5);
-            _sharedCloudDetail = Worley(128, 0.0375f);
-            _sharedSmokeNoise = Worley(64, 0.055f);
+            _sharedCloudShape = GD.Load<NoiseTexture3D>("res://Effects/CloudShape.tres");
+            _sharedCloudDetail = GD.Load<NoiseTexture3D>("res://Effects/CloudDetail.tres");
             _sharedCloudShape.Changed += () => Callable.From(FilterCloudShape).CallDeferred();
             _sharedCloudDetail.Changed += () => Callable.From(() => _detailReady = true).CallDeferred();
 
         }
         _cloudShape = _sharedCloudShape;
         _cloudDetail = _sharedCloudDetail;
-        _smokeNoise = _sharedSmokeNoise;
-        BuildSurfaceVolumes();
 
         BuildFaces(radius, cloud, sunDirection);
 
@@ -279,7 +272,6 @@ public sealed partial class Planet : Node3D {
             material.SetShaderParameter("soil_normal", soilNormal);
 
             material.SetShaderParameter("planet_radius", radius);
-            material.SetShaderParameter("cloud_altitude", ShadowDeck);
             material.SetShaderParameter("sun_direction", sunDirection);
 
             _faces[face] = material;
@@ -398,7 +390,6 @@ public sealed partial class Planet : Node3D {
         _ground.Sync(time, flightEye ?? eye);
         if (_mapOpen) { _mapGround.Sync(time, eye); }
         _cloudShadows.Sync(_body, time, eye, Main.SunDirection);
-        SyncEffects(time);
 
         Basis cloudFrame = CloudWind.Frame(_body, time);
         Vector3d scatterEye = flightEye ?? eye;
@@ -422,10 +413,10 @@ public sealed partial class Planet : Node3D {
 
         _clouds.SetShaderParameter("planet_centre", centre);
         _clouds.SetShaderParameter("cloud_frame", cloudFrame);
-        _clouds.SetShaderParameter("view_steps", GraphicsOptions.CloudSteps);
-        _clouds.SetShaderParameter("sample_phase", (float)((Engine.GetProcessFrames() % 1024) * 0.61803398875 % 1.0));
         _clouds.SetShaderParameter("eye_height", (float)(eye.Length - _body.Radius));
         _clouds.SetShaderParameter("eye_up", Frames.Direction(eye.Normalized));
+
+        CloudPass.Sync(_clouds, _deck.Visible);
 
         _atmosphere.SetShaderParameter("planet_centre", centre);
         _atmosphere.SetShaderParameter("sun_shafts", 1.0f);
@@ -452,64 +443,6 @@ public sealed partial class Planet : Node3D {
             GD.PushError($"Cloud mip volume failed: {exception.Message}");
 
         }
-
-    }
-
-    // A single cellular octave preserves the distance contrast needed for cloud billows and erosion.
-    private static NoiseTexture3D Worley(int size, float frequency) {
-
-        FastNoiseLite noise = new FastNoiseLite {
-
-            NoiseType = FastNoiseLite.NoiseTypeEnum.Cellular,
-            CellularReturnType = FastNoiseLite.CellularReturnTypeEnum.Distance,
-            CellularDistanceFunction = FastNoiseLite.CellularDistanceFunctionEnum.Euclidean,
-
-            Frequency = frequency,
-
-            FractalType = FastNoiseLite.FractalTypeEnum.None,
-
-        };
-
-        return new NoiseTexture3D {
-
-            Noise = noise,
-
-            Width = size,
-            Height = size,
-            Depth = size,
-
-            Seamless = true,
-            Normalize = true,
-
-        };
-
-    }
-
-    private static NoiseTexture3D Volume(int size, float frequency, int octaves) {
-
-        FastNoiseLite noise = new FastNoiseLite {
-
-            NoiseType = FastNoiseLite.NoiseTypeEnum.Perlin,
-            Frequency = frequency,
-
-            FractalType = FastNoiseLite.FractalTypeEnum.Fbm,
-            FractalOctaves = octaves,
-            FractalGain = 0.55f,
-
-        };
-
-        return new NoiseTexture3D {
-
-            Noise = noise,
-
-            Width = size,
-            Height = size,
-            Depth = size,
-
-            Seamless = true,
-            Normalize = true,
-
-        };
 
     }
 

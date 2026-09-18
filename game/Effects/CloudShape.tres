@@ -1,0 +1,15 @@
+[gd_resource type="NoiseTexture3D" load_steps=2 format=3]
+
+[sub_resource type="FastNoiseLite" id="Noise"]
+noise_type = 3
+frequency = 0.0175
+fractal_octaves = 5
+fractal_gain = 0.55
+
+[resource]
+width = 256
+height = 256
+depth = 256
+seamless = true
+normalize = true
+noise = SubResource("Noise")

@@ -1,5 +1,7 @@
+#ifndef CLOUD_COMPUTE
 uniform float eye_height = 0.0;
 uniform vec3 eye_up = vec3(0.0, 1.0, 0.0);
+#endif
 
 float ray_height(vec3 offset) {
 

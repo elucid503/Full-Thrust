@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.Reflection;
 
 using FullThrust.Sim;
@@ -208,17 +207,6 @@ public sealed partial class WaterRegressionChecks : Node {
 
                 using Image shot = GetViewport().GetTexture().GetImage();
                 shot.SavePng("res://.artifacts/water-close-exhaust.png");
-                IList wakes = (IList)typeof(Planet).GetField("_surfaceWakes", Fields).GetValue(Planet.Active);
-                int sprays = 0;
-                foreach (object wake in wakes) {
-
-                    if (!(bool)wake.GetType().GetField("Water").GetValue(wake)) { continue; }
-                    IList puffs = (IList)wake.GetType().GetField("Puffs").GetValue(wake);
-                    Check(puffs.Count == 0, "water exhaust does not spawn detached spherical puffs");
-                    sprays++;
-
-                }
-                Check(sprays > 0, "moving exhaust produces a bounded water spray");
                 Check(Planet.Active.WorkerFailures == 0, "camera travel produces no terrain worker failures");
                 GD.Print($"Water regression: {_checks} checks passed");
                 GetTree().Quit();

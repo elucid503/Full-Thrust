@@ -60,7 +60,6 @@ uniform float detail_contrast : hint_range(0.0, 1.0) = 0.32;
 uniform float rock_slope_low = 0.05;
 uniform float rock_slope_high = 0.32;
 
-uniform float snow_line = 520.0;
 uniform float snow_band = 180.0;
 
 uniform vec3 shallow_colour : source_color = vec3(0.045, 0.155, 0.178);
@@ -83,7 +82,6 @@ uniform float sea_roughness_far = 0.28;
 uniform float swell_near = 1.5;
 uniform float swell_far = 26.0;
 
-uniform float cloud_altitude = 9000.0;
 uniform float cloud_shadow : hint_range(0.0, 1.0) = 0.32;
 
 uniform float snow_albedo : hint_range(0.4, 1.0) = 0.72;
@@ -110,7 +108,6 @@ instance uniform float lod_morph : instance_index(0) = 0.0;
 
 #include "res://Shaders/CloudField.gdshaderinc"
 #include "res://Shaders/OceanField.gdshaderinc"
-#include "res://Shaders/OceanSurface.gdshaderinc"
 #include "res://Shaders/CloudShadowSampling.gdshaderinc"
 
 instance uniform float mesh_spacing : instance_index(1) = 1.0;
@@ -134,7 +131,6 @@ void vertex() {
     vec4 wave = ocean_wave(fixed_vertex, mesh_spacing * (1.0 + lod_morph), CUSTOM0.w);
     vec3 up = normalize(world_position - planet_centre);
     float displacement = wave.x * ocean_room * local;
-    displacement += ocean_pressure(world_position - water_impact.xyz, up, water_impact.w, impact_strength).x * ocean_room * local;
     VERTEX += inverse(mat3(MODEL_MATRIX)) * up * displacement;
     world_position += up * displacement;
 
@@ -418,37 +414,25 @@ void fragment() {
     // real snow leaves for direct illumination and blue-sky shadow.
     ground = mix(ground, vec3(snow_albedo * 0.82, snow_albedo * 0.88, snow_albedo * 0.94), snow);
 
-    vec3 local_fixed = vec3(terrain_rotation.x * world_position.x - terrain_rotation.y * world_position.z,
-        world_position.y, terrain_rotation.y * world_position.x + terrain_rotation.x * world_position.z);
-    vec4 ripples = vec4(0.0);
-    if (sea > 0.001) { ripples = ocean_ripples(local_fixed, footprint); }
     float coherent_swell = 1.0 - smoothstep(0.5, 3.0, footprint);
-    vec3 fixed_gradient = geometric_wave.yzw * coherent_swell + ripples.xyz * smoothstep(0.0, 0.5, depth);
+    vec3 fixed_gradient = geometric_wave.yzw * coherent_swell;
     vec3 wave_gradient = vec3(terrain_rotation.x * fixed_gradient.x + terrain_rotation.y * fixed_gradient.z,
         fixed_gradient.y, -terrain_rotation.y * fixed_gradient.x + terrain_rotation.x * fixed_gradient.z);
-    wave_gradient += ocean_pressure(world_position - water_impact.xyz, up, water_impact.w, impact_strength).yzw;
     // Water must not inherit the sloping land normals of shoreline triangles.
     vec3 water_view_normal = mat3(VIEW_MATRIX) * normalize(up - wave_gradient);
     vec3 swell = vec3(dot(water_view_normal, normalize(TANGENT)),
         dot(water_view_normal, normalize(BINORMAL)), dot(water_view_normal, normalize(NORMAL)));
     float swell_fade = 1.0 - smoothstep(swell_near, swell_far, footprint);
-    float wave_variance = ripples.w;
+    float wave_variance = 0.0;
     for (int i = 0; i < 4; i++) {
 
         float slope = min(ocean_modes[i].y, depth * 0.08) * ocean_modes[i].x / ocean_radius;
         wave_variance += 0.25 * slope * slope * (1.0 - coherent_swell * coherent_swell);
 
     }
-    vec3 impact_offset = world_position - water_impact.xyz;
-    impact_offset -= up * dot(impact_offset, up);
-    float impact_distance = length(impact_offset);
-    float impact = exp(-pow(impact_distance / max(water_impact.w * 1.6, 1.0), 2.0)) * impact_strength;
-
     float shore_tint = 1.0 - smoothstep(40.0, 180.0, max(-coast_distance, 0.0));
     float shallow = exp(-depth / shallow_depth);
     vec3 water = mix(deep_colour, shallow_colour, shallow * shallow * shallow_strength * shore_tint);
-    float aeration = impact * smoothstep(0.0, 0.4, depth) * 0.55;
-    water = mix(water, vec3(0.19, 0.28, 0.29), aeration);
 
     float land_relief = detail_relief * detail * (1.0 - snow * 0.45);
     float sea_relief = 1.0;
@@ -479,7 +463,6 @@ void fragment() {
     vec3 dn_dx = dFdx(water_view_normal);
     vec3 dn_dy = dFdy(water_view_normal);
     swell_roughness = sqrt(min(swell_roughness * swell_roughness + 0.35 * (dot(dn_dx, dn_dx) + dot(dn_dy, dn_dy)), 0.36));
-    swell_roughness = mix(swell_roughness, 0.42, aeration);
 
     float land_roughness = mix(0.86, 0.68, bare);
 
@@ -503,23 +486,6 @@ void fragment() {
 
     vec3 lights = max(texture(night_map, UV).rgb - night_floor, vec3(0.0)) / (1.0 - night_floor);
     float ascent = smoothstep(350.0, 1800.0, camera_altitude);
-    if (night * ascent > 0.001) {
-
-        vec2 district = atan(UV * 2.0 - 1.0) * planet_radius / 128.0;
-        vec2 block = floor(district);
-        vec2 lamp = vec2(landscape_hash(vec3(block, 7.0)), landscape_hash(vec3(block, 19.0)));
-        float density = smoothstep(0.015, 0.25, dot(lights, vec3(0.2126, 0.7152, 0.0722)));
-        float ward = landscape_noise(fixed_position / 650.0);
-        float occupied = step(lamp.y, density * smoothstep(0.20, 0.65, ward + density * 0.30));
-        lamp = lamp.x < 0.5 ? vec2(0.10, lamp.y) : vec2(lamp.y, 0.10);
-        float radius = max(0.020, footprint / 128.0 * 0.65);
-        float point = exp(-dot(fract(district) - lamp, fract(district) - lamp) / (radius * radius));
-        point *= 0.008 / (radius * radius) * occupied;
-        float pattern = mix(point, 0.025 * density, smoothstep(24.0, 100.0, footprint));
-        vec3 warmth = mix(vec3(1.0, 0.48, 0.16), vec3(1.0, 0.85, 0.60), lamp.x);
-        lights = mix(lights * warmth * pattern * 32.0, lights, smoothstep(160.0, 500.0, footprint));
-
-    }
     lights *= ascent;
 
     float sky_day = smoothstep(-0.08, 0.22, dot(up, sun_direction));

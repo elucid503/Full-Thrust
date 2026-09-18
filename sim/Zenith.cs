@@ -67,12 +67,6 @@ public static class Zenith {
     public const double ThrustNewtons = 1_500_000.0;
     public const double SpecificImpulse = 300.0;
 
-    // A staged-combustion chamber. With the bell drawn above it the exit pressure lands a little
-    // under an atmosphere: full-flowing at sea level, which is what a first stage has to be.
-    public const double ChamberPressure = 11_000_000.0;
-
-    public static readonly double ExpansionRatio = EngineMouthRadius * EngineMouthRadius / (EngineThroatRadius * EngineThroatRadius);
-
     public static Hull BuildHull() {
 
         Hull.Station[] stations = {
@@ -241,8 +235,6 @@ public static class Zenith {
             ThrustNewtons = ThrustNewtons,
             SpecificImpulse = SpecificImpulse,
 
-            ChamberPressure = ChamberPressure,
-            ExpansionRatio = ExpansionRatio,
 
             MixtureRatio = MixtureRatio,
 

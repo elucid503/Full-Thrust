@@ -33,3 +33,4 @@ anti_aliasing/quality/screen_space_aa=0
 anti_aliasing/quality/use_debanding=true
 scaling_3d/mode=1
 scaling_3d/scale=0.75
+scaling_3d/fsr_sharpness=0.2

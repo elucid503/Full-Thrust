@@ -1,5 +1,5 @@
-#include "res://Shaders/EnvironmentField.gdshaderinc"
 
+#ifndef CLOUD_COMPUTE
 uniform sampler2D cloud_map : filter_linear_mipmap, repeat_enable;
 uniform sampler3D shape_noise : filter_linear_mipmap, repeat_enable;
 uniform sampler3D detail_noise : filter_linear, repeat_enable;
@@ -8,6 +8,7 @@ uniform float top_radius = 1281200.0;
 uniform mat3 cloud_frame = mat3(1.0);
 uniform float weather_coverage = 0.0;
 uniform vec3 coastal_weather_direction = vec3(0.143, 0.478, 0.867);
+#endif
 
 vec3 cloud_unspin(vec3 p) {
 
@@ -91,7 +92,7 @@ float cloud_envelope(vec3 p, float footprint, vec2 conditions) {
 
 }
 
-float undisturbed_density_from_base(vec3 p, float footprint, vec4 base) {
+float density_from_base(vec3 p, float footprint, vec4 base) {
 
     float body = clamp(base.x, 0.0, 1.0);
     if (body < 0.001) { return 0.0; }
@@ -113,13 +114,6 @@ float undisturbed_density_from_base(vec3 p, float footprint, vec4 base) {
 
     body = smoothstep(0.015, 0.35, body);
     return body * base.y * mix(0.85, 1.25, base.z);
-
-}
-
-float density_from_base(vec3 p, float footprint, vec4 base) {
-
-    float density = undisturbed_density_from_base(p, footprint, base);
-    return density > 0.0 ? density * (1.0 - plume_clearance(p)) : 0.0;
 
 }
 

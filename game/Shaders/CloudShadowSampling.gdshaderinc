@@ -1,9 +1,11 @@
+#ifndef CLOUD_COMPUTE
 uniform sampler2D local_cloud_shadow : filter_linear, repeat_disable;
 uniform vec3 shadow_centre;
 uniform vec3 shadow_east;
 uniform vec3 shadow_north;
 uniform float shadow_ready = 0.0;
 uniform float shadow_span = 16000.0;
+#endif
 
 float filtered_cloud_transmission(vec2 uv, float footprint) {
 

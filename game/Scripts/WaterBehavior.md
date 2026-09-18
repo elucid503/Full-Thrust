@@ -21,15 +21,11 @@ amplitudes and small-wave roughness respond to sea state. Each component is limi
 of local depth, so the combined trough cannot penetrate the seabed. Geometry fades unresolved
 waves and follows terrain LOD morphing; shading resolves waves by pixel footprint.
 
-Close detail uses 12 curved wave packets and three independently advected irregular bands
-at 80, 26, and 8 cm scales. The bands use analytic noise derivatives rather than a tiled normal
-texture, breaking up the long regular ridges in reflections. Their time and origin phases are
-reduced in doubles before the shader uses small local coordinates. Camera movement and
-floating-origin rebases therefore preserve the pattern. Unresolved wave slopes contribute to
-roughness; the specular lobe no longer forces a 0.158 minimum effective roughness on water.
-As the pixel footprint grows, 6.3 m and 23.7 m irregular bands take over distant normals.
-Coherent swell slopes blend into roughness between 0.5 and 3 m per pixel, preventing
-the aerial sun reflection from resolving only four repetitive wave trains. This adds no textures.
+Rendering uses only those four shared swells. The separate twelve-packet ripple spectrum,
+five procedural noise bands and their per-frame CPU phase updates have been removed.
+Unresolved swell slopes blend into material roughness between 0.5 and 3 metres per pixel.
+Close water is intentionally smoother; buoyancy, wave heights and geographic shorelines
+retain the same simulation model.
 
 The dispersion uses the deep-water gravity-wave relation described in
 [NOAA's wave measurement procedures](https://www.ndbc.noaa.gov/wavemeas.pdf).
@@ -48,12 +44,8 @@ sloping land. Roughness derivatives use that same normal, avoiding reflection ba
 terrain triangles. Shallow tint is limited to 12% strength, a 12-metre depth scale, and a shore
 distance fade from 40 to 180 metres. It no longer paints a green shelf across broad shallow areas.
 
-Water exhaust contact uses a small Gaussian pressure depression, local aeration, and a low,
-wind-swept spray sheet. It fades with a 0.25-second time constant after contact stops and
-expires after 1.5 seconds. Water does not emit the old spherical steam puffs. Dry-ground
-dust and launch-pad deluge retain their volumetric emitters. Effects follow simulation time,
-including pause, and clustered nozzles aggregate only within the same rendered frame.
-These effects are bounded visual approximations rather than a fluid solver.
+Exhaust contact effects (pressure depression, aeration, spray, dust and deluge) have been removed.
+Water rendering and vessel buoyancy do not depend on engine effects.
 
 Water contact integrates displaced volume over 24 hull slices, with circular segment
 centroids for tilted hulls. Buoyancy acts at those centroids; exponential point-drag impulses
@@ -78,18 +70,18 @@ overlap, avoiding the previous cycle of tiny falls and corrections at rest.
   rotating-ground rest, and sliding friction alongside the existing simulation suite.
 - Godot with Vulkan, `res://Tests/OceanChecks.tscn`: CPU/GPU height and slope comparison at five
   global positions, three depths and three times (through ten million seconds), actual
-  `Flight.Advance` splashdown, ripple phase after origin changes, and F1 preset/layout checks.
+  `Flight.Advance` splashdown and F1 preset/layout checks.
 - Godot with Vulkan, `res://Tests/OceanVisualChecks.tscn`: fair/gale/F1 screenshots in `.artifacts`,
   coastal water frame time, and terrain worker failure count.
 - Existing `CloudWindChecks.tscn` and `FlightTerrainChecks.tscn` cover cloud motion and ground contact.
 - `WaterRegressionChecks.tscn` samples the rendered land/water mask against geographic
   coordinates at near range, after 6.5 km of camera travel/rebasing, and after another camera
-  direction and elapsed time. It also captures close moving exhaust and verifies water wakes
-  contain no spherical puffs. Pass `-- --close-only` to run just the close exhaust capture.
+  direction and elapsed time. It also captures the near-water view during vessel movement.
+  Pass `-- --close-only` to run just the close capture.
 - `WaterRegressionChecks.tscn -- --stress` exercises 4,500 frames of rapid coastal travel,
   dives from 2 km, below-surface crossings, and stops for terrain uploads to finish.
 - `OceanVisualChecks.tscn -- --glint` faces the sun reflection at close range; add `--native`
-  to compare against the selected upscaling quality without changing saved settings.
+  for a test-only comparison against the fixed 75% scene scale.
 - `tools/trace-water.ps1` launches normal gameplay with timestamped engine and console logs
   under `.artifacts`, including camera coordinates, altitude, terrain job counts, and process
   exit code. It enables `FT_SURFACE_TRACE` only for that launch. Use these logs to investigate

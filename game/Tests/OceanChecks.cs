@@ -58,30 +58,6 @@ public sealed partial class OceanChecks : Node {
                 }
 
             }
-            material.Shader = new Shader { Code = "shader_type canvas_item; render_mode unshaded;\n#include \"res://Shaders/OceanSurface.gdshaderinc\"\nuniform vec3 probe; uniform float footprint; void fragment() { COLOR = vec4(vec3(0.5) + ocean_ripples(probe, footprint).xyz, 1.0); }" };
-            Vector4[] rippleDirections = new Vector4[Planet.RippleCount];
-            Vector4[] rippleStates = new Vector4[Planet.RippleCount];
-            Vector3d ripplePoint = body.ToInertial(Weather.Origin * body.Radius, 1234.0);
-            Color reference = default;
-            foreach (float footprint in new[] { 0.03f, 3.0f, 15.0f }) {
-
-                material.SetShaderParameter("footprint", footprint);
-                foreach (double offset in new[] { 0.0, 500.0, 6500.0 }) {
-
-                    Vector3d origin = ripplePoint + Vector3d.UnitX * offset;
-                    Planet.SetRipples(material, body, 1234.0, origin, rippleDirections, rippleStates);
-                    material.SetShaderParameter("probe", Frames.Direction(body.ToBodyFixed(ripplePoint - origin, 1234.0)));
-                    await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
-                    await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
-                    using Image result = viewport.GetTexture().GetImage();
-                    Color colour = result.GetPixel(4, 4);
-                    if (offset == 0.0) { reference = colour; }
-                    Check(Math.Abs(colour.R - reference.R) + Math.Abs(colour.G - reference.G) + Math.Abs(colour.B - reference.B) < 0.025,
-                        $"water detail preserves phase across {offset} m origin movement at {footprint} m footprint");
-
-                }
-
-            }
             viewport.Size = new Vector2I(512, 8);
             viewport.GetChild<ColorRect>(0).Size = new Vector2(512, 8);
             using Image ramp = Image.CreateEmpty(2, 2, false, Image.Format.Rf);

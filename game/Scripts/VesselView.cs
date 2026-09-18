@@ -65,13 +65,9 @@ public sealed partial class VesselView : Node3D {
         public Node3D Node { get; init; }
 
         public float BellRadius { get; set; }
-        public SootCoating Soot;
         public readonly List<Engine> Engines = new List<Engine>();
 
         public readonly List<Jet> Jets = new List<Jet>();
-        public List<(Node3D Node, TriangleMesh Surface)> ExhaustSurfaces;
-        public Vector3 ExhaustLow;
-        public Vector3 ExhaustHigh;
         public EntryField SingleEntry;
         public EntryField StackEntry;
         public readonly List<StandardMaterial3D> Skins = new List<StandardMaterial3D>();

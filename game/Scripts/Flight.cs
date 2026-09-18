@@ -260,7 +260,6 @@ public sealed partial class Flight : Node {
             double interval = ContactInterval(remaining);
             Time += interval;
 
-            VesselView.UpdateExhaustLoads();
 
             foreach (Tracked track in _traffic) {
 

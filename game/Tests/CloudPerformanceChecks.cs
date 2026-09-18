@@ -26,10 +26,10 @@ public sealed partial class CloudPerformanceChecks : Node {
             Flight flight = Flight.Active;
             flight.DebugPaused = true;
             Viewport viewport = GetViewport();
-            viewport.Scaling3DScale = 0.75f;
             RenderingServer.ViewportSetMeasureRenderTime(viewport.GetViewportRid(), true);
-            for (int i = 0; i < 3600 && !Planet.Active.CloudTexturesReady; i++) { await Frames(1); }
+            for (int i = 0; i < 3600 && (!Planet.Active.CloudTexturesReady || !Planet.Active.CloudPass.Ready); i++) { await Frames(1); }
             if (!Planet.Active.CloudTexturesReady) { throw new InvalidOperationException("Cloud textures did not finish generating"); }
+            if (!Planet.Active.CloudPass.Ready) { throw new InvalidOperationException("Cloud compute pass did not initialize"); }
 
             string label = OS.GetEnvironment("FT_CLOUD_BENCHMARK");
             if (string.IsNullOrEmpty(label)) { label = "review"; }
@@ -59,7 +59,6 @@ public sealed partial class CloudPerformanceChecks : Node {
                 }
                 Array.Sort(gpu);
                 GD.Print($"BENCH {name}: GPU median {gpu[60]:F3} ms, p95 {gpu[114]:F3} ms, max {gpu[119]:F3} ms");
-                if (name == "powered") { GD.Print($"Powered cloud wakes: {Planet.Active.CloudWakeCount}"); }
                 using Image image = viewport.GetTexture().GetImage();
                 image.SavePng($"{directory}/{name}.png");
 

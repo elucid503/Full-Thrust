@@ -19,7 +19,7 @@ public sealed partial class CloudShadows : Node {
     private SubViewport _backLightingViewport;
     private ShaderMaterial _lightingMaterial;
     private ShaderMaterial _backLightingMaterial;
-    private ShaderMaterial[] _wakeMaterials;
+    private ShaderMaterial[] _materials;
     private Vector3d _visibleAnchor;
     private Vector3d _visibleEast;
     private Vector3d _visibleNorth;
@@ -75,7 +75,7 @@ public sealed partial class CloudShadows : Node {
         _backLightingMaterial = (ShaderMaterial)_lightingMaterial.Duplicate();
         _lightingViewport = LightingViewport(_lightingMaterial);
         _backLightingViewport = LightingViewport(_backLightingMaterial);
-        _wakeMaterials = new[] { _material, _backMaterial, _lightingMaterial, _backLightingMaterial };
+        _materials = new[] { _material, _backMaterial, _lightingMaterial, _backLightingMaterial };
 
     }
 
@@ -103,22 +103,9 @@ public sealed partial class CloudShadows : Node {
 
     }
 
-    public void SetWakes(int count, Vector4[] centres, Vector4[] axes, Vector4[] states) {
-
-        foreach (ShaderMaterial material in _wakeMaterials) {
-
-            material.SetShaderParameter("wake_count", count);
-            material.SetShaderParameter("wake_centres", centres);
-            material.SetShaderParameter("wake_axes", axes);
-            material.SetShaderParameter("wake_states", states);
-
-        }
-
-    }
-
     public void SetShape(Texture3D shape) {
 
-        foreach (ShaderMaterial material in _wakeMaterials) {
+        foreach (ShaderMaterial material in _materials) {
 
             material.SetShaderParameter("shape_noise", shape);
 
@@ -128,7 +115,7 @@ public sealed partial class CloudShadows : Node {
 
     public void SetWeather(float coverage) {
 
-        foreach (ShaderMaterial material in _wakeMaterials) { material.SetShaderParameter("weather_coverage", coverage); }
+        foreach (ShaderMaterial material in _materials) { material.SetShaderParameter("weather_coverage", coverage); }
 
     }
 

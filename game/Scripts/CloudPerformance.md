@@ -1,58 +1,81 @@
-# Cloud performance
+# Cloud rendering
 
-The current cloud path supersedes the older quality-preset and fog-ordering descriptions in
-EnvironmentRendering.md. F2 remains limited to Native, Quality, Performance, and Fullscreen;
-this pass does not change render scales, TAA, cloud coverage, or the source volume textures.
+Clouds and coastal fog run in a Godot CompositorEffect before transparent geometry.
+The compute pass reads the current camera projection and resolved scene depth, and writes
+HDR colour/opacity plus distance at half the scene resolution in each dimension. This runs
+the expensive integration for one quarter of the pixels. Native terrain, vessels, HUD and
+other effects retain their normal resolution.
 
-Cloud rays have a fixed budget of 96 coarse intervals, with four density samples in occupied
-intervals and sixteen where an exhaust wake intersects. The nearest interval is 192 metres;
-subsequent strides grow by 4%, or with the pixel footprint when that is larger. A geometric
-budget reserves traversal for both sides of the cloud shell. Nearby sample positions therefore
-do not change when distant terrain clips the ray. This replaces the previous upper bound of
-640 intervals with eight density samples each. Early opacity termination normally ends much sooner.
+The spatial cloud pass combines four nearby samples using scene-depth weights. Unmatched
+silhouettes use the same integration at full resolution, preserving small vessels and terrain
+edges. CloudMarch.gdshaderinc is shared by the compute pass, this fallback and GPU regressions;
+there is no second cloud model or previous-frame reprojection. Noise filtering uses the actual cloud-buffer pixel footprint to suppress distant aliasing.
+Sampling noise is fixed in screen space and fades to midpoint samples at long ray distances;
+there is no frame-varying jitter without a cloud history buffer to accumulate it.
+Local coastal fog fades out from 10 to 20 km altitude. The main atmosphere still renders
+from orbit; disabling the local pass there removes its grid-shaped precision artifacts.
 
-Coarse bounds fetch only the shape volume, accounting for the maximum possible contribution of
-the omitted detail octaves. Fine density still evaluates the original field. Rays outside the wake
-bound skip all capsule-density work. The solar-cache projection is calculated once per ray, and
-broad sunlight is interpolated across each occupied interval; local density still shades each sample.
+CloudRender publishes immutable scene parameters to the render thread. Target allocation,
+compute commands and resource retirement happen there; texture bindings change on the main
+thread before spatial draw lists are prepared. A short retirement delay protects in-flight
+bindings during resize. Planet teardown explicitly releases all compositor allocations.
 
-The lighting cache is now 256 by 256 over 64 km, sufficient to sample its 550-metre density footprint
-twice per feature. This quarters refresh pixel work. HDR storage avoids quantizing optical depth
-to 1/255 of its 16-unit range. The sharper terrain-shadow cache remains 512 by 512 over 16 km.
-Stratified sample offsets cycle through the existing TAA history to suppress march banding.
+The existing spherical deck, coherent wind, volume mip filtering and shadow/lighting caches
+remain. A sky-only cloud pass cannot obscure terrain from above the deck. Local fog volumes
+would need another representation for orbital views. This path preserves the existing
+surface-to-orbit cloud model while using Godot's lower-resolution compute and compositing APIs.
 
-Only real planet intersections clip cloud rays. Opaque termination absorbs the final sub-1%
-transmission so a background horizon cannot bleed through. Fog extinction is split at the cloud's
-optical centroid in one march; only the remaining cloud transmission exposes fog farther away.
-Descending fog bins composite in reverse order. The centroid remains an approximation for mixed,
-partially transparent layers, rather than a full joint cloud/fog transport solution.
+The game always starts fullscreen. Rendering has one authored configuration in project.godot:
+75% 3D scale with FSR, TAA, no MSAA, and a half-resolution cloud target. There is no F2 panel,
+quality selector, fullscreen toggle, graphics.cfg loading/saving, or debug resolution override.
+Test scenes may explicitly resize their window to exercise rendering transitions.
 
-## Validation
+## Verification
 
-Build `game/FullThrust.Game.csproj`, then run these scenes using Vulkan, not the headless renderer:
+Build game/FullThrust.Game.csproj and run the scenes with Godot .NET / Vulkan:
 
-- `res://Tests/CloudVolumeChecks.tscn`: density, exhaust wakes, compensated heights, horizon
-  continuity, opaque termination and foreground depth clipping using the production marcher.
-- `res://Tests/RenderingStabilityChecks.tscn`: volume mips and premultiplied air/cloud/fog compositing.
-- `res://Tests/CloudPerformanceChecks.tscn`: full-scene GPU timings and captures below, inside and
-  above the deck, along a grazing ray, in orbit, and during powered flight with up to eight cloud wakes.
+- CloudPipelineChecks: fullscreen startup, absence of settings controls, half/full-resolution
+  image comparison below/inside/above clouds and in orbit, and target resize.
+- CloudVolumeChecks: density, deck limits, precise radial height, horizon and foreground clipping.
+- RenderingStabilityChecks: 3D texture mips and premultiplied atmosphere/cloud/fog composition.
+- CloudWindChecks: GPU/CPU frame agreement, poles and long simulation times.
+- TransitionChecks: map/free-camera changes, rebasing, terrain retention and restart.
+- CloudPerformanceChecks: full-scene GPU timing and captures at six views; set
+  FT_CLOUD_BENCHMARK to label the output under game/.artifacts/cloud-<label>.
 
-Set `FT_CLOUD_BENCHMARK` to a short label to separate captures under `.artifacts/cloud-<label>`.
-The benchmark uses the 75% Quality scale, waits for cloud textures and 120 warm-up frames per view,
-then records 120 viewport GPU samples. It prints the actual viewport size and GPU. GPU timings
-exclude initial compilation and do not assert a hardware-independent frame-time threshold.
+The image comparison uses fixed exposure and paused simulation. At 1280 by 720, mean absolute
+RGB differences from full-resolution integration are 0.5–1.1% across the four tested views.
+This is an image-equivalence check, not a guarantee of identical appearance during all motion.
 
-Measured on an RTX 4060 Ti, Vulkan Forward+, 2560 by 1440 viewport at 75% scale:
+## Measured performance
 
-| View | Previous median GPU ms | Optimized median GPU ms | Optimized p95 ms |
-| --- | ---: | ---: | ---: |
-| Below clouds | 19.75 | 16.79 | 19.61 |
-| Inside clouds | 13.18 | 12.41 | 13.34 |
-| Above clouds | 26.62 | 12.55 | 13.91 |
-| Grazing | 30.15 | 15.63 | 17.49 |
-| Orbit | 6.16 | 6.22 | 6.91 |
-| Powered cloud flight | Not measured | 13.48 | 14.75 |
+RTX 4060 Ti, Vulkan Forward+, 2560 by 1440 display, fixed 75% scene scale.
+Each view uses 120 warm-up frames followed by 120 measured frames. These are whole-viewport
+GPU timings, including terrain, lighting and other effects—not isolated cloud-shader timings.
 
-These are short local runs, not guarantees for every camera position or resolution. The in-cloud
-capture was checked for the removed dark horizon and sampling stripes. Initial engine startup
-reported sandbox certificate/debug-listener and shader-cache-write warnings; the GPU rendered normally.
+| View | Before median ms | After median ms | After p95 ms | Median reduction |
+| --- | ---: | ---: | ---: | ---: |
+| Below | 15.40 | 10.42 | 11.66 | 32.4% |
+| Inside | 11.93 | 9.42 | 10.12 | 21.1% |
+| Above | 12.31 | 9.62 | 10.73 | 21.8% |
+| Grazing | 15.10 | 9.92 | 10.81 | 34.3% |
+| Orbit | 6.49 | 5.76 | 6.25 | 11.3% |
+| Powered | 12.18 | 10.52 | 11.87 | 13.6% |
+
+Captures and raw logs are in game/.artifacts/cloud-before-native, cloud-half-native,
+cloud-before-native-console.log and final-CloudPerformanceChecks-console.log. The moving
+powered-flight case also depends on the evolving flight state; timings are local measurements,
+not a frame-rate guarantee. Runs retain the existing sandbox certificate/cache warnings and
+seven shutdown texture warnings; the compositor adds no remaining allocation warnings.
+
+Final verification also passed all 914 simulation checks, 24 rendering-stability GPU checks,
+9 water regressions, and engine/staging/RCS/re-entry captures. One engine-test launch exited
+with a native access violation during startup without a crash trace; two subsequent complete
+runs passed. That intermittent startup failure remains undiagnosed. Its output is preserved
+in game/.artifacts/cloud-engine-startup-crash.log.
+
+After the distant-cloud and surface cleanup, cloud image/resize checks, 9 coastline checks,
+50 ocean checks and all 914 simulation checks passed. Three terrain/water captures and
+map/restart checks passed on retry; initial runs encountered the previously observed native
+access violations in Forest/GroundScatter workers. Those worker implementations were not
+changed. Follow-up logs use the simplified- prefix under game/.artifacts.

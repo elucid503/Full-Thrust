@@ -1,5 +1,7 @@
+#ifndef CLOUD_COMPUTE
 uniform float fog_enabled = 1.0;
 uniform float sun_shafts = 1.0;
+#endif
 
 const float marine_top = 1200.0;
 const float haze_top = 3000.0;
@@ -7,7 +9,8 @@ const float haze_top = 3000.0;
 vec4 coastal_fog(vec3 origin, vec3 ray, float scene_distance, float cloud_distance, out vec4 foreground) {
 
     foreground = vec4(0.0);
-    if (fog_enabled < 0.5) { return vec4(0.0); }
+    float visibility = fog_enabled * (1.0 - smoothstep(10000.0, 20000.0, eye_height));
+    if (visibility < 0.001) { return vec4(0.0); }
     vec2 shell = eye_sphere_span(ray, planet_radius + haze_top);
     float start = max(shell.x, 0.0);
     float finish = min(shell.y, scene_distance);
@@ -102,6 +105,7 @@ vec4 coastal_fog(vec3 origin, vec3 ray, float scene_distance, float cloud_distan
     }
     vec4 full = vec4(radiance, 1.0 - transmission);
     foreground = cloud_distance >= finish ? full : vec4(front_radiance, 1.0 - front_transmission);
-    return full;
+    foreground *= visibility;
+    return full * visibility;
 
 }

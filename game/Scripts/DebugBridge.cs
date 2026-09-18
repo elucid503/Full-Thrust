@@ -296,16 +296,6 @@ public sealed partial class DebugBridge : Node {
 
         }
 
-        if (float.TryParse(query["scale"], out float scale) && float.IsFinite(scale)) {
-
-            viewport.Scaling3DScale = Mathf.Clamp(scale, 0.5f, 1.0f);
-            viewport.UseTaa = true;
-            viewport.Scaling3DMode = viewport.Scaling3DScale >= 0.999f
-                ? Viewport.Scaling3DModeEnum.Bilinear
-                : Viewport.Scaling3DModeEnum.Fsr;
-
-        }
-
         if (bool.TryParse(query["shadows"], out bool shadows)) { main.GetNode<DirectionalLight3D>("Sun").ShadowEnabled = shadows; }
 
         result["scale"] = viewport.Scaling3DScale;
@@ -843,9 +833,6 @@ public sealed partial class DebugBridge : Node {
             state["vesselIndex"] = flight.VesselIndex;
             state["vesselCount"] = flight.VesselCount;
             state["contacts"] = flight.ContactCount;
-            state["plumeObstacles"] = VesselView.Active?.PlumeObstacles ?? 0;
-            state["exhaustForce"] = flight.Vessel.ExhaustForce.Length;
-            state["exhaustTorque"] = flight.Vessel.ExhaustTorque.Length;
             state["position"] = flight.Vessel.Position.ToString();
             state["angularVelocity"] = flight.Vessel.AngularVelocity.ToString();
             state["altitude"] = flight.Altitude;
@@ -865,8 +852,6 @@ public sealed partial class DebugBridge : Node {
             state["hudMs"] = (GetTree().CurrentScene as Main)?.HudMilliseconds ?? 0.0;
             state["vesselMs"] = (GetTree().CurrentScene as Main)?.VesselMilliseconds ?? 0.0;
             state["planetMs"] = (GetTree().CurrentScene as Main)?.PlanetMilliseconds ?? 0.0;
-            state["cloudSteps"] = GraphicsOptions.CloudSteps;
-            state["cloudWakes"] = Planet.Active?.CloudWakeCount ?? 0;
             state["cloudTexturesReady"] = Planet.Active?.CloudTexturesReady ?? false;
             state["terrainWorkerFailures"] = Planet.Active?.WorkerFailures ?? 0;
             state["terrainPendingJobs"] = Planet.Active?.PendingJobs ?? 0;
@@ -941,8 +926,6 @@ public sealed partial class DebugBridge : Node {
                     ["skinLimit"] = debris.Vessel.SkinLimit,
                     ["throttle"] = debris.Vessel.Throttle,
                     ["thrust"] = debris.Vessel.CurrentThrust,
-                    ["exhaustForce"] = debris.Vessel.ExhaustForce.Length,
-                    ["exhaustTorque"] = debris.Vessel.ExhaustTorque.Length,
                     ["rcsThrust"] = debris.Vessel.RcsForce.Length,
                     ["fuelMass"] = debris.Vessel.FuelMass,
                     ["hold"] = debris.Pilot.Hold.ToString(),

@@ -56,8 +56,6 @@ public sealed partial class Vessel {
     /// by everything else; empty in vacuum.</summary>
     public AeroForces Aero { get; set; }
 
-    public Vector3d ExhaustForce { get; set; }
-    public Vector3d ExhaustTorque { get; set; }
 
     public double SubmergedVolume { get; set; }
     public bool InWater => SubmergedVolume > 0.001;
@@ -467,7 +465,7 @@ public sealed partial class Vessel {
 
     }
 
-    public bool IsAccelerating => (Throttle > 0.0 && EnginesLit > 0 && Active.CanCommandEngines && PropellantMass > 0.0) || Active.HasEngineTransient || CurrentThrust > 0.0 || RcsForce.LengthSquared > 0.0 || ExhaustForce.LengthSquared > 0.0;
+    public bool IsAccelerating => (Throttle > 0.0 && EnginesLit > 0 && Active.CanCommandEngines && PropellantMass > 0.0) || Active.HasEngineTransient || CurrentThrust > 0.0 || RcsForce.LengthSquared > 0.0;
 
     /// <summary>The stage taking the flow. Which end of the stack is forward decides it, which is
     /// why a capsule keeps its shield's rating whichever way round it happens to be pointing.</summary>
