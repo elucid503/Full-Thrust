@@ -1,0 +1,788 @@
+[gd_resource type="Resource" script_class="PlumeTemplate" load_steps=99 format=3]
+
+[ext_resource type="Script" path="res://Scripts/Exhaust/PlumeTemplate.cs" id="1_t"]
+[ext_resource type="Script" path="res://Scripts/Exhaust/PlumeLayer.cs" id="2_l"]
+[ext_resource type="Script" path="res://Scripts/Exhaust/PlumeModifier.cs" id="3_m"]
+[sub_resource type="Curve" id="Curve_1"]
+_data = [Vector2(0.0, 0.0), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_2"]
+script = ExtResource("3_m")
+Controller = 0
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_1")
+
+[sub_resource type="Curve" id="Curve_3"]
+max_value = 1.14
+_data = [Vector2(0.0, 0.86), 0.0, 0.0, 0, 0, Vector2(1.0, 1.14), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_4"]
+script = ExtResource("3_m")
+Controller = 3
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_3")
+
+[sub_resource type="Curve" id="Curve_5"]
+_data = [Vector2(0.0, 0.5), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_6"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_5")
+
+[sub_resource type="Resource" id="Layer_7"]
+script = ExtResource("2_l")
+Name = "Glow"
+Length = 3.0
+Radius = 1.25
+Offset = -0.6
+ExpandOffset = 0.0
+ExpandLinear = 0.4
+ExpandSquare = 0.0
+ExpandBounded = 0.0
+StartTint = Color(1.0, 0.75, 0.55, 1)
+EndTint = Color(1.0, 0.45, 0.25, 1)
+TintFalloff = 1.0
+Brightness = 2.2
+Falloff = 1.0
+FalloffStart = 0.0
+Fresnel = 0.0
+FresnelInvert = 0.0
+FadeIn = 0.0
+FadeOut = 0.5
+Symmetry = 0.0
+SymmetryStrength = 0.0
+Noise = 0.3
+Tile = Vector2(2.0, 1.0)
+Scroll = Vector2(0.0, 4.0)
+CellStrength = 0.0
+CellPinch = 0.0
+CellDecay = 3.0
+Modifiers = Array[ExtResource("3_m")]([SubResource("Modifier_2"), SubResource("Modifier_4"), SubResource("Modifier_6")])
+
+[sub_resource type="Curve" id="Curve_8"]
+_data = [Vector2(0.0, 0.0), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_9"]
+script = ExtResource("3_m")
+Controller = 0
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_8")
+
+[sub_resource type="Curve" id="Curve_10"]
+max_value = 1.7
+_data = [Vector2(0.0, 0.3), 0.0, 0.0, 0, 0, Vector2(0.12, 1.7), 0.0, 0.0, 0, 0, Vector2(0.35, 0.9), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 4
+
+[sub_resource type="Resource" id="Modifier_11"]
+script = ExtResource("3_m")
+Controller = 4
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_10")
+
+[sub_resource type="Curve" id="Curve_12"]
+max_value = 1.15
+_data = [Vector2(0.0, 0.45), 0.0, 0.0, 0, 0, Vector2(0.2, 1.15), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="Resource" id="Modifier_13"]
+script = ExtResource("3_m")
+Controller = 4
+Parameter = 1
+Combine = 0
+Curve = SubResource("Curve_12")
+
+[sub_resource type="Curve" id="Curve_14"]
+_data = [Vector2(0.0, 0.5), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_15"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_14")
+
+[sub_resource type="Curve" id="Curve_16"]
+min_value = -0.15
+max_value = 2.8
+_data = [Vector2(0.0, 2.8), 0.0, 0.0, 0, 0, Vector2(1.0, -0.15), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_17"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 4
+Combine = 2
+Curve = SubResource("Curve_16")
+
+[sub_resource type="Curve" id="Curve_18"]
+_data = [Vector2(0.0, 0.7), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_19"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 1
+Combine = 0
+Curve = SubResource("Curve_18")
+
+[sub_resource type="Curve" id="Curve_20"]
+max_value = 2.2
+_data = [Vector2(0.0, 1.4), 0.0, 0.0, 0, 0, Vector2(1.0, 2.2), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_21"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 7
+Combine = 2
+Curve = SubResource("Curve_20")
+
+[sub_resource type="Resource" id="Layer_22"]
+script = ExtResource("2_l")
+Name = "Core"
+Length = 9.0
+Radius = 0.92
+Offset = -0.35
+ExpandOffset = 0.0
+ExpandLinear = -0.15
+ExpandSquare = 0.0
+ExpandBounded = 0.0
+StartTint = Color(0.55, 0.62, 1.0, 1)
+EndTint = Color(0.8, 0.55, 0.9, 1)
+TintFalloff = 0.6
+Brightness = 4.0
+Falloff = 2.2
+FalloffStart = 0.0
+Fresnel = 0.6
+FresnelInvert = 0.0
+FadeIn = 0.0
+FadeOut = 0.0
+Symmetry = 0.0
+SymmetryStrength = 0.0
+Noise = 0.6
+Tile = Vector2(3.0, 1.6)
+Scroll = Vector2(0.0, 12.0)
+CellStrength = 0.0
+CellPinch = 0.0
+CellDecay = 3.0
+Modifiers = Array[ExtResource("3_m")]([SubResource("Modifier_9"), SubResource("Modifier_11"), SubResource("Modifier_13"), SubResource("Modifier_15"), SubResource("Modifier_17"), SubResource("Modifier_19"), SubResource("Modifier_21")])
+
+[sub_resource type="Curve" id="Curve_23"]
+_data = [Vector2(0.0, 0.0), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_24"]
+script = ExtResource("3_m")
+Controller = 0
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_23")
+
+[sub_resource type="Curve" id="Curve_25"]
+_data = [Vector2(0.0, 0.5), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_26"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_25")
+
+[sub_resource type="Resource" id="Layer_27"]
+script = ExtResource("2_l")
+Name = "Shock"
+Length = 10.0
+Radius = 0.55
+Offset = 0.0
+ExpandOffset = 0.0
+ExpandLinear = -0.2
+ExpandSquare = 0.0
+ExpandBounded = 0.0
+StartTint = Color(1.0, 0.92, 0.98, 1)
+EndTint = Color(0.95, 0.7, 0.85, 1)
+TintFalloff = 0.5
+Brightness = 0.9
+Falloff = 1.5
+FalloffStart = 0.0
+Fresnel = 0.4
+FresnelInvert = 0.0
+FadeIn = 0.0
+FadeOut = 0.0
+Symmetry = 0.0
+SymmetryStrength = 0.0
+Noise = 0.4
+Tile = Vector2(2.0, 1.0)
+Scroll = Vector2(0.0, 10.0)
+CellStrength = 3.5
+CellPinch = 0.35
+CellDecay = 3.5
+Modifiers = Array[ExtResource("3_m")]([SubResource("Modifier_24"), SubResource("Modifier_26")])
+
+[sub_resource type="Curve" id="Curve_28"]
+_data = [Vector2(0.0, 0.0), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_29"]
+script = ExtResource("3_m")
+Controller = 0
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_28")
+
+[sub_resource type="Curve" id="Curve_30"]
+max_value = 1.14
+_data = [Vector2(0.0, 0.86), 0.0, 0.0, 0, 0, Vector2(1.0, 1.14), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_31"]
+script = ExtResource("3_m")
+Controller = 3
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_30")
+
+[sub_resource type="Curve" id="Curve_32"]
+max_value = 1.15
+_data = [Vector2(0.0, 0.45), 0.0, 0.0, 0, 0, Vector2(0.2, 1.15), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="Resource" id="Modifier_33"]
+script = ExtResource("3_m")
+Controller = 4
+Parameter = 1
+Combine = 0
+Curve = SubResource("Curve_32")
+
+[sub_resource type="Curve" id="Curve_34"]
+max_value = 6.0
+_data = [Vector2(0.0, 6.0), 0.0, 0.0, 0, 0, Vector2(1.0, 0.45), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_35"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 4
+Combine = 2
+Curve = SubResource("Curve_34")
+
+[sub_resource type="Curve" id="Curve_36"]
+max_value = 2.0
+_data = [Vector2(0.0, 2.0), 0.0, 0.0, 0, 0, Vector2(1.0, 0.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_37"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 6
+Combine = 2
+Curve = SubResource("Curve_36")
+
+[sub_resource type="Curve" id="Curve_38"]
+_data = [Vector2(0.0, 0.35), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_39"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_38")
+
+[sub_resource type="Curve" id="Curve_40"]
+max_value = 3.0
+_data = [Vector2(0.0, 1.6), 0.0, 0.0, 0, 0, Vector2(1.0, 3.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_41"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 7
+Combine = 2
+Curve = SubResource("Curve_40")
+
+[sub_resource type="Curve" id="Curve_42"]
+_data = [Vector2(0.0, 1.0), 0.0, 0.0, 0, 0, Vector2(0.4, 1.0), 0.0, 0.0, 0, 0, Vector2(1.0, 0.75), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="Resource" id="Modifier_43"]
+script = ExtResource("3_m")
+Controller = 8
+Parameter = 1
+Combine = 0
+Curve = SubResource("Curve_42")
+
+[sub_resource type="Curve" id="Curve_44"]
+max_value = 2.2
+_data = [Vector2(0.0, 1.3), 0.0, 0.0, 0, 0, Vector2(1.0, 2.2), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_45"]
+script = ExtResource("3_m")
+Controller = 2
+Parameter = 11
+Combine = 2
+Curve = SubResource("Curve_44")
+
+[sub_resource type="Resource" id="Layer_46"]
+script = ExtResource("2_l")
+Name = "Mid"
+Length = 26.0
+Radius = 1.0
+Offset = 0.0
+ExpandOffset = 0.0
+ExpandLinear = 0.45
+ExpandSquare = 0.0
+ExpandBounded = 0.0
+StartTint = Color(0.72, 0.6, 0.95, 1)
+EndTint = Color(0.9, 0.5, 0.6, 1)
+TintFalloff = 0.5
+Brightness = 1.7
+Falloff = 3.0
+FalloffStart = 0.0
+Fresnel = 0.9
+FresnelInvert = 0.0
+FadeIn = 0.0
+FadeOut = 0.0
+Symmetry = 0.0
+SymmetryStrength = 0.0
+Noise = 1.3
+Tile = Vector2(3.0, 2.0)
+Scroll = Vector2(0.0, 6.0)
+CellStrength = 0.0
+CellPinch = 0.0
+CellDecay = 3.0
+Modifiers = Array[ExtResource("3_m")]([SubResource("Modifier_29"), SubResource("Modifier_31"), SubResource("Modifier_33"), SubResource("Modifier_35"), SubResource("Modifier_37"), SubResource("Modifier_39"), SubResource("Modifier_41"), SubResource("Modifier_43"), SubResource("Modifier_45")])
+
+[sub_resource type="Curve" id="Curve_47"]
+_data = [Vector2(0.0, 0.0), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_48"]
+script = ExtResource("3_m")
+Controller = 0
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_47")
+
+[sub_resource type="Curve" id="Curve_49"]
+max_value = 1.14
+_data = [Vector2(0.0, 0.86), 0.0, 0.0, 0, 0, Vector2(1.0, 1.14), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_50"]
+script = ExtResource("3_m")
+Controller = 3
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_49")
+
+[sub_resource type="Curve" id="Curve_51"]
+max_value = 14.0
+_data = [Vector2(0.0, 14.0), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_52"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 4
+Combine = 2
+Curve = SubResource("Curve_51")
+
+[sub_resource type="Curve" id="Curve_53"]
+max_value = 8.0
+_data = [Vector2(0.0, 8.0), 0.0, 0.0, 0, 0, Vector2(1.0, 0.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_54"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 6
+Combine = 2
+Curve = SubResource("Curve_53")
+
+[sub_resource type="Curve" id="Curve_55"]
+_data = [Vector2(0.0, 0.18), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_56"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_55")
+
+[sub_resource type="Curve" id="Curve_57"]
+max_value = 1.3
+_data = [Vector2(0.0, 1.3), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_58"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 1
+Combine = 0
+Curve = SubResource("Curve_57")
+
+[sub_resource type="Curve" id="Curve_59"]
+_data = [Vector2(0.0, 1.0), 0.0, 0.0, 0, 0, Vector2(0.4, 1.0), 0.0, 0.0, 0, 0, Vector2(1.0, 0.6), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="Resource" id="Modifier_60"]
+script = ExtResource("3_m")
+Controller = 8
+Parameter = 1
+Combine = 0
+Curve = SubResource("Curve_59")
+
+[sub_resource type="Curve" id="Curve_61"]
+_data = [Vector2(0.0, 1.0), 0.0, 0.0, 0, 0, Vector2(0.4, 1.0), 0.0, 0.0, 0, 0, Vector2(1.0, 0.65), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="Resource" id="Modifier_62"]
+script = ExtResource("3_m")
+Controller = 8
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_61")
+
+[sub_resource type="Curve" id="Curve_63"]
+_data = [Vector2(0.0, 1.0), 0.0, 0.0, 0, 0, Vector2(0.5, 0.9), 0.0, 0.0, 0, 0, Vector2(1.0, 0.7), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="Resource" id="Modifier_64"]
+script = ExtResource("3_m")
+Controller = 2
+Parameter = 1
+Combine = 0
+Curve = SubResource("Curve_63")
+
+[sub_resource type="Resource" id="Layer_65"]
+script = ExtResource("2_l")
+Name = "Tail"
+Length = 55.0
+Radius = 1.1
+Offset = 0.0
+ExpandOffset = 0.0
+ExpandLinear = 1.0
+ExpandSquare = 0.0
+ExpandBounded = 0.0
+StartTint = Color(0.86, 0.52, 0.62, 1)
+EndTint = Color(0.6, 0.3, 0.4, 1)
+TintFalloff = 0.7
+Brightness = 0.6
+Falloff = 1.6
+FalloffStart = 0.0
+Fresnel = 1.4
+FresnelInvert = 0.0
+FadeIn = 0.05
+FadeOut = 0.0
+Symmetry = 0.0
+SymmetryStrength = 0.0
+Noise = 1.6
+Tile = Vector2(2.0, 1.2)
+Scroll = Vector2(0.0, 2.5)
+CellStrength = 0.0
+CellPinch = 0.0
+CellDecay = 3.0
+Modifiers = Array[ExtResource("3_m")]([SubResource("Modifier_48"), SubResource("Modifier_50"), SubResource("Modifier_52"), SubResource("Modifier_54"), SubResource("Modifier_56"), SubResource("Modifier_58"), SubResource("Modifier_60"), SubResource("Modifier_62"), SubResource("Modifier_64")])
+
+[sub_resource type="Curve" id="Curve_66"]
+_data = [Vector2(0.0, 0.0), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_67"]
+script = ExtResource("3_m")
+Controller = 0
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_66")
+
+[sub_resource type="Curve" id="Curve_68"]
+max_value = 1.14
+_data = [Vector2(0.0, 0.86), 0.0, 0.0, 0, 0, Vector2(1.0, 1.14), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_69"]
+script = ExtResource("3_m")
+Controller = 3
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_68")
+
+[sub_resource type="Curve" id="Curve_70"]
+_data = [Vector2(0.0, 1.0), 0.0, 0.0, 0, 0, Vector2(0.3, 0.0), 0.0, 0.0, 0, 0, Vector2(1.0, 0.0), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="Resource" id="Modifier_71"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_70")
+
+[sub_resource type="Resource" id="Layer_72"]
+script = ExtResource("2_l")
+Name = "Fan"
+Length = 60.0
+Radius = 1.0
+Offset = 0.0
+ExpandOffset = 0.0
+ExpandLinear = 18.0
+ExpandSquare = 0.0
+ExpandBounded = 12.0
+StartTint = Color(0.65, 0.6, 0.95, 1)
+EndTint = Color(0.45, 0.35, 0.5, 1)
+TintFalloff = 0.8
+Brightness = 0.2
+Falloff = 1.2
+FalloffStart = 0.0
+Fresnel = 2.5
+FresnelInvert = 0.0
+FadeIn = 0.03
+FadeOut = 0.0
+Symmetry = 0.0
+SymmetryStrength = 0.0
+Noise = 1.8
+Tile = Vector2(4.0, 0.6)
+Scroll = Vector2(0.0, 1.2)
+CellStrength = 0.0
+CellPinch = 0.0
+CellDecay = 3.0
+Modifiers = Array[ExtResource("3_m")]([SubResource("Modifier_67"), SubResource("Modifier_69"), SubResource("Modifier_71")])
+
+[sub_resource type="Curve" id="Curve_73"]
+max_value = 1.8
+_data = [Vector2(0.0, 0.0), 0.0, 0.0, 0, 0, Vector2(1.0, 1.8), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_74"]
+script = ExtResource("3_m")
+Controller = 7
+Parameter = 0
+Combine = 2
+Curve = SubResource("Curve_73")
+
+[sub_resource type="Curve" id="Curve_75"]
+_data = [Vector2(0.0, 0.19999999999999996), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_76"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_75")
+
+[sub_resource type="Resource" id="Layer_77"]
+script = ExtResource("2_l")
+Name = "Burnoff"
+Length = 8.0
+Radius = 1.3
+Offset = 0.0
+ExpandOffset = 0.0
+ExpandLinear = 1.5
+ExpandSquare = 0.0
+ExpandBounded = 0.0
+StartTint = Color(0.95, 0.6, 0.7, 1)
+EndTint = Color(0.55, 0.15, 0.05, 1)
+TintFalloff = 1.0
+Brightness = 1.0
+Falloff = 1.4
+FalloffStart = 0.0
+Fresnel = 0.8
+FresnelInvert = 0.0
+FadeIn = 0.0
+FadeOut = 0.0
+Symmetry = 0.0
+SymmetryStrength = 0.0
+Noise = 1.8
+Tile = Vector2(3.0, 1.0)
+Scroll = Vector2(0.0, 3.0)
+CellStrength = 0.0
+CellPinch = 0.0
+CellDecay = 3.0
+Modifiers = Array[ExtResource("3_m")]([SubResource("Modifier_74"), SubResource("Modifier_76")])
+
+[sub_resource type="Curve" id="Curve_78"]
+_data = [Vector2(0.0, 0.0), 0.0, 0.0, 0, 0, Vector2(1.0, 0.45), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_79"]
+script = ExtResource("3_m")
+Controller = 6
+Parameter = 0
+Combine = 2
+Curve = SubResource("Curve_78")
+
+[sub_resource type="Resource" id="Layer_80"]
+script = ExtResource("2_l")
+Name = "Purge"
+Length = 12.0
+Radius = 1.0
+Offset = 0.0
+ExpandOffset = 0.0
+ExpandLinear = 2.2
+ExpandSquare = 0.0
+ExpandBounded = 0.6
+StartTint = Color(0.6, 0.62, 0.72, 1)
+EndTint = Color(0.35, 0.36, 0.42, 1)
+TintFalloff = 1.0
+Brightness = 1.0
+Falloff = 1.8
+FalloffStart = 0.0
+Fresnel = 1.2
+FresnelInvert = 0.0
+FadeIn = 0.0
+FadeOut = 0.0
+Symmetry = 0.0
+SymmetryStrength = 0.0
+Noise = 1.6
+Tile = Vector2(2.0, 1.0)
+Scroll = Vector2(0.0, 1.5)
+CellStrength = 0.0
+CellPinch = 0.0
+CellDecay = 3.0
+Modifiers = Array[ExtResource("3_m")]([SubResource("Modifier_79")])
+
+[sub_resource type="Curve" id="Curve_81"]
+_data = [Vector2(0.0, 0.0), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_82"]
+script = ExtResource("3_m")
+Controller = 0
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_81")
+
+[sub_resource type="Curve" id="Curve_83"]
+max_value = 1.14
+_data = [Vector2(0.0, 0.86), 0.0, 0.0, 0, 0, Vector2(1.0, 1.14), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_84"]
+script = ExtResource("3_m")
+Controller = 3
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_83")
+
+[sub_resource type="Curve" id="Curve_85"]
+_data = [Vector2(0.0, 0.0), 0.0, 0.0, 0, 0, Vector2(0.4, 0.3), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="Resource" id="Modifier_86"]
+script = ExtResource("3_m")
+Controller = 8
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_85")
+
+[sub_resource type="Curve" id="Curve_87"]
+max_value = 25.0
+_data = [Vector2(0.0, 25.0), 0.0, 0.0, 0, 0, Vector2(1.0, 0.8), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_88"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 4
+Combine = 2
+Curve = SubResource("Curve_87")
+
+[sub_resource type="Curve" id="Curve_89"]
+_data = [Vector2(0.0, 0.0), 0.0, 0.0, 0, 0, Vector2(0.25, 0.4), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 3
+
+[sub_resource type="Resource" id="Modifier_90"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 0
+Combine = 0
+Curve = SubResource("Curve_89")
+
+[sub_resource type="Curve" id="Curve_91"]
+max_value = 1.5
+_data = [Vector2(0.0, 1.5), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_92"]
+script = ExtResource("3_m")
+Controller = 1
+Parameter = 1
+Combine = 0
+Curve = SubResource("Curve_91")
+
+[sub_resource type="Curve" id="Curve_93"]
+_data = [Vector2(0.0, 1.0), 0.0, 0.0, 0, 0, Vector2(1.0, 0.65), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_94"]
+script = ExtResource("3_m")
+Controller = 2
+Parameter = 1
+Combine = 0
+Curve = SubResource("Curve_93")
+
+[sub_resource type="Resource" id="Layer_95"]
+script = ExtResource("2_l")
+Name = "Merged"
+Length = 70.0
+Radius = 0.9
+Offset = 6.0
+ExpandOffset = 0.0
+ExpandLinear = 0.8
+ExpandSquare = 0.0
+ExpandBounded = 0.0
+StartTint = Color(0.9, 0.5, 0.65, 1)
+EndTint = Color(0.55, 0.25, 0.35, 1)
+TintFalloff = 0.8
+Brightness = 0.25
+Falloff = 1.4
+FalloffStart = 0.0
+Fresnel = 1.5
+FresnelInvert = 0.0
+FadeIn = 0.15
+FadeOut = 0.0
+Symmetry = 0.0
+SymmetryStrength = 0.0
+Noise = 1.7
+Tile = Vector2(2.0, 1.0)
+Scroll = Vector2(0.0, 1.6)
+CellStrength = 0.0
+CellPinch = 0.0
+CellDecay = 3.0
+Modifiers = Array[ExtResource("3_m")]([SubResource("Modifier_82"), SubResource("Modifier_84"), SubResource("Modifier_86"), SubResource("Modifier_88"), SubResource("Modifier_90"), SubResource("Modifier_92"), SubResource("Modifier_94")])
+
+[resource]
+script = ExtResource("1_t")
+Layers = Array[ExtResource("2_l")]([SubResource("Layer_7"), SubResource("Layer_22"), SubResource("Layer_27"), SubResource("Layer_46"), SubResource("Layer_65"), SubResource("Layer_72"), SubResource("Layer_77"), SubResource("Layer_80")])
+ClusterLayers = Array[ExtResource("2_l")]([SubResource("Layer_95")])
+LightColour = Color(0.72, 0.8, 1.0, 1)
+LightAirColour = Color(0.95, 0.6, 0.7, 1)
+LightEnergy = 0.6
+LightRange = 15.0
+GlowColour = Color(1.0, 0.4, 0.12, 1)
+GlowEnergy = 2.8
+HeatRiseSeconds = 2.5
+HeatFallSeconds = 9.0
+Distortion = 1.1
+IgnitionSeconds = 1.1
+CutoffSeconds = 0.9
+FlickerHertz = 6.0
+CellContrast = 1.1
+SmokeColour = Color(0.66, 0.64, 0.64, 1)
+SmokeAmount = 0.9

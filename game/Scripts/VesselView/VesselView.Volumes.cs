@@ -13,23 +13,22 @@ public sealed partial class VesselView {
     private const float NozzleMouth = 0.081f;
     private const float SheathFlux = 150_000.0f;
 
+    // A nozzle rated for nothing is read as a typical booster bell, expanded to four tenths of an atmosphere.
+    private const float DefaultExitPressure = 40_000.0f;
+
     private sealed class Engine {
 
         public int Index { get; init; }
         public string FuelName { get; set; }
         public float Power { get; set; }
         public Node3D Pivot { get; init; }
-
-        public MeshInstance3D Plume { get; init; }
-        public ShaderMaterial PlumeMaterial { get; init; }
-        public OmniLight3D Light { get; init; }
+        public Plume Plume { get; set; }
 
     }
 
     private sealed class Jet {
 
-        public MeshInstance3D Volume { get; init; }
-        public ShaderMaterial Material { get; init; }
+        public Plume Plume { get; init; }
         public Vector3 Exit { get; init; }
         public Vector3 Axis { get; init; }
         public float Radius { get; init; }
@@ -38,7 +37,6 @@ public sealed partial class VesselView {
 
     }
 
-    private static CylinderMesh _flameMesh;
     private static BoxMesh _proxy;
     private static NoiseTexture3D _noise;
     private static int _seeds;
@@ -99,43 +97,94 @@ public sealed partial class VesselView {
 
     }
 
-    private static void Colour(ShaderMaterial material, Chemistry chemistry) {
+    private static void AttachPlume(Node3D pivot, Node3D model, Piece piece, float bellRadius, float reach) {
 
-        material.SetShaderParameter("core_colour", chemistry.Core);
-        material.SetShaderParameter("tail_colour", chemistry.Tail);
-        material.SetShaderParameter("luminosity", chemistry.Luminosity);
-
-    }
-
-    private static void AttachPlume(Node3D pivot, Piece piece, float bellRadius, float reach) {
-
-        ShaderMaterial material = (ShaderMaterial)GD.Load<ShaderMaterial>("res://Effects/Exhaust/Plume.tres").Duplicate();
-        Colour(material, Chemistry.For(piece.Stage.Fuel));
-        MeshInstance3D plume = Flame($"Plume{piece.Engines.Count + 1}", material);
+        PlumeTemplate template = PlumeTemplate.For(piece.Stage.Fuel);
+        Plume plume = Plume.Create($"Plume{piece.Engines.Count + 1}", template, bellRadius);
         plume.Position = new Vector3(0.0f, -reach, 0.0f);
         pivot.AddChild(plume);
-
-        OmniLight3D light = new OmniLight3D {
-
-            Position = new Vector3(0.0f, -reach - bellRadius, 0.0f),
-            OmniRange = bellRadius * 16.0f,
-            OmniAttenuation = 1.8f,
-            ShadowEnabled = false,
-            Visible = false,
-
-        };
-
-        pivot.AddChild(light);
+        BellSkins(model, plume.Bell);
 
         piece.Engines.Add(new Engine {
 
             Index = piece.Engines.Count,
+            FuelName = piece.Stage.Fuel?.Name,
             Pivot = pivot,
             Plume = plume,
-            PlumeMaterial = material,
-            Light = light,
 
         });
+
+    }
+
+    // The lower half of the engine model is the bell. Each engine gets its own copy so it heats alone.
+    private static void BellSkins(Node3D model, List<StandardMaterial3D> skins) {
+
+        Aabb whole = Bounds(model, Transform3D.Identity);
+        float middle = whole.Position.Y + whole.Size.Y * 0.5f;
+
+        foreach (MeshInstance3D mesh in Meshes(model)) {
+
+            Aabb bounds = mesh.GetAabb();
+            Transform3D transform = mesh.Transform;
+
+            for (Node parent = mesh.GetParent(); parent != model && parent != null; parent = parent.GetParent()) {
+
+                if (parent is Node3D spatial) {
+
+                    transform = spatial.Transform * transform;
+
+                }
+
+            }
+
+            if ((transform * bounds).GetCenter().Y > middle) {
+
+                continue;
+
+            }
+
+            for (int surface = 0; surface < mesh.GetSurfaceOverrideMaterialCount(); surface++) {
+
+                if (mesh.GetActiveMaterial(surface) is StandardMaterial3D skin) {
+
+                    StandardMaterial3D copy = (StandardMaterial3D)skin.Duplicate();
+                    mesh.SetSurfaceOverrideMaterial(surface, copy);
+                    skins.Add(copy);
+
+                }
+
+            }
+
+        }
+
+    }
+
+    private static void AttachCluster(Node3D node, Piece piece, float bellRadius, float ring, float deck, float reach) {
+
+        if (piece.Engines.Count < 2) {
+
+            return;
+
+        }
+
+        PlumeTemplate template = PlumeTemplate.For(piece.Stage.Fuel);
+
+        if (template.ClusterLayers.Count == 0) {
+
+            return;
+
+        }
+
+        piece.Cluster = Plume.Create("Cluster", template, ring + bellRadius, cluster: true);
+        piece.Cluster.Position = new Vector3(0.0f, deck - reach, 0.0f);
+        node.AddChild(piece.Cluster);
+
+    }
+
+    private void AttachImpact(Node3D node, Piece piece, float bellRadius) {
+
+        piece.Impact = ExhaustImpact.Create(PlumeTemplate.For(piece.Stage.Fuel), bellRadius, piece.Engines.Count);
+        node.AddChild(piece.Impact);
 
     }
 
@@ -207,10 +256,6 @@ public sealed partial class VesselView {
 
     private static void AttachJet(Node3D node, Piece piece, Vector3 position, Vector3 axis, Vector3 side, float scale, TriangleMesh surface = null) {
 
-        ShaderMaterial material = (ShaderMaterial)GD.Load<ShaderMaterial>("res://Effects/Exhaust/Plume.tres").Duplicate();
-        Colour(material, Chemistry.Hydrazine);
-        MeshInstance3D volume = Flame("Jet", material);
-
         Vector3 exit = position + axis * (NozzleReach * scale);
 
         if (surface != null) {
@@ -223,13 +268,13 @@ public sealed partial class VesselView {
 
         }
 
-        volume.Transform = new Transform3D(new Basis(side, -axis, side.Cross(-axis).Normalized()), exit);
-        node.AddChild(volume);
+        Plume plume = Plume.Create($"Jet{piece.Jets.Count + 1}", PlumeTemplate.Load("Hydrazine"), NozzleMouth * scale, jet: true);
+        plume.Transform = new Transform3D(new Basis(side, -axis, side.Cross(-axis).Normalized()), exit);
+        node.AddChild(plume);
 
         piece.Jets.Add(new Jet {
 
-            Volume = volume,
-            Material = material,
+            Plume = plume,
             Exit = exit,
             Axis = axis,
             Radius = NozzleMouth * scale,
@@ -314,12 +359,22 @@ public sealed partial class VesselView {
 
     private void SyncPlume() {
 
+        CelestialBody body = Flight.Active.Body;
         double now = Flight.Active.Time;
         _effectDelta = Mathf.Max((float)(now - _lastExhaustTime), 0.0f);
         _lastExhaustTime = now;
         _effectTime += _effectDelta;
 
         (float pressure, float density) = Air();
+
+        // Waterfall's atmosphere depth: density to a power that stretches the thin upper air out.
+        float air = Mathf.Pow(Mathf.Clamp(density / 1.225f, 0.0f, 1.0f), 0.512f);
+        float mach = _vessel.Aero.InAir ? Mathf.Clamp((float)_vessel.Aero.Mach / 6.0f, 0.0f, 1.0f) : 0.0f;
+
+        Vector3d relativeAir = body.AirVelocityAt(_vessel.Position, now) - _vessel.Velocity;
+        Vector3 wind = Basis * Frames.Direction(_vessel.Orientation.Conjugate.Rotate(relativeAir));
+        float dynamicPressure = 0.5f * density * wind.LengthSquared();
+        Vector3 surfaceWind = Frames.Direction(body.ToInertial(Weather.Along, now)) * (float)(body.Weather?.WindSpeedAt(now) ?? 0.0);
 
         foreach (Piece piece in _pieces) {
 
@@ -329,72 +384,149 @@ public sealed partial class VesselView {
 
             }
 
-            Chemistry chemistry = Chemistry.For(piece.Stage.Fuel);
-            float air = Mathf.Clamp(density / 1.225f, 0.0f, 1.0f);
+            Stage stage = piece.Stage;
+            float exitPressure = stage.RatingPressurePascals > 0.0 ? (float)stage.RatingPressurePascals : DefaultExitPressure;
+            float thrustEach = (float)stage.ThrustNewtons / Math.Max(stage.EngineCount, 1);
+            float jetPressure = thrustEach / (Mathf.Pi * piece.BellRadius * piece.BellRadius);
+            float lightShare = 1.0f / Mathf.Sqrt(piece.Engines.Count);
+
+            int lit = 0;
+            float powerSum = 0.0f;
+            Vector3d exitSum = Vector3d.Zero;
+            Vector3d axisSum = Vector3d.Zero;
+
+            if (piece.Engines[0].FuelName != stage.Fuel?.Name) {
+
+                Retemplate(piece);
+
+            }
 
             foreach (Engine engine in piece.Engines) {
 
-                EngineState state = piece.Stage.EngineStates[engine.Index];
-                if (engine.FuelName != piece.Stage.Fuel?.Name) {
+                EngineState state = stage.EngineStates[engine.Index];
+                engine.Power = _vessel.Intact ? (float)state.Power : 0.0f;
 
-                    Colour(engine.PlumeMaterial, chemistry);
-                    engine.FuelName = piece.Stage.Fuel?.Name;
+                PlumeInputs inputs = new PlumeInputs {
+
+                    Lit = _vessel.Intact && state.Phase is EnginePhase.Igniting or EnginePhase.Running,
+                    Throttle = engine.Power,
+                    Air = air,
+                    Mach = mach,
+                    Purge = _vessel.Intact ? (float)state.Purge : 0.0f,
+                    Burnoff = _vessel.Intact ? (float)state.Burnoff : 0.0f,
+                    Cluster = piece.Engines.Count > 1 ? (float)stage.EnginesLit / piece.Engines.Count : 0.0f,
+                    LightShare = lightShare,
+
+                    AmbientPressure = pressure,
+                    ExitPressure = exitPressure,
+
+                    EffectTime = _effectTime,
+                    Delta = _effectDelta,
+
+                };
+
+                Flow(engine.Plume, wind, dynamicPressure, jetPressure, ref inputs);
+                engine.Plume.Drive(inputs);
+
+                if (engine.Power > 0.001f) {
+
+                    lit++;
+                    powerSum += engine.Power;
+                    Transform3D nozzle = engine.Plume.GlobalTransform;
+                    exitSum += Frames.Sim(nozzle.Origin) * engine.Power;
+                    axisSum += Frames.Sim(-nozzle.Basis.Y) * engine.Power;
 
                 }
-                engine.Power = _vessel.Intact ? (float)state.Power : 0.0f;
-                engine.PlumeMaterial.SetShaderParameter("purge", (float)state.Purge);
-                engine.PlumeMaterial.SetShaderParameter("burnoff", (float)state.Burnoff);
 
-                bool burning = _vessel.Intact && (engine.Power > 0.0001f || state.Purge > 0.0001 || state.Burnoff > 0.0001);
-                engine.Plume.Visible = burning;
-                engine.Light.Visible = burning;
-                if (!burning) { continue; }
+            }
 
-                DriveVolume(engine.Plume, engine.PlumeMaterial, engine.Power, piece.BellRadius, pressure, false);
+            if (piece.Cluster != null) {
 
-                engine.Light.LightColor = chemistry.Core.Lerp(chemistry.Flame, air * chemistry.Afterburn);
-                engine.Light.LightEnergy = (engine.Power + (float)state.Burnoff * 0.25f) * chemistry.Luminosity * 1.15f / Mathf.Sqrt(piece.Engines.Count);
+                PlumeInputs shared = new PlumeInputs {
+
+                    Lit = lit > 0,
+                    Throttle = lit > 1 ? powerSum / piece.Engines.Count : 0.0f,
+                    Air = air,
+                    Mach = mach,
+                    Cluster = (float)lit / piece.Engines.Count,
+                    LightShare = lightShare,
+                    AmbientPressure = pressure,
+                    ExitPressure = exitPressure,
+                    EffectTime = _effectTime,
+                    Delta = _effectDelta,
+
+                };
+
+                Flow(piece.Cluster, wind, dynamicPressure, jetPressure, ref shared);
+                piece.Cluster.Drive(shared);
+
+            }
+
+            if (piece.Impact != null) {
+
+                Vector3d exit = lit > 0 ? Frames.Origin + exitSum / powerSum : Vector3d.Zero;
+                Vector3d axis = lit > 0 ? axisSum.Normalized : Vector3d.UnitZ;
+                piece.Impact.Sync(body, now, exit, axis, powerSum / piece.Engines.Count, surfaceWind, Main.SunDirection);
 
             }
 
         }
 
-        SyncJets(pressure);
+        SyncJets(air, pressure);
 
     }
 
-    private static MeshInstance3D Flame(string name, ShaderMaterial material) {
+    // Ambient air bends the tail sideways and stretches or stops it along the axis, in proportion
+    // to how its dynamic pressure compares with the jet's own.
+    private static void Flow(Plume plume, Vector3 wind, float dynamicPressure, float jetPressure, ref PlumeInputs inputs) {
 
-        MeshInstance3D flame = Volume(name, material);
-        _flameMesh ??= new CylinderMesh {
+        inputs.Stretch = 1.0f;
 
-            TopRadius = 1.0f, BottomRadius = 1.0f, Height = 1.0f,
-            RadialSegments = 32, Rings = 16, CapTop = false, CapBottom = false,
+        if (dynamicPressure <= 0.0f || jetPressure <= 0.0f) {
 
-        };
-        flame.Mesh = _flameMesh;
-        return flame;
+            return;
+
+        }
+
+        Vector3 local = plume.GlobalBasis.Inverse() * wind;
+        float speed = local.Length();
+
+        if (speed < 0.001f) {
+
+            return;
+
+        }
+
+        float ratio = Mathf.Clamp(dynamicPressure / jetPressure * 2.0f, 0.0f, 1.5f);
+        Vector3 direction = local / speed;
+        float downstream = -direction.Y;
+        Vector3 lateral = new Vector3(direction.X, 0.0f, direction.Z);
+
+        inputs.Bend = lateral * ratio;
+        inputs.Stretch = downstream >= 0.0f ? 1.0f + 0.25f * ratio * downstream : 1.0f / (1.0f + 2.0f * ratio * -downstream);
 
     }
 
-    private void DriveVolume(MeshInstance3D volume, ShaderMaterial material, float throttle, float bellRadius, float pressure, bool jet, float duty = 1.0f) {
+    // The fuel a stage burns can change under it; the plume is rebuilt from the new template.
+    private void Retemplate(Piece piece) {
 
-        float vacuum = 1.0f - Mathf.Clamp(pressure / 101325.0f, 0.0f, 1.0f);
-        float reach = material.GetShaderParameter("length_radii").AsSingle() * (jet ? 0.25f : 1.0f);
-        float length = bellRadius * reach * Mathf.Lerp(0.35f, 1.0f, Mathf.Sqrt(throttle));
-        float spread = Mathf.Lerp(material.GetShaderParameter("air_spread").AsSingle(),
-            material.GetShaderParameter("vacuum_spread").AsSingle(), vacuum);
-        float radius = bellRadius + length * spread;
-        material.SetShaderParameter("exit_radius", bellRadius);
-        material.SetShaderParameter("plume_length", length);
-        material.SetShaderParameter("spread", spread);
-        material.SetShaderParameter("throttle", throttle * duty);
-        material.SetShaderParameter("effect_time", _effectTime);
-        volume.CustomAabb = new Aabb(new Vector3(-radius, -length, -radius), new Vector3(radius * 2.0f, length, radius * 2.0f));
+        PlumeTemplate template = PlumeTemplate.For(piece.Stage.Fuel);
+
+        foreach (Engine engine in piece.Engines) {
+
+            Plume replacement = Plume.Create(engine.Plume.Name, template, engine.Plume.ExitRadius);
+            replacement.Position = engine.Plume.Position;
+            replacement.Bell.AddRange(engine.Plume.Bell);
+            engine.Pivot.AddChild(replacement);
+            engine.Plume.QueueFree();
+            engine.Plume = replacement;
+            engine.FuelName = piece.Stage.Fuel?.Name;
+
+        }
 
     }
 
-    private void SyncJets(float pressure) {
+    private void SyncJets(float air, float pressure) {
 
         bool armed = _vessel.HasRcs;
         double limit = _vessel.ThrusterTorqueLimit;
@@ -419,15 +551,21 @@ public sealed partial class VesselView {
                 // RCS valves pulse at chamber pressure; duty changes emission, not the nozzle's pressure regime.
                 jet.Valve.Advance(wanted, RcsLimits, _effectDelta, armed && piece.Stage.HasReactionControl, true);
                 jet.Duty = (float)jet.Valve.Power;
-                jet.Material.SetShaderParameter("purge", (float)jet.Valve.Purge * 0.18f);
-                jet.Material.SetShaderParameter("burnoff", 0.0f);
-                jet.Volume.Visible = jet.Duty > 0.001f || jet.Valve.Purge > 0.005;
 
-                if (jet.Volume.Visible) {
+                jet.Plume.Drive(new PlumeInputs {
 
-                    DriveVolume(jet.Volume, jet.Material, 1.0f, jet.Radius, pressure, true, jet.Duty);
+                    Lit = wanted > 0.0f,
+                    Throttle = jet.Duty,
+                    Air = air,
+                    Purge = (float)jet.Valve.Purge * 0.18f,
+                    LightShare = 1.0f,
+                    AmbientPressure = pressure,
+                    ExitPressure = DefaultExitPressure,
+                    Stretch = 1.0f,
+                    EffectTime = _effectTime,
+                    Delta = _effectDelta,
 
-                }
+                });
 
             }
 
@@ -506,7 +644,7 @@ public sealed partial class VesselView {
             material.SetShaderParameter("wake_length", wake);
             material.SetShaderParameter("ablation", ablation);
             material.SetShaderParameter("effect_time", _effectTime);
-        material.SetShaderParameter("sample_phase", (float)(Godot.Engine.GetProcessFrames() % 8) * 0.61803399f);
+            material.SetShaderParameter("sample_phase", (float)(Godot.Engine.GetProcessFrames() % 8) * 0.61803399f);
             material.SetShaderParameter("air_hot_colour", spectrum.Hot);
             material.SetShaderParameter("air_cool_colour", spectrum.Cool);
             material.SetShaderParameter("ablation_colour", spectrum.Ablation);

@@ -66,6 +66,8 @@ public sealed partial class VesselView : Node3D {
 
         public float BellRadius { get; set; }
         public readonly List<Engine> Engines = new List<Engine>();
+        public Plume Cluster;
+        public ExhaustImpact Impact;
 
         public readonly List<Jet> Jets = new List<Jet>();
         public EntryField SingleEntry;
@@ -266,9 +268,11 @@ public sealed partial class VesselView : Node3D {
 
             foreach (Engine engine in piece.Engines) {
 
-                ok |= Tune(engine.PlumeMaterial, parameter, value);
+                ok |= engine.Plume.Tune(parameter, value);
 
             }
+
+            ok |= piece.Cluster != null && piece.Cluster.Tune(parameter, value);
 
         }
 
@@ -1398,9 +1402,12 @@ public sealed partial class VesselView : Node3D {
             model.Position = Vector3.Down * reach * 0.5f;
             pivot.AddChild(model);
             node.AddChild(pivot);
-            AttachPlume(pivot, piece, bellRadius, reach);
+            AttachPlume(pivot, model, piece, bellRadius, reach);
 
         }
+
+        AttachCluster(node, piece, bellRadius, ring, deck, reach);
+        AttachImpact(node, piece, bellRadius);
 
     }
 
