@@ -82,6 +82,7 @@ public sealed partial class Flight : Node {
 
     private readonly List<Tracked> _debris = new List<Tracked>();
     private readonly List<Tracked> _traffic = new List<Tracked>();
+    private readonly List<Vessel> _exhaustTraffic = new();
     private readonly HashSet<(Vessel, Vessel)> _separating = new();
 
     public int ContactCount { get; private set; }
@@ -267,6 +268,14 @@ public sealed partial class Flight : Node {
 
             }
 
+            _exhaustTraffic.Clear();
+            foreach (Tracked track in _traffic) { _exhaustTraffic.Add(track.Vessel); }
+            double pressure = Body.HasAtmosphere ? Body.Atmosphere.PressureAt(Body.AltitudeOf(Vessel.Position)) : 0.0;
+            if (ExhaustInteraction.Apply(_exhaustTraffic, pressure, interval)) {
+                foreach (Tracked track in _traffic) { track.Rails = track.Vessel.OrbitAround(Body, Time); }
+                WarpStep = 0;
+                WarpingToNode = false;
+            }
             Contacts();
             remaining -= interval;
 
@@ -410,12 +419,22 @@ public sealed partial class Flight : Node {
 
                 double speed = (b.Velocity - a.Velocity).Length;
                 double reach = VesselCollision.Radius(a) + VesselCollision.Radius(b) + speed * remaining + 1.0;
+                double exhaustReach = 0.0;
+                foreach (Vessel source in new[] { a, b }) {
+                    if (source.CurrentThrust <= 0.0) { continue; }
+                    foreach (EngineState engine in source.Active.EngineStates) {
+                        exhaustReach = Math.Max(exhaustReach, engine.ExitRadius * ExhaustInteraction.ReachRadii);
+                    }
+                }
+                if (exhaustReach > 0.0 && (b.Position - a.Position).Length < reach + exhaustReach) {
+                    interval = Math.Min(interval, IntegrationStep);
+                }
 
                 if ((b.Position - a.Position).LengthSquared < reach * reach) {
 
                     double motion = speed + a.AngularVelocity.Length * VesselCollision.Radius(a)
                         + b.AngularVelocity.Length * VesselCollision.Radius(b);
-                    double thickness = Math.Min(a.Profile.MaxRadius, b.Profile.MaxRadius) * 0.2;
+                    double thickness = Math.Min(VesselCollision.ContactThickness(a), VesselCollision.ContactThickness(b));
                     interval = Math.Min(interval, Math.Min(IntegrationStep, thickness / Math.Max(motion, 1.0)));
 
                 }

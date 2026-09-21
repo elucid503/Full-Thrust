@@ -43,9 +43,17 @@ public sealed partial class Stage {
             for (int i = 0; i < count; i++) {
 
                 double angle = Math.Tau * i / count;
+                Hull.Station[] contact = part.Profile == null ? Array.Empty<Hull.Station>() : new Hull.Station[part.Profile.Length];
+                for (int j = 0; j < contact.Length; j++) {
+                    contact[j] = new Hull.Station((part.Profile[j].Z - part.Top) * fit, part.Profile[j].Radius * fit);
+                }
+                Array.Sort(contact, (a, b) => a.Z.CompareTo(b.Z));
                 EngineStates[index++] = new EngineState {
 
                     Mount = new Vector3d(Math.Cos(angle) * ring, -Math.Sin(angle) * ring, part.Top),
+                    ExitRadius = radius * fit,
+                    ExitDistance = part.Length * fit,
+                    ContactProfile = contact,
 
                 };
 

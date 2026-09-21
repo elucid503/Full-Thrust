@@ -38,6 +38,7 @@ public static partial class Program {
         Reentry();
         VesselContacts();
         EngineDynamics();
+        ExhaustContacts();
         GroundSurvey();
         ScatterSweeps();
         GroundHullContacts();

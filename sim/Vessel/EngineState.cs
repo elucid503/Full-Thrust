@@ -19,8 +19,30 @@ public sealed class EngineState {
     public double PhaseTime { get; private set; }
     public int Ignitions { get; private set; }
     public Vector3d Mount { get; init; }
+    public double ExitRadius { get; init; }
+    public double ExitDistance { get; init; }
+    // Rings in engine-local coordinates, with the mount at Z=0. The view can refine these
+    // from an imported mesh; the authored profile remains available to headless simulation.
+    private Hull.Station[] _contactProfile;
+    public double ContactCentreZ { get; private set; }
+    public double ContactBound { get; private set; }
+    public Hull.Station[] ContactProfile {
+        get => _contactProfile;
+        set {
+            value = value == null ? null : VesselSurface.SimplifyProfile(value);
+            _contactProfile = value;
+            ContactCentreZ = value is { Length: > 0 } ? (value[0].Z + value[^1].Z) * 0.5 : 0.0;
+            ContactBound = 0.0;
+            if (value == null) { return; }
+            foreach (Hull.Station ring in value) {
+                double z = ring.Z - ContactCentreZ;
+                ContactBound = Math.Max(ContactBound, Math.Sqrt(z * z + ring.Radius * ring.Radius));
+            }
+        }
+    }
+    public QuaternionD ContactRotation { get; private set; } = QuaternionD.Identity;
     public Vector3d Gimbal { get; private set; }
-    public Vector3d Direction => QuaternionD.FromAxisAngle(Gimbal.Normalized, Gimbal.Length).Rotate(Vector3d.UnitZ);
+    public Vector3d Direction => ContactRotation.Rotate(Vector3d.UnitZ);
     public double Residual { get; private set; }
     public double Purge => Phase is EnginePhase.Shutdown or EnginePhase.Purging
         ? Residual * Pulse(PhaseTime, 0.06, 0.22, 0.9) : 0.0;
@@ -85,6 +107,7 @@ public sealed class EngineState {
         if (magnitude > range) { target *= Math.Max(range, 0.0) / magnitude; }
         Gimbal = target + (Gimbal - target) * Math.Exp(-dt / Math.Max(responseSeconds, 0.001));
         if (Gimbal.Length > range) { Gimbal = Gimbal.Normalized * Math.Max(range, 0.0); }
+        ContactRotation = QuaternionD.FromAxisAngle(Gimbal.Normalized, Gimbal.Length);
 
     }
 

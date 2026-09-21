@@ -38,6 +38,7 @@ uniform float radius_metres = 0.5;
 
 
 #include "res://Shaders/Exhaust/Volume.gdshaderinc"
+#include "res://Shaders/Exhaust/Contact.gdshaderinc"
 uniform float exit_radius = 0.5;
 uniform float merged_layer = 0.0;
 uniform float expansion = 0.0;
@@ -47,6 +48,28 @@ uniform bool shock_only = false;
 uniform float residual_gas = 0.0;
 uniform float diffuse_tail = 0.0;
 uniform float effect_delta = 0.016667;
+uniform int stream_count = 0;
+uniform vec4 stream_exits[32];
+uniform vec4 stream_directions[32];
+uniform float stream_radius = 0.5;
+uniform float stream_power = 1.0;
+
+// Preserve the nozzle footprints until the streams have room to mix. A broad cylinder fading
+// on behind narrow jets produces a visible shoulder, even if its opacity changes smoothly.
+float stream_distance(vec3 p, float merged_distance, float merge) {
+    float separate = 10.0;
+    for (int j = 0; j < stream_count; j++) {
+        vec4 mouth = stream_exits[j];
+        vec4 axis = stream_directions[j];
+        float travel = max((mouth.y - p.y) / max(-axis.y, 0.1), 0.0);
+        vec2 centre = mouth.xz + axis.xz * travel;
+        float width = mouth.w * 0.94 + travel * 0.075;
+        float r = length(p.xz - centre) / max(width, 0.001);
+        // A shutting-down nozzle loses its contribution instead of moving the whole envelope.
+        separate = min(separate, r + (1.0 - clamp(axis.w / max(stream_power, 0.001), 0.0, 1.0)) * (1.0 - merge));
+    }
+    return mix(separate, merged_distance, merge);
+}
 float flare(float t) {
 
     return 1.0 + expand_offset + expand_linear * t + expand_square * t * t + expand_bounded * (1.0 - exp(-3.0 * t));
@@ -101,8 +124,16 @@ void fragment() {
 
     for (int i = 0; i < 64; i++) {
 
-        float sample_offset = 0.35 + 0.3 * grain(FRAGCOORD.xy + vec2(float(i) * 37.0, seed));
+        // The contact sheet has footprint-filtered boundaries. Midpoint quadrature keeps
+        // those boundaries smooth; screen-space jitter stamps a stationary mesh onto them.
+        float sample_offset = contact_count > 0 ? 0.5 : 0.35 + 0.3 * grain(FRAGCOORD.xy + vec2(float(i) * 37.0, seed));
         vec3 p = volume_camera + ray * (interval.x + (float(i) + sample_offset) * ds);
+        float contact_mask;
+        float contact_wake;
+        // Visibility changes abruptly at silhouettes. Reusing it across samples leaves
+        // floating fragments of the blocked jet behind curved and thin receiving surfaces.
+        p = contact_flow(p, exit_radius, max(ds, pixel_width), contact_mask, contact_wake);
+        if (contact_mask <= 0.001) { continue; }
         float along = clamp(-p.y / length_metres, 0.0, 1.0);
         float downstream = -p.y / max(exit_radius, 0.001);
         float mouth = max(min(radius_metres, exit_radius), 0.001);
@@ -120,10 +151,15 @@ void fragment() {
         radius *= 1.0 - cell_pinch * cells_at(-p.y) * (1.0 - expansion) * clamp(cell_strength, 0.0, 1.0);
         vec2 radial = p.xz - crossflow.xz * along * along;
         float r = length(radial) / max(radius, 0.001);
+        if (merged_layer > 0.5 && stream_count > 0) {
+            float merge = smoothstep(exit_radius * 1.5, exit_radius * 8.0, x);
+            if (merge < 1.0) { r = stream_distance(vec3(radial.x, p.y, radial.y), r, merge); }
+        }
         if (r >= 1.4) { continue; }
 
         // Non-repeating, rotated value noise changes density, never the integration boundary.
         float mixing = smoothstep(0.5, 5.0, downstream) * clamp(noise_strength, 0.0, 1.5);
+        mixing += contact_wake * 1.5;
         mixing *= mix(0.65, 1.0, smoothstep(0.1, 0.85, r));
         float scale = max(exit_radius, 0.001);
         float lateral_scale = scale + opened * mix(0.035, 0.22, expansion);
@@ -152,7 +188,11 @@ void fragment() {
         // Fade density, not radius, and leave an invisible margin before the proxy's end plane.
         float cooling = max(x / length_metres + mixing * 0.12 * (turbulence - 0.5), 0.0);
         float fade = exp(-max(cooling - falloff_start * 0.25, 0.0) * max(falloff, 1.0) * 1.35);
-        fade *= smoothstep(0.0, max(fade_in, 0.002), along);
+        float entrance = smoothstep(0.0, max(fade_in, 0.002), along);
+        if (merged_layer > 0.5 && stream_count > 0) {
+            entrance = smoothstep(stream_radius * 0.5, stream_radius * 6.0, x);
+        }
+        fade *= entrance;
         float dissolve = max(cooling - 0.25, 0.0) / max(0.8 - fade_out * 0.2, 0.4);
         fade *= exp(-5.0 * dissolve * dissolve * dissolve);
         float boundary = x / max(-bounds_min.y, 0.001);
@@ -187,7 +227,7 @@ void fragment() {
         }
         vec3 tint = mix(end_tint, start_tint, pow(1.0 - along, tint_falloff));
         tint = mix(tint, mix(start_tint, vec3(1.0), 0.12), merged_layer * exp(-along * 9.0));
-        total += tint * density * ds * brightness * 0.45;
+        total += tint * density * contact_mask * ds * brightness * 0.45;
 
     }
 

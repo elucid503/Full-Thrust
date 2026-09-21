@@ -426,6 +426,7 @@ public sealed partial class VesselView {
                 };
 
                 Flow(engine.Plume, wind, dynamicPressure, jetPressure, ref inputs);
+                engine.Plume.Source = _vessel;
                 engine.Plume.Drive(inputs);
 
                 if (engine.Power > 0.001f) {
@@ -441,6 +442,15 @@ public sealed partial class VesselView {
             }
 
             if (piece.Cluster != null) {
+
+                // The shared tail starts at the live nozzles and follows their thrust-weighted
+                // direction. Individual stream axes retain differential gimbal through the merge.
+                if (lit > 0 && axisSum.LengthSquared > 0.000001) {
+                    Vector3 up = Frames.Direction(-axisSum.Normalized);
+                    piece.Cluster.GlobalTransform = new Transform3D(new Basis(new Quaternion(Vector3.Up, up)), Frames.Direction(exitSum / powerSum));
+                }
+                piece.Cluster.BeginStreams();
+                foreach (Engine engine in piece.Engines) { piece.Cluster.AddStream(engine.Plume, engine.Power); }
 
                 PlumeInputs shared = new PlumeInputs {
 
@@ -458,6 +468,7 @@ public sealed partial class VesselView {
                 };
 
                 Flow(piece.Cluster, wind, dynamicPressure, jetPressure, ref shared);
+                piece.Cluster.Source = _vessel;
                 piece.Cluster.Drive(shared);
 
             }
@@ -552,6 +563,7 @@ public sealed partial class VesselView {
                 jet.Valve.Advance(wanted, RcsLimits, _effectDelta, armed && piece.Stage.HasReactionControl, true);
                 jet.Duty = (float)jet.Valve.Power;
 
+                jet.Plume.Source = _vessel;
                 jet.Plume.Drive(new PlumeInputs {
 
                     Lit = wanted > 0.0f,

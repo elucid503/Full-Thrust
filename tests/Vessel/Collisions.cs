@@ -53,7 +53,42 @@ public static partial class Program {
         }
 
         Interstage(origin);
+        EngineContacts();
 
+    }
+
+    private static void EngineContacts() {
+        Section("individual engine collision geometry");
+        Vessel cluster = new("cluster", new[] { new Stage {
+            Name = "three engines", ShellMass = 100.0,
+            Hull = new Hull(new[] { new Hull.Station(2.0, 3.0), new Hull.Station(4.0, 3.0) }, 2.1, 3.9),
+            Parts = new[] { new Part { Kind = PartKind.Engine, Bottom = 0.0, Top = 2.0, Count = 3, RingRadius = 1.8,
+                Profile = new[] { new Hull.Station(0.0, 0.3), new Hull.Station(1.0, 0.1), new Hull.Station(2.0, 0.15) } } }
+        } });
+        Vessel probe = new("probe", new[] { new Stage { Name = "probe", ShellMass = 1.0,
+            Hull = new Hull(new[] { new Hull.Station(-0.04, 0.04), new Hull.Station(0.04, 0.04) }, -0.03, 0.03) } });
+        Vector3d Datum(Vector3d local) => local - Vector3d.UnitZ * cluster.CentreOfMassZ;
+        foreach (EngineState engine in cluster.Active.EngineStates) {
+            Vector3d local = engine.Mount - Vector3d.UnitZ * 1.8;
+            probe.Position = Datum(local);
+            Expect("each clustered bell has a solid collider", VesselCollision.Find(cluster, probe, out _), $"mount={engine.Mount}");
+            Expect("exhaust sees the same clustered bell", VesselSurface.Distance(cluster, local) < 0.0, "bell interior");
+        }
+        probe.Position = Datum(Vector3d.UnitZ * 0.2);
+        Expect("cluster centre stays open between bells", !VesselCollision.Find(cluster, probe, out _) && VesselSurface.Distance(cluster, Vector3d.UnitZ * 0.2) > 0.0, "clear centre");
+        EngineState moving = cluster.Active.EngineStates[0];
+        moving.Traverse(Vector3d.UnitY * 0.4, 0.5, 0.01, 1.0);
+        Vector3d bent = moving.Mount + moving.ContactRotation.Rotate(-Vector3d.UnitZ * 1.8);
+        probe.Position = Datum(bent);
+        Expect("gimbaled bell collider follows its mount", VesselCollision.Find(cluster, probe, out _), "bent bell");
+        Expect("gimbaled bell stops exhaust", VesselSurface.Distance(cluster, bent) < 0.0, "bent surface");
+        probe.Position = Datum(moving.Mount - Vector3d.UnitZ * 1.8);
+        Expect("gimbal vacates its previous collision volume", !VesselCollision.Find(cluster, probe, out _), "old bell position");
+        cluster.Active.ContactHull = new Hull(new[] { new Hull.Station(2.0, 3.5), new Hull.Station(4.0, 3.5) }, 2.1, 3.9);
+        cluster.Active.ContactRevision++;
+        probe.Position = Datum(new Vector3d(3.4, 0, 3.0));
+        Expect("refined imported profile invalidates collision cache", VesselCollision.Find(cluster, probe, out _), "updated hull");
+        Expect("refined imported profile also stops exhaust", VesselSurface.Distance(cluster, new Vector3d(3.4, 0, 3.0)) < 0.0, "updated gas surface");
     }
 
     // The booster is a solid to its tank dome and a tube above it. A convex hull over the whole

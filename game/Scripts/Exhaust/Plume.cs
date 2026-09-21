@@ -73,6 +73,25 @@ public sealed partial class Plume : Node3D {
 
     public bool Burning { get; private set; }
     public float ExitRadius => _exitRadius;
+    public FullThrust.Sim.Vessel Source { get; set; }
+    private readonly PlumeContact _contact = new();
+    private readonly Vector4[] _streams = new Vector4[32];
+    private readonly Vector4[] _streamDirections = new Vector4[32];
+    private int _streamCount;
+    private float _streamRadius;
+    private float _streamPower;
+
+    public void BeginStreams() { _streamCount = 0; _streamRadius = 0.0f; _streamPower = 0.0f; }
+
+    public void AddStream(Plume nozzle, float power) {
+        if (power <= 0.001f || _streamCount == _streams.Length) { return; }
+        Transform3D local = GlobalTransform.AffineInverse() * nozzle.GlobalTransform;
+        Vector3 direction = -local.Basis.Y.Normalized();
+        _streams[_streamCount] = new Vector4(local.Origin.X, local.Origin.Y, local.Origin.Z, nozzle.ExitRadius);
+        _streamDirections[_streamCount++] = new Vector4(direction.X, direction.Y, direction.Z, power);
+        _streamRadius = Mathf.Max(_streamRadius, nozzle.ExitRadius);
+        _streamPower = Mathf.Max(_streamPower, power);
+    }
 
     /// <summary>The bell surfaces that glow with chamber heat; the owner hands them over.</summary>
     public List<StandardMaterial3D> Bell => _bell;
@@ -151,7 +170,7 @@ public sealed partial class Plume : Node3D {
             Layers = 2,
             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             IgnoreOcclusionCulling = true,
-            Position = new Vector3(0.0f, -Mathf.Max(definition.Offset, 0.0f) * _exitRadius, 0.0f),
+            Position = new Vector3(0.0f, _cluster ? 0.0f : -Mathf.Max(definition.Offset, 0.0f) * _exitRadius, 0.0f),
 
         };
 
@@ -259,6 +278,7 @@ public sealed partial class Plume : Node3D {
         }
 
         float flicker = 0.5f + 0.5f * _flicker.GetNoise1D((inputs.EffectTime * _template.FlickerHertz + _seed) * 100.0f);
+        _contact.Sync(this, Source);
 
         Span<float> controllers = stackalloc float[Enum.GetValues<PlumeModifier.Input>().Length];
         controllers[(int)PlumeModifier.Input.Throttle] = inputs.Throttle;
@@ -275,6 +295,13 @@ public sealed partial class Plume : Node3D {
 
         foreach (Layer layer in _layers) {
 
+            if (_cluster) {
+                layer.Material.SetShaderParameter("stream_count", _streamCount);
+                layer.Material.SetShaderParameter("stream_exits", _streams);
+                layer.Material.SetShaderParameter("stream_directions", _streamDirections);
+                layer.Material.SetShaderParameter("stream_radius", _streamRadius);
+                layer.Material.SetShaderParameter("stream_power", _streamPower);
+            }
             DriveLayer(layer, controllers, inputs, cellLength, cellContrast);
 
         }
@@ -293,7 +320,7 @@ public sealed partial class Plume : Node3D {
                 float reach = _exitRadius * 24.0f * Mathf.Max(inputs.Stretch, 0.25f);
                 float width = _exitRadius * 1.1f + reach * 0.5f;
                 Vector3 bend = inputs.Bend * reach;
-                float extent = width + bend.Length();
+                float extent = width + bend.Length() + _contact.Padding;
                 Vector3 boundsMin = new Vector3(-extent, -reach, -extent);
                 Vector3 boundsMax = new Vector3(extent, 0.0f, extent);
                 _distortionMaterial.SetShaderParameter("strength", shimmer * inputs.LightShare);
@@ -303,6 +330,7 @@ public sealed partial class Plume : Node3D {
                 _distortionMaterial.SetShaderParameter("bounds_min", boundsMin);
                 _distortionMaterial.SetShaderParameter("bounds_max", boundsMax);
                 _distortion.CustomAabb = new Aabb(boundsMin, boundsMax - boundsMin);
+                _contact.Write(_distortionMaterial, Vector3.Zero, reach);
 
             }
 
@@ -445,7 +473,8 @@ public sealed partial class Plume : Node3D {
         if (_cluster) { mouth = Mathf.Max(radius, _exitRadius * 1.12f); }
         // Match the shader's maximum opening slope, including its turbulence envelope.
         float extent = length * 1.6f;
-        float reach = (mouth + extent * Mathf.Lerp(0.12f, opening, expansion)) * 1.4f + crossflow.Length();
+        float reach = (mouth + extent * Mathf.Lerp(0.12f, opening, expansion)) * 1.4f + crossflow.Length() + _contact.Padding;
+        _contact.Write(layer.Material, layer.Mesh.Position, extent);
         layer.Material.SetShaderParameter("bounds_min", new Vector3(-reach, -extent, -reach));
         layer.Material.SetShaderParameter("bounds_max", new Vector3(reach, 0.0f, reach));
         layer.Mesh.CustomAabb = new Aabb(new Vector3(-reach, -extent, -reach), new Vector3(reach * 2.0f, extent, reach * 2.0f));

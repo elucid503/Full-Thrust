@@ -11,6 +11,8 @@ public sealed partial class Stage {
 
     /// <summary>The mould line, on the stack's datum.</summary>
     public Hull Hull { get; init; }
+    public Hull ContactHull { get; set; }
+    public int ContactRevision { get; set; }
 
     /// <summary>What the stage is built from, tail to nose, on the same datum.</summary>
     public IReadOnlyList<Part> Parts { get; init; } = Array.Empty<Part>();

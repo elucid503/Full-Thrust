@@ -13,6 +13,7 @@ uniform float radius_metres = 0.5;
 uniform vec3 crossflow = vec3(0.0);
 
 #include "res://Shaders/Exhaust/Volume.gdshaderinc"
+#include "res://Shaders/Exhaust/Contact.gdshaderinc"
 
 // Match the cloud pass's depth-aware upsampling to keep its colour off foreground silhouettes.
 vec4 refracted_cloud(vec2 uv, mat4 inverse_projection) {
@@ -65,6 +66,9 @@ void fragment() {
     for (int i = 0; i < 16; i++) {
 
         vec3 p = volume_camera + ray * (interval.x + (float(i) + 0.5) * ds);
+        float contact_mask;
+        float contact_wake;
+        p = contact_flow(p, scale, ds, contact_mask, contact_wake);
         float along = clamp(-p.y / length_metres, 0.0, 1.0);
         vec3 bent = p - crossflow * along * along;
         float radius = scale + max(-p.y, 0.0) * 0.28;
@@ -73,7 +77,7 @@ void fragment() {
             * smoothstep(0.0, 0.04, along) * (1.0 - smoothstep(0.3, 1.0, along));
         if (envelope <= 0.0) { continue; }
 
-        float weight = envelope * ds / radius;
+        float weight = envelope * contact_mask * (1.0 + contact_wake * 0.5) * ds / radius;
         flow_position += bent * weight;
         optical_depth += weight;
 

@@ -241,6 +241,17 @@ public sealed class Terrain {
 
         Vector3d unit = direction / length;
 
+        // A fully levelled pad replaces both natural ground and the coastal reference.
+        // Avoid evaluating all terrain octaves only to multiply their result by zero.
+        Plateau[] plateaus = Volatile.Read(ref _plateaus);
+        for (int i = plateaus.Length - 1; i >= 0; i--) {
+            Plateau plateau = plateaus[i];
+            if (plateau.InnerRadius > 0.0 && Vector3d.Dot(unit, plateau.Centre) >= Math.Cos(plateau.InnerRadius / _radius)) {
+                coastalHeight = Level(unit, plateau.Height, plateaus, i + 1);
+                return coastalHeight;
+            }
+        }
+
         double latitude = Math.Asin(Math.Clamp(unit.Z, -1.0, 1.0));
         double longitude = Math.Atan2(unit.Y, unit.X);
 
@@ -282,9 +293,16 @@ public sealed class Terrain {
 
     private double Level(Vector3d unit, double natural) {
 
+        return Level(unit, natural, Volatile.Read(ref _plateaus), 0);
+
+    }
+
+    private double Level(Vector3d unit, double natural, Plateau[] plateaus, int first) {
+
         double height = natural;
 
-        foreach (Plateau plateau in Volatile.Read(ref _plateaus)) {
+        for (int i = first; i < plateaus.Length; i++) {
+            Plateau plateau = plateaus[i];
 
             double angle = Math.Acos(Math.Clamp(Vector3d.Dot(unit, plateau.Centre), -1.0, 1.0));
 

@@ -399,6 +399,9 @@ public sealed partial class VesselView : Node3D {
 
         }
 
+        stage.ContactHull = new Hull(VesselSurface.SimplifyProfile(ContactProfile(model)), stage.Hull.TankBottom, stage.Hull.TankTop);
+        stage.ContactRevision++;
+
         StandardMaterial3D[] coats = {
 
             // A cured ablator: brown-grey and matte. Dark enough to read as a shield against the
@@ -1400,6 +1403,8 @@ public sealed partial class VesselView : Node3D {
             };
             Node3D model = i == 0 ? engine : (Node3D)engine.Duplicate();
             model.Position = Vector3.Down * reach * 0.5f;
+            piece.Stage.EngineStates[piece.Engines.Count].ContactProfile = ContactProfile(model);
+            piece.Stage.ContactRevision++;
             pivot.AddChild(model);
             node.AddChild(pivot);
             AttachPlume(pivot, model, piece, bellRadius, reach);

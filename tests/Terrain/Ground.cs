@@ -67,6 +67,12 @@ public static partial class Program {
         Terrain session = terrain.CreateSession();
         Expect("restart reuses immutable survey storage", session.SharesSurvey(terrain), "survey copied");
         session.Add(new Terrain.Plateau { Centre = coastProbe, Height = 100.0, InnerRadius = 10.0, OuterRadius = 20.0 });
+        Terrain layered = terrain.CreateSession();
+        layered.Add(new Terrain.Plateau { Centre = Vector3d.UnitX, Height = 100, InnerRadius = 20, OuterRadius = 40 });
+        layered.Add(new Terrain.Plateau { Centre = QuaternionD.FromAxisAngle(Vector3d.UnitZ, 30 / Home.Radius).Rotate(Vector3d.UnitX), Height = 200, InnerRadius = 10, OuterRadius = 50 });
+        double level = layered.Elevation(Vector3d.UnitX, 0, out double levelCoast);
+        Near("pad fast path preserves later overlapping blends", level, 150, 0.001);
+        Near("pad fast path levels coastal reference too", levelCoast, level, 0);
         Near("session terrain edits stay isolated", terrain.Plateaus.Count, 0, 0);
         Near("another restart starts without old plateaus", session.CreateSession().Plateaus.Count, 0, 0);
         int shoreSamples = 0;

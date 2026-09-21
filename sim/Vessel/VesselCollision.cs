@@ -13,7 +13,7 @@ public static class VesselCollision {
     // A bay is a tube, and no support function describes one: the hull it is cut into is split into
     // a solid below the floor and a ring of convex wedges around the wall. Enough wedges that the
     // chord each spans leaves the clear radius within a percent of the wall the lathe draws.
-    private const int BayWedges = 8;
+    private const int BayWedges = 32;
     private const int WedgeArc = 3;
 
     /// <summary>One convex piece of a vessel: a run of the mould line, or an explicit point cloud
@@ -22,11 +22,14 @@ public static class VesselCollision {
 
         public Hull.Station[] Rings;
         public Vector3d[] Points;
+        public EngineState Engine;
+        public Vector3d ToVessel(Vector3d point) => Engine == null ? point : Engine.Mount + Engine.ContactRotation.Rotate(point);
 
         // Enough to reject most pairs before a GJK run: a stack with a bay carries a dozen pieces,
         // and all but one or two of them are nowhere near whatever it is touching.
         public Vector3d Centre;
         public double Bound;
+        public Vector3d HalfExtent;
 
         public Lobe Measured() {
 
@@ -56,6 +59,7 @@ public static class VesselCollision {
 
             Centre = (low + high) * 0.5;
             Bound = (high - low).Length * 0.5;
+            HalfExtent = (high - low) * 0.5;
 
             return this;
 
@@ -66,37 +70,58 @@ public static class VesselCollision {
     private sealed class Shape {
 
         public int Stages;
+        public int Revision;
         public readonly List<Hull.Station> Rings = new();
         public readonly List<Lobe> Lobes = new();
-        public double Radius;
+        public double Low = double.MaxValue;
+        public double High = double.MinValue;
+        public double Width;
 
         public Shape(Vessel vessel) {
 
             Stages = vessel.StageCount;
+            Revision = VesselSurface.Revision(vessel);
 
             // One lobe per stage rather than one for the vessel: a single hull over the whole stack
             // would bridge a bay's mouth to the stage above and fill in the cavity that is the point.
             foreach (Stage stage in vessel.Stages) {
 
-                List<Hull.Station> solid = new List<Hull.Station>(stage.Hull.Stations);
+                Hull hull = stage.ContactHull ?? stage.Hull;
+                List<Hull.Station> solid = new List<Hull.Station>(hull.Stations);
 
                 Rings.AddRange(solid);
 
                 // The bell is a piece of its own. Folded into the hull it would bridge its mouth up
                 // to the skirt and make the whole tail a solid cone - which is precisely the
                 // clearance a bay exists to give the stage hanging in it.
-                foreach (Part part in stage.Parts) {
-
-                    if (part.Kind == PartKind.Engine && part.RingRadius == 0.0 && part.Profile != null) {
-
-                        Rings.AddRange(part.Profile);
-                        Lobes.Add(new Lobe { Rings = part.Profile }.Measured());
-
+                foreach (EngineState engine in stage.EngineStates) {
+                    Hull.Station[] profile = engine.ContactProfile;
+                    if (profile == null || profile.Length < 2) { continue; }
+                    // Each bell is mounted separately; splitting its contour preserves the throat
+                    // instead of filling it with the convex hull of the whole engine.
+                    int start = 0;
+                    for (int i = 1; i < profile.Length; i++) {
+                        bool end = i == profile.Length - 1;
+                        if (!end) {
+                            double before = (profile[i].Radius - profile[i - 1].Radius) / Math.Max(profile[i].Z - profile[i - 1].Z, 1e-12);
+                            double after = (profile[i + 1].Radius - profile[i].Radius) / Math.Max(profile[i + 1].Z - profile[i].Z, 1e-12);
+                            end = after > before + 1e-9;
+                        }
+                        if (!end) { continue; }
+                        Lobes.Add(new Lobe { Rings = profile[start..(i + 1)], Engine = engine }.Measured());
+                        start = i;
                     }
-
+                    double swing = engine.ContactBound + Math.Abs(engine.ContactCentreZ);
+                    Low = Math.Min(Low, engine.Mount.Z - swing);
+                    High = Math.Max(High, engine.Mount.Z + swing);
+                    Width = Math.Max(Width, Math.Sqrt(engine.Mount.X * engine.Mount.X + engine.Mount.Y * engine.Mount.Y) + swing);
+                    foreach (Hull.Station ring in profile) {
+                        double radial = Math.Sqrt(engine.Mount.X * engine.Mount.X + engine.Mount.Y * engine.Mount.Y);
+                        Rings.Add(new Hull.Station(engine.Mount.Z + ring.Z, radial + ring.Radius));
+                    }
                 }
 
-                if (!stage.Hull.HasBay) {
+                if (!hull.HasBay) {
 
                     Lobes.Add(new Lobe { Rings = solid.ToArray() }.Measured());
 
@@ -104,18 +129,30 @@ public static class VesselCollision {
 
                 }
 
-                Lobes.Add(new Lobe { Rings = Below(solid, stage.Hull) }.Measured());
+                Lobes.Add(new Lobe { Rings = Below(solid, hull) }.Measured());
 
-                Wall(Lobes, stage.Hull);
+                Wall(Lobes, hull);
 
             }
 
             foreach (Hull.Station ring in Rings) {
 
-                double axial = Math.Max(Math.Abs(ring.Z - vessel.Base), Math.Abs(ring.Z - vessel.Tip));
-                Radius = Math.Max(Radius, Math.Sqrt(axial * axial + ring.Radius * ring.Radius));
+                Low = Math.Min(Low, ring.Z); High = Math.Max(High, ring.Z); Width = Math.Max(Width, ring.Radius);
 
             }
+
+            // Ground only needs the outer radial envelope. Cluster copies previously asked
+            // the terrain for the same positions once per bell, at every integration step.
+            Rings.Sort((a, b) => a.Z.CompareTo(b.Z));
+            List<Hull.Station> unique = new();
+            foreach (Hull.Station ring in Rings) {
+                if (unique.Count > 0 && Math.Abs(unique[^1].Z - ring.Z) < 1e-6) {
+                    if (ring.Radius > unique[^1].Radius) { unique[^1] = ring; }
+                } else { unique.Add(ring); }
+            }
+            Rings.Clear();
+            Rings.AddRange(VesselSurface.SimplifyProfile(unique));
+            Lobes.Sort((a, b) => b.Bound.CompareTo(a.Bound));
 
         }
 
@@ -183,7 +220,7 @@ public static class VesselCollision {
 
         Shape shape = Shapes.GetValue(vessel, v => new Shape(v));
 
-        if (shape.Stages != vessel.StageCount) {
+        if (shape.Stages != vessel.StageCount || shape.Revision != VesselSurface.Revision(vessel)) {
 
             Shapes.Remove(vessel);
             shape = Shapes.GetValue(vessel, v => new Shape(v));
@@ -194,13 +231,27 @@ public static class VesselCollision {
 
     }
 
-    public static double Radius(Vessel vessel) => Geometry(vessel).Radius;
+    public static double Radius(Vessel vessel) {
+        Shape shape = Geometry(vessel);
+        double axial = Math.Max(Math.Abs(shape.Low - vessel.CentreOfMassZ), Math.Abs(shape.High - vessel.CentreOfMassZ));
+        return Math.Sqrt(axial * axial + shape.Width * shape.Width);
+    }
+
+    public static double ContactThickness(Vessel vessel) {
+        double thickness = vessel.Profile.MaxRadius * 0.2;
+        foreach (Stage stage in vessel.Stages) {
+            Hull hull = stage.ContactHull ?? stage.Hull;
+            if (hull.HasBay) { thickness = Math.Min(thickness, hull.WallThickness * 0.4); }
+        }
+        return Math.Max(thickness, 0.005);
+    }
 
     public static IReadOnlyList<Hull.Station> Stations(Vessel vessel) => Geometry(vessel).Rings;
 
     private static Vector3d Furthest(Vessel vessel, Lobe lobe, Vector3d direction) {
 
         Vector3d local = vessel.Orientation.Conjugate.Rotate(direction);
+        if (lobe.Engine != null) { local = lobe.Engine.ContactRotation.Conjugate.Rotate(local); }
         Vector3d best = Vector3d.Zero;
         double distance = double.NegativeInfinity;
 
@@ -228,7 +279,7 @@ public static class VesselCollision {
 
         foreach (Hull.Station ring in lobe.Rings) {
 
-            double z = ring.Z - vessel.CentreOfMassZ;
+            double z = ring.Z;
             double projection = radial * ring.Radius + local.Z * z;
 
             if (projection > distance) {
@@ -242,7 +293,7 @@ public static class VesselCollision {
 
         }
 
-        return vessel.Orientation.Rotate(best);
+        return vessel.Orientation.Rotate(lobe.ToVessel(best) - Vector3d.UnitZ * vessel.CentreOfMassZ);
 
     }
 
@@ -271,15 +322,40 @@ public static class VesselCollision {
 
         // The deepest overlap of any pair of pieces is the one worth resolving this step: a bell
         // caught in a bay can touch two wedges at once, and pushing on both would jitter it.
-        foreach (Lobe lobeA in Geometry(a).Lobes) {
+        Shape shapeA = Geometry(a), shapeB = Geometry(b);
+        Span<Vector3d> centresA = shapeA.Lobes.Count <= 256 ? stackalloc Vector3d[shapeA.Lobes.Count] : new Vector3d[shapeA.Lobes.Count];
+        Span<Vector3d> centresB = shapeB.Lobes.Count <= 256 ? stackalloc Vector3d[shapeB.Lobes.Count] : new Vector3d[shapeB.Lobes.Count];
+        Span<Vector3d> extentsA = shapeA.Lobes.Count <= 256 ? stackalloc Vector3d[shapeA.Lobes.Count] : new Vector3d[shapeA.Lobes.Count];
+        Span<Vector3d> extentsB = shapeB.Lobes.Count <= 256 ? stackalloc Vector3d[shapeB.Lobes.Count] : new Vector3d[shapeB.Lobes.Count];
+        for (int i = 0; i < centresA.Length; i++) {
+            Lobe lobe = shapeA.Lobes[i];
+            centresA[i] = a.Orientation.Rotate(lobe.ToVessel(lobe.Centre) - Vector3d.UnitZ * a.CentreOfMassZ);
+            extentsA[i] = WorldExtent(a, lobe);
+        }
+        for (int i = 0; i < centresB.Length; i++) {
+            Lobe lobe = shapeB.Lobes[i];
+            centresB[i] = b.Position - a.Position + b.Orientation.Rotate(lobe.ToVessel(lobe.Centre) - Vector3d.UnitZ * b.CentreOfMassZ);
+            extentsB[i] = WorldExtent(b, lobe);
+        }
+        for (int i = 0; i < centresA.Length; i++) {
+            Lobe lobeA = shapeA.Lobes[i];
 
-            foreach (Lobe lobeB in Geometry(b).Lobes) {
+            for (int j = 0; j < centresB.Length; j++) {
+                Lobe lobeB = shapeB.Lobes[j];
 
-                if (Apart(a, lobeA, b, lobeB)) {
+                double bound = lobeA.Bound + lobeB.Bound;
+                Vector3d delta = centresB[j] - centresA[i];
+                Vector3d extent = extentsA[i] + extentsB[j];
+                if (Math.Abs(delta.X) > extent.X || Math.Abs(delta.Y) > extent.Y || Math.Abs(delta.Z) > extent.Z || delta.LengthSquared > bound * bound) {
 
                     continue;
 
                 }
+
+                // Moving beyond an enclosing box also separates its contents. Once a deeper
+                // contact is known, a pair with less possible penetration cannot replace it.
+                double maximumDepth = Math.Min(extent.X - Math.Abs(delta.X), Math.Min(extent.Y - Math.Abs(delta.Y), extent.Z - Math.Abs(delta.Z)));
+                if (touching && maximumDepth <= contact.Depth) { continue; }
 
                 if (Find(new Couple(a, lobeA, b, lobeB), out Contact hit) && (!touching || hit.Depth > contact.Depth)) {
 
@@ -296,17 +372,12 @@ public static class VesselCollision {
 
     }
 
-    private static bool Apart(Vessel a, Lobe lobeA, Vessel b, Lobe lobeB) {
-
-        Vector3d centreA = a.Position + a.Orientation.Rotate(
-            new Vector3d(lobeA.Centre.X, lobeA.Centre.Y, lobeA.Centre.Z - a.CentreOfMassZ));
-        Vector3d centreB = b.Position + b.Orientation.Rotate(
-            new Vector3d(lobeB.Centre.X, lobeB.Centre.Y, lobeB.Centre.Z - b.CentreOfMassZ));
-
-        double reach = lobeA.Bound + lobeB.Bound;
-
-        return (centreB - centreA).LengthSquared > reach * reach;
-
+    private static Vector3d WorldExtent(Vessel vessel, Lobe lobe) {
+        QuaternionD rotation = lobe.Engine == null ? vessel.Orientation : vessel.Orientation * lobe.Engine.ContactRotation;
+        Vector3d x = rotation.Rotate(Vector3d.UnitX * lobe.HalfExtent.X);
+        Vector3d y = rotation.Rotate(Vector3d.UnitY * lobe.HalfExtent.Y);
+        Vector3d z = rotation.Rotate(Vector3d.UnitZ * lobe.HalfExtent.Z);
+        return new Vector3d(Math.Abs(x.X) + Math.Abs(y.X) + Math.Abs(z.X), Math.Abs(x.Y) + Math.Abs(y.Y) + Math.Abs(z.Y), Math.Abs(x.Z) + Math.Abs(y.Z) + Math.Abs(z.Z));
     }
 
     private static bool Find(Couple pair, out Contact contact) {
@@ -410,7 +481,9 @@ public static class VesselCollision {
 
         }
 
-        foreach ((int b, int c, int opposite) in new[] { (1, 2, 3), (2, 3, 1), (3, 1, 2) }) {
+        for (int b = 1; b <= 3; b++) {
+            int c = b % 3 + 1;
+            int opposite = c % 3 + 1;
 
             Vector3d outward = Vector3d.Cross(s[b].Point - a, s[c].Point - a);
 
@@ -465,7 +538,9 @@ public static class VesselCollision {
 
     private static bool Expand(Couple pair, List<Support> points, out Contact contact) {
 
-        List<Face> faces = new();
+        List<Face> faces = new(128);
+        List<(int A, int B)> edges = new(64);
+        points.EnsureCapacity(84);
         AddFace(points, faces, 0, 1, 2);
         AddFace(points, faces, 0, 3, 1);
         AddFace(points, faces, 0, 2, 3);
@@ -489,7 +564,7 @@ public static class VesselCollision {
             Face face = faces[nearest];
             Support point = Extreme(pair, face.Normal);
 
-            if (Vector3d.Dot(point.Point, face.Normal) - face.Distance < 0.0001 || iteration == 79) {
+            if (Vector3d.Dot(point.Point, face.Normal) - face.Distance < 0.001 || iteration == 79) {
 
                 Vector3d origin = points[face.A].Point;
                 Vector3d u = points[face.B].Point - origin;
@@ -507,7 +582,7 @@ public static class VesselCollision {
 
             }
 
-            List<(int A, int B)> edges = new();
+            edges.Clear();
 
             void Edge(int first, int second) {
 
