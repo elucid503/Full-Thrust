@@ -37,19 +37,19 @@ public sealed partial class SmokeProbe : Node3D {
             if (variant == "noturb") { dust.TurbulenceEnabled = false; }
             if (variant == "nocurves") { dust.ScaleCurve = null; dust.DampingCurve = null; }
             if (variant == "plain") { dust.TurbulenceEnabled = false; dust.ScaleCurve = null; dust.DampingCurve = null; dust.AngularVelocityMin = 0.0f; dust.AngularVelocityMax = 0.0f; dust.AngleMin = 0.0f; dust.AngleMax = 0.0f; }
-            if (variant == "sprayskin") { ((QuadMesh)smoke.DrawPass1).Material = ((QuadMesh)spray.DrawPass1).Material; }
+            if (variant == "sprayskin") { ((PrimitiveMesh)smoke.DrawPass1).Material = ((QuadMesh)spray.DrawPass1).Material; }
             if (variant == "sprayprocess") { smoke.ProcessMaterial = spray.ProcessMaterial; }
 
             smoke.Position = Vector3.Zero;
             smoke.AmountRatio = 1.0f;
             smoke.Emitting = true;
-            ((StandardMaterial3D)((QuadMesh)smoke.DrawPass1).Material).AlbedoColor = new Color(0.36f, 0.33f, 0.30f, 1.0f);
+            if (((PrimitiveMesh)smoke.DrawPass1).Material is ShaderMaterial volume) { volume.SetShaderParameter("tint", new Color(0.58f, 0.53f, 0.47f)); }
 
             for (int i = 0; i < 180; i++) { await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw); }
 
             using Image shot = GetViewport().GetTexture().GetImage();
             shot.SavePng($"res://.artifacts/smoke-probe-{(variant == "" ? "full" : variant)}.png");
-            GD.Print($"SMOKE PROBE {variant}: extent={smoke.CaptureAabb().Size.Length():F1} albedo={((StandardMaterial3D)((QuadMesh)smoke.DrawPass1).Material).AlbedoColor}");
+            GD.Print($"SMOKE PROBE {variant}: extent={smoke.CaptureAabb().Size.Length():F1}");
             GetTree().Quit();
 
         } catch (Exception exception) {

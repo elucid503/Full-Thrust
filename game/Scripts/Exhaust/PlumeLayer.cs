@@ -2,8 +2,7 @@ using Godot;
 
 namespace FullThrust.Game;
 
-/// <summary>One additive cylinder of a plume. Lengths and radii are in nozzle exit radii so a
-/// template fits any bell; the expansion terms are extra radii gained by the tail.</summary>
+// One emissive volume; lengths and expansion are authored in nozzle exit radii.
 [GlobalClass]
 public sealed partial class PlumeLayer : Resource {
 
@@ -17,6 +16,11 @@ public sealed partial class PlumeLayer : Resource {
     [Export] public float ExpandLinear { get; set; }
     [Export] public float ExpandSquare { get; set; }
     [Export] public float ExpandBounded { get; set; }
+    [Export] public float VacuumOpening { get; set; } = 0.55f;
+    [Export] public bool VacuumEnvelope { get; set; }
+    [Export] public bool ShockOnly { get; set; }
+    [Export] public bool ResidualGas { get; set; }
+    [Export] public bool DiffuseTail { get; set; }
 
     [ExportGroup("Shading")]
     [Export] public Color StartTint { get; set; } = Colors.White;
@@ -77,6 +81,11 @@ public sealed partial class PlumeLayer : Resource {
 
     public void Write(ShaderMaterial material) {
 
+        material.SetShaderParameter("vacuum_opening", VacuumOpening);
+        material.SetShaderParameter("vacuum_envelope", VacuumEnvelope ? 1.0f : 0.0f);
+        material.SetShaderParameter("shock_only", ShockOnly);
+        material.SetShaderParameter("residual_gas", ResidualGas ? 1.0f : 0.0f);
+        material.SetShaderParameter("diffuse_tail", DiffuseTail ? 1.0f : 0.0f);
         material.SetShaderParameter("start_tint", StartTint);
         material.SetShaderParameter("end_tint", EndTint);
         material.SetShaderParameter("tint_falloff", TintFalloff);

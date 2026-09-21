@@ -118,8 +118,11 @@ public sealed partial class EngineVisualChecks : Node {
 
         double with = await GpuMedian(40);
         Plume.Enabled = false;
+        Godot.Collections.Array<Node> particles = VesselView.Active.FindChildren("*", "GPUParticles3D", true, false);
+        foreach (Node node in particles) { ((GpuParticles3D)node).Visible = false; }
         double without = await GpuMedian(40);
         Plume.Enabled = true;
+        foreach (Node node in particles) { ((GpuParticles3D)node).Visible = true; }
         await Frames(10);
         GD.Print($"ENGINE COST {name}: exhaust={with - without:F2}ms scene={with:F2}ms bare={without:F2}ms");
         if (with - without > 2.0) { throw new InvalidOperationException($"Exhaust cost {with - without:F2}ms at {name} is over budget"); }
@@ -230,6 +233,12 @@ public sealed partial class EngineVisualChecks : Node {
             await Frames(90);
             await Capture("atmosphere");
             await Cost("atmosphere");
+            nozzle = Nozzle(vessel);
+            up = nozzle.Normalized;
+            east = Vector3d.Cross(Vector3d.UnitZ, up).Normalized;
+            await Look(nozzle + east * 3.0 - up * 6.0, nozzle);
+            await Capture("bells");
+            await Chase();
             for (int i = 1; i < vessel.EngineCount; i++) { vessel.SetEngine(i, false); }
             await Frames(90);
             await Capture("single-engine");
@@ -247,7 +256,7 @@ public sealed partial class EngineVisualChecks : Node {
                 if (plume.Visible) { flames++; }
                 foreach (Node layer in plume.FindChildren("*", "MeshInstance3D", false, false)) {
 
-                    if (((MeshInstance3D)layer).Mesh is not CylinderMesh) { throw new InvalidOperationException("Plume layers must use native mesh geometry"); }
+                    if (((MeshInstance3D)layer).Mesh is not BoxMesh && layer.Name != "Shimmer") { throw new InvalidOperationException("Plume layers must use volume proxies"); }
 
                 }
 
@@ -256,6 +265,12 @@ public sealed partial class EngineVisualChecks : Node {
             vessel.Throttle = 0.0;
             await Frames(180);
             await Capture("off");
+            nozzle = Nozzle(vessel);
+            up = nozzle.Normalized;
+            east = Vector3d.Cross(Vector3d.UnitZ, up).Normalized;
+            await Look(nozzle + east * 4.0 - up * 3.0, nozzle);
+            await Capture("bell-cooling");
+            await Chase();
             foreach (Node node in VesselView.Active.FindChildren("Plume*", "", true, false)) {
 
                 if (node is Plume plume && plume.Visible) { throw new InvalidOperationException("Flame survived shutdown"); }

@@ -6,25 +6,27 @@ using Godot;
 
 namespace FullThrust.Game;
 
-/// <summary>What a stage's exhaust kicks up where it meets the surface: dust and smoke off the
-/// ground, steam and spray off the sea. Particles live in world space, so the cloud stays where
-/// it was made while the vehicle climbs away.</summary>
+// Surface-anchored billows stay behind as the vessel climbs and the scene origin moves.
 public sealed partial class ExhaustImpact : Node3D {
 
     private const int Steps = 14;
     private const float ReachRadii = 70.0f;
 
     private static ImageTexture _puff;
+    private static NoiseTexture3D _volumeNoise;
 
     private GpuParticles3D _smoke;
     private GpuParticles3D _spray;
     private ParticleProcessMaterial _dust;
     private ParticleProcessMaterial _steam;
-    private StandardMaterial3D _smokeSkin;
+    private ShaderMaterial _smokeSkin;
     private StandardMaterial3D _spraySkin;
     private PlumeTemplate _template;
     private float _bellRadius;
     private bool _water;
+    private bool _anchored;
+    private Vector3d _anchor;
+    private Basis _cloudBasis;
 
     public bool Active { get; private set; }
 
@@ -32,18 +34,27 @@ public sealed partial class ExhaustImpact : Node3D {
 
         _puff ??= Puff();
 
-        ExhaustImpact impact = new ExhaustImpact { Name = "Impact", _template = template, _bellRadius = bellRadius };
+        ExhaustImpact impact = new ExhaustImpact { Name = "Impact", TopLevel = true, _template = template, _bellRadius = bellRadius };
 
         impact._dust = impact.Cloud(new Vector3(0.0f, 0.25f, 0.0f), 3.5f);
         impact._steam = impact.Cloud(new Vector3(0.0f, 1.4f, 0.0f), 5.0f);
 
-        impact._smokeSkin = Skin(0.8f);
-        impact._smoke = impact.Emitter("Smoke", impact._dust, impact._smokeSkin, Math.Min(90 * nozzles, 480), 12.0f, bellRadius * 2.4f);
+        impact._smokeSkin = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Exhaust/Smoke.gdshader"), RenderPriority = 1 };
+        _volumeNoise ??= new NoiseTexture3D {
+
+            Width = 48, Height = 48, Depth = 48, Seamless = true,
+            Noise = new FastNoiseLite { Seed = 1204, Frequency = 0.075f, FractalOctaves = 3 },
+
+        };
+        impact._smokeSkin.SetShaderParameter("flow_noise", _volumeNoise);
+        impact._smokeSkin.SetShaderParameter("tint", template.SmokeColour);
+        impact._smoke = impact.Emitter("Smoke", impact._dust, impact._smokeSkin, Math.Min(48 * nozzles, 256), 10.0f, bellRadius * 2.4f);
 
         impact._spraySkin = Skin(0.2f);
         impact._spraySkin.AlbedoColor = new Color(0.82f, 0.90f, 0.98f, 0.85f);
         impact._spray = impact.Emitter("Spray", impact.Droplets(), impact._spraySkin, Math.Min(220 * nozzles, 900), 1.8f, bellRadius * 0.45f);
 
+        impact._smoke.DrawPass1 = new BoxMesh { Size = Vector3.One, Material = impact._smokeSkin };
         impact.AddChild(impact._smoke);
         impact.AddChild(impact._spray);
 
@@ -51,7 +62,7 @@ public sealed partial class ExhaustImpact : Node3D {
 
     }
 
-    // A soft disc with a ragged noise edge, so overlapping quads read as one rolling cloud.
+    // Spray stays cheap; only the smoke and steam use volume shading.
     private static ImageTexture Puff() {
 
         const int size = 128;
@@ -115,17 +126,18 @@ public sealed partial class ExhaustImpact : Node3D {
             Spread = 50.0f,
             InitialVelocityMin = _bellRadius * 3.0f,
             InitialVelocityMax = _bellRadius * 7.0f,
-            RadialVelocityMin = _bellRadius * 22.0f,
-            RadialVelocityMax = _bellRadius * 40.0f,
+            RadialVelocityMin = _bellRadius * 10.0f,
+            RadialVelocityMax = _bellRadius * 18.0f,
+            RadialVelocityCurve = Ramp(new[] { (0.0f, 1.0f), (0.2f, 0.3f), (0.5f, 0.0f), (1.0f, 0.0f) }),
             Gravity = lift,
             DampingMin = 6.0f,
             DampingMax = 9.0f,
             DampingCurve = Ramp(new[] { (0.0f, 1.0f), (0.3f, 0.9f), (0.5f, 0.0f), (1.0f, 0.0f) }),
             LifetimeRandomness = 0.35f,
 
-            ScaleMin = _bellRadius * 6.0f,
-            ScaleMax = _bellRadius * 10.0f,
-            ScaleCurve = Ramp(new[] { (0.0f, 0.3f), (0.12f, 1.0f), (1.0f, growth) }),
+            ScaleMin = _bellRadius * 12.0f,
+            ScaleMax = _bellRadius * 18.0f,
+            ScaleCurve = Ramp(new[] { (0.0f, 0.55f), (0.08f, 1.0f), (1.0f, growth) }),
             AngleMin = -180.0f,
             AngleMax = 180.0f,
             AngularVelocityMin = -14.0f,
@@ -138,7 +150,7 @@ public sealed partial class ExhaustImpact : Node3D {
             TurbulenceInfluenceMin = 0.08f,
             TurbulenceInfluenceMax = 0.18f,
 
-            ColorRamp = Fade(new[] { (0.0f, 0.0f), (0.06f, 0.42f), (0.45f, 0.3f), (1.0f, 0.0f) }),
+            ColorRamp = Fade(new[] { (0.0f, 0.0f), (0.06f, 0.85f), (0.45f, 0.7f), (1.0f, 0.0f) }),
 
         };
 
@@ -173,14 +185,14 @@ public sealed partial class ExhaustImpact : Node3D {
 
     }
 
-    private GpuParticles3D Emitter(string name, ParticleProcessMaterial process, StandardMaterial3D skin, int amount, float life, float extent) {
+    private GpuParticles3D Emitter(string name, ParticleProcessMaterial process, Material skin, int amount, float life, float extent) {
 
         return new GpuParticles3D {
 
             Name = name,
             Amount = amount,
             Lifetime = life,
-            LocalCoords = false,
+            LocalCoords = true,
             Emitting = false,
             FixedFps = 30,
             Interpolate = true,
@@ -230,6 +242,11 @@ public sealed partial class ExhaustImpact : Node3D {
     /// from how hard it lands. Sim positions are inertial doubles; the emitter is placed in scene floats.</summary>
     public void Sync(CelestialBody body, double time, Vector3d exit, Vector3d axis, float power, Vector3 wind, Vector3 sunDirection) {
 
+        // Follow the rotating surface while the scene origin follows the vessel.
+        Vector3d anchor = _anchored ? body.ToInertial(_anchor, time) : Vector3d.Zero;
+        if (_anchored) { GlobalTransform = new Transform3D(_cloudBasis, Frames.Point(anchor)); }
+        _smokeSkin.SetShaderParameter("effect_time", (float)(time % 4096.0));
+
         float reach = _bellRadius * ReachRadii;
         double hit = Hit(body, time, exit, axis, reach);
 
@@ -263,17 +280,36 @@ public sealed partial class ExhaustImpact : Node3D {
 
         Vector3 vertical = Frames.Direction(up);
         Vector3 side = Mathf.Abs(vertical.Y) > 0.99f ? Vector3.Right : Vector3.Up.Cross(vertical).Normalized();
-        GlobalTransform = new Transform3D(new Basis(side, vertical, side.Cross(vertical)), Frames.Point(point) + vertical * (_bellRadius * 1.5f));
+        if (!_anchored || (point - anchor).Length > 1000.0) {
+
+            _anchor = body.ToBodyFixed(point, time);
+            anchor = point;
+            _cloudBasis = new Basis(side, vertical, side.Cross(vertical));
+            _anchored = true;
+            _smoke.Restart();
+            _spray.Restart();
+
+        }
+
+        GlobalTransform = new Transform3D(_cloudBasis, Frames.Point(anchor));
+        Vector3 emission = _cloudBasis.Inverse() * Frames.Direction(point - anchor) + Vector3.Up * (_bellRadius * 1.5f);
+        _dust.EmissionShapeOffset = emission;
+        _steam.EmissionShapeOffset = emission;
+        ((ParticleProcessMaterial)_spray.ProcessMaterial).EmissionShapeOffset = emission;
 
         Vector3 drift = wind - vertical * wind.Dot(vertical);
         ParticleProcessMaterial cloud = water ? _steam : _dust;
-        cloud.Gravity = vertical * (water ? 1.1f : 0.15f) + drift * 0.35f;
+        cloud.Gravity = _cloudBasis.Inverse() * (vertical * (water ? 1.1f : 0.15f) + drift * 0.08f);
 
-        // Unshaded billboards: daylight and the flame under them are painted into the tint.
+        // The volume shader attenuates sunlight through each rolling billow.
         float daylight = Mathf.Clamp(vertical.Dot(sunDirection) * 2.5f + 0.3f, 0.12f, 1.0f);
         Color tint = water ? new Color(0.94f, 0.96f, 0.99f) : _template.SmokeColour;
         Color glow = _template.LightAirColour * (0.25f * strength * (1.0f - daylight));
-        _smokeSkin.AlbedoColor = tint * daylight + glow;
+        _smokeSkin.SetShaderParameter("tint", tint);
+        _smokeSkin.SetShaderParameter("sun_direction", sunDirection);
+        _smokeSkin.SetShaderParameter("daylight", daylight);
+        _smokeSkin.SetShaderParameter("flame_light", glow);
+
         _spraySkin.AlbedoColor = new Color(0.82f, 0.90f, 0.98f, 0.85f) * Mathf.Max(daylight, 0.25f);
 
         _smoke.AmountRatio = strength;

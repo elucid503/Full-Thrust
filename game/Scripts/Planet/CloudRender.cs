@@ -32,6 +32,16 @@ public sealed partial class CloudRender : CompositorEffect {
 
     public bool Ready => _color.TextureRdRid.IsValid;
 
+    public void BindRefraction(ShaderMaterial material) {
+
+        bool ready = Enabled && Ready;
+        material.SetShaderParameter("cloud_buffer_ready", ready);
+        if (!ready) { return; }
+        material.SetShaderParameter("cloud_buffer", _color);
+        material.SetShaderParameter("cloud_depth", _depth);
+
+    }
+
     public CloudRender() {
 
         EffectCallbackType = EffectCallbackTypeEnum.PreTransparent;
