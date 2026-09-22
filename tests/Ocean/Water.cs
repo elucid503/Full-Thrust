@@ -50,7 +50,14 @@ public static partial class Program {
         double dt = 0.001;
         Ocean.Surface wave = Ocean.Sample(body, point, bed, 123.0);
         double numerical = (Ocean.Sample(body, point, bed, 123.0 + dt).Height - Ocean.Sample(body, point, bed, 123.0 - dt).Height) / (2.0 * dt);
-        Near("water vertical velocity follows visible waves", Vector3d.Dot(wave.Velocity, fixedUp), numerical, 1e-5);
+        // Trochoid particles move sideways, so the surface kinematic condition replaces a plain rate check.
+        Vector3d sideways = wave.Velocity - fixedUp * Vector3d.Dot(wave.Velocity, fixedUp);
+        Near("water particles stay on the visible surface", Vector3d.Dot(wave.Velocity, fixedUp),
+            numerical + Vector3d.Dot(sideways, wave.Gradient), 1e-5);
+        Ocean.Particle particle = Ocean.Displace(body, fixedUp * body.Radius, bed, 123.0);
+        Expect("trochoid swell moves particles sideways", particle.Shift.Length > 0.01, $"{particle.Shift.Length} m");
+        Near("surface sampling inverts the trochoid", Ocean.Sample(body, fixedUp * body.Radius + particle.Shift, bed, 123.0).Height,
+            particle.Height, 1e-6);
         Vector3d east = Vector3d.Cross(Vector3d.UnitZ, fixedUp).Normalized;
         foreach (Vector3d direction in new[] { east, Vector3d.Cross(fixedUp, east) }) {
 

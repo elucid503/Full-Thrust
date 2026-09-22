@@ -17,6 +17,7 @@ public sealed partial class WaterRegressionChecks : Node {
     private Vector3d _east;
     private Vector3d _north;
     private ShaderMaterial[] _faces;
+    private ShaderMaterial _water;
     private int _frames;
     private int _checks;
     private bool _closeOnly;
@@ -68,6 +69,7 @@ public sealed partial class WaterRegressionChecks : Node {
         _east = Vector3d.Cross(Vector3d.UnitZ, _shore).Normalized;
         _north = Vector3d.Cross(_shore, _east);
         _faces = (ShaderMaterial[])typeof(Planet).GetField("_faces", Fields).GetValue(Planet.Active);
+        _water = (ShaderMaterial)typeof(Planet).GetField("_water", Fields).GetValue(Planet.Active);
         SetMask(true);
         FreeCamera.Active.Take(OrbitCamera.Active);
         CameraAt(_shore * (_flight.Body.Radius + 180.0), _shore * _flight.Body.Radius + _north);
@@ -88,6 +90,7 @@ public sealed partial class WaterRegressionChecks : Node {
     private void SetMask(bool mask) {
 
         foreach (ShaderMaterial face in _faces) { face.SetShaderParameter("shoreline_debug", mask); }
+        _water.SetShaderParameter("shoreline_debug", mask);
         foreach (string path in new[] { "Planet/Clouds", "Planet/Atmosphere", "Planet/Forest", "Planet/DistantForest", "Planet/GroundScatter", "Planet/BroadScatter" }) {
 
             _main.GetNodeOrNull<Node3D>(path)?.Set("visible", !mask);

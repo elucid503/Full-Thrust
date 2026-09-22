@@ -117,15 +117,16 @@ public sealed partial class Planet : Node3D {
         _cloudDetail = _sharedCloudDetail;
 
         BuildFaces(radius, cloud, sunDirection);
+        BuildWater(radius, cloud, sunDirection);
 
         _ground = new Ground { Name = "Surface" };
 
         AddChild(_ground);
 
-        _ground.Build(body, _faces);
+        _ground.Build(body, _faces, _water);
         _mapGround = new Ground { Name = "MapSurface", Visible = false };
         AddChild(_mapGround);
-        _mapGround.Build(body, _faces);
+        _mapGround.Build(body, _faces, _water);
         _forest = new Forest { Name = "Forest" };
         AddChild(_forest);
         _forest.Build(body, GD.Load<Texture2D>("res://Assets/Planet/biomes.png"));
@@ -144,6 +145,7 @@ public sealed partial class Planet : Node3D {
         AddChild(_cloudShadows);
         _cloudShadows.Build(cloud, _cloudShape, _cloudDetail, radius, CloudBase, CloudTop, CoastalWeatherDirection());
         foreach (ShaderMaterial face in _faces) { _cloudShadows.AddReceiver(face); }
+        _cloudShadows.AddReceiver(_water);
         _cloudShadows.AddReceiver(_forest.SurfaceMaterial);
         _cloudShadows.AddReceiver(_canopy.SurfaceMaterial);
         _cloudShadows.AddReceiver(_scatter.SurfaceMaterial);
@@ -317,6 +319,7 @@ public sealed partial class Planet : Node3D {
 
             "clouds" => _clouds,
             "atmosphere" => _atmosphere,
+            "water" => _water,
 
             _ => null,
 
@@ -413,6 +416,8 @@ public sealed partial class Planet : Node3D {
 
         }
 
+        SyncWater(time, centre, materialAltitude, rotation, cloudFrame);
+
         _clouds.SetShaderParameter("planet_centre", centre);
         _clouds.SetShaderParameter("cloud_frame", cloudFrame);
         _clouds.SetShaderParameter("eye_height", (float)(eye.Length - _body.Radius));
@@ -428,6 +433,7 @@ public sealed partial class Planet : Node3D {
     private void Publish(string name, Texture3D volume) {
 
         _clouds.SetShaderParameter(name, volume);
+        _water.SetShaderParameter(name, volume);
         foreach (ShaderMaterial face in _faces) {
 
             face.SetShaderParameter(name, volume);

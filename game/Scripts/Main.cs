@@ -203,6 +203,7 @@ public sealed partial class Main : Node3D {
         _vessel.Sync(focus, Frames.Rotation(_flight.Vessel.Orientation));
 
         SyncDebris(focus);
+        _planet.Wakes.Track(_flight.Vessel, _flight.Time);
         VesselMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - vesselStarted) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 
         _earthlight.Position = focus;
@@ -271,6 +272,7 @@ public sealed partial class Main : Node3D {
             if (near) {
 
                 entry.Value.Sync(at, Frames.Rotation(entry.Key.Orientation));
+                _planet.Wakes.Track(entry.Key, _flight.Time);
 
             }
 

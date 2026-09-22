@@ -32,8 +32,6 @@ public sealed partial class ExhaustImpact : Node3D {
 
     public static ExhaustImpact Create(PlumeTemplate template, float bellRadius, int nozzles) {
 
-        _puff ??= Puff();
-
         ExhaustImpact impact = new ExhaustImpact { Name = "Impact", TopLevel = true, _template = template, _bellRadius = bellRadius };
 
         impact._dust = impact.Cloud(new Vector3(0.0f, 0.25f, 0.0f), 3.5f);
@@ -61,6 +59,8 @@ public sealed partial class ExhaustImpact : Node3D {
         return impact;
 
     }
+
+    internal static ImageTexture PuffTexture => _puff ??= Puff();
 
     // Spray stays cheap; only the smoke and steam use volume shading.
     private static ImageTexture Puff() {
@@ -92,7 +92,7 @@ public sealed partial class ExhaustImpact : Node3D {
 
     }
 
-    private static StandardMaterial3D Skin(float fade) {
+    internal static StandardMaterial3D Skin(float fade) {
 
         return new StandardMaterial3D {
 
@@ -101,7 +101,7 @@ public sealed partial class ExhaustImpact : Node3D {
             BillboardMode = BaseMaterial3D.BillboardModeEnum.Particles,
             BillboardKeepScale = true,
             VertexColorUseAsAlbedo = true,
-            AlbedoTexture = _puff,
+            AlbedoTexture = PuffTexture,
             CullMode = BaseMaterial3D.CullModeEnum.Disabled,
             ProximityFadeEnabled = true,
             ProximityFadeDistance = fade,
@@ -207,7 +207,7 @@ public sealed partial class ExhaustImpact : Node3D {
 
     }
 
-    private static CurveTexture Ramp((float, float)[] points) {
+    internal static CurveTexture Ramp((float, float)[] points) {
 
         Curve curve = new Curve { MaxValue = 8.0f };
 
@@ -221,7 +221,7 @@ public sealed partial class ExhaustImpact : Node3D {
 
     }
 
-    private static GradientTexture1D Fade((float, float)[] alphas) {
+    internal static GradientTexture1D Fade((float, float)[] alphas) {
 
         Gradient gradient = new Gradient { InterpolationMode = Gradient.InterpolationModeEnum.Cubic };
         gradient.RemovePoint(1);
@@ -311,6 +311,13 @@ public sealed partial class ExhaustImpact : Node3D {
         _smokeSkin.SetShaderParameter("flame_light", glow);
 
         _spraySkin.AlbedoColor = new Color(0.82f, 0.90f, 0.98f, 0.85f) * Mathf.Max(daylight, 0.25f);
+
+        if (water) {
+
+            // The jet digs a crater its own width and several deep at full thrust, capped at a few metres.
+            Planet.Active?.Wakes.Jet(point, time, _bellRadius * (3.0 + (float)hit / _bellRadius * 0.12f), Math.Min(strength * _bellRadius * 1.2f, 2.5f), strength);
+
+        }
 
         _smoke.AmountRatio = strength;
         _smoke.Emitting = true;

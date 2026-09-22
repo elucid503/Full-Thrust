@@ -34,6 +34,8 @@ public sealed partial class Planet {
             face.SetShaderParameter("weather_coverage", coverage);
 
         }
+        SetOcean(_water, _body, time, _oceanAlong, _oceanModes);
+        _water.SetShaderParameter("weather_coverage", coverage);
         _clouds.SetShaderParameter("weather_coverage", coverage);
         _cloudShadows.SetWeather(coverage);
 

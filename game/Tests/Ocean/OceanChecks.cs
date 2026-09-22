@@ -27,31 +27,33 @@ public sealed partial class OceanChecks : Node {
             body.Weather = new Weather();
             ShaderMaterial material = new() {
 
-                Shader = new Shader { Code = "shader_type canvas_item; render_mode unshaded;\n#include \"res://Shaders/Ground/OceanField.gdshaderinc\"\nuniform vec3 probe; uniform vec4 expected; uniform float elevation; uniform float spacing; void fragment() { vec4 wave = ocean_wave(probe, spacing, elevation); COLOR = vec4(abs(wave.x - expected.x), length(wave.yzw - expected.yzw), 0.0, 1.0); }" },
+                Shader = new Shader { Code = "shader_type canvas_item; render_mode unshaded;\n#include \"res://Shaders/Ground/OceanField.gdshaderinc\"\nuniform vec3 probe; uniform vec4 expected; uniform vec3 expected_shift; uniform float elevation; uniform float spacing; void fragment() { vec3 shift; mat3 jacobian; vec4 wave = ocean_wave(probe, spacing, elevation, shift, jacobian); COLOR = vec4(abs(wave.x - expected.x), length(wave.yzw - expected.yzw), length(shift - expected_shift), 1.0); }" },
 
             };
             SubViewport viewport = new() { Size = new Vector2I(8, 8), Disable3D = true, RenderTargetUpdateMode = SubViewport.UpdateMode.Always };
             AddChild(viewport);
             viewport.AddChild(new ColorRect { Size = new Vector2(8, 8), Material = material });
-            Vector3[] along = new Vector3[4];
-            Vector4[] modes = new Vector4[4];
+            Vector3[] along = new Vector3[Ocean.WaveCount];
+            Vector4[] modes = new Vector4[Ocean.WaveCount];
             foreach (Vector3d direction in new[] { Weather.Origin, Vector3d.UnitX, Vector3d.UnitY, Vector3d.UnitZ, -Weather.Origin }) {
 
                 foreach (double time in new[] { 0.0, 127.0, 1e7 }) {
 
                     foreach (double elevation in new[] { -100.0, -0.3, 0.15 }) {
 
-                        Ocean.Surface sample = Ocean.Sample(body, direction * body.Radius, elevation, time);
-                        Vector3 gradient = Frames.Direction(sample.Gradient);
+                        Ocean.Particle sample = Ocean.Displace(body, direction * body.Radius, elevation, time);
+                        Vector3 gradient = Frames.Direction(sample.Slope);
                         Planet.SetOcean(material, body, time, along, modes);
                         material.SetShaderParameter("probe", Frames.Direction(direction * body.Radius));
                         material.SetShaderParameter("expected", new Vector4((float)sample.Height, gradient.X, gradient.Y, gradient.Z));
+                        material.SetShaderParameter("expected_shift", Frames.Direction(sample.Shift));
                         material.SetShaderParameter("elevation", (float)elevation);
                         await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
                         await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
                         using Image result = viewport.GetTexture().GetImage();
                         Color error = result.GetPixel(4, 4);
-                        Check(error.R < 0.12f && error.G < 0.035f, $"GPU water matches physics at {time} s / bed {elevation}: {error.R:F4} m, slope {error.G:F4}");
+                        Check(error.R < 0.12f && error.G < 0.035f && error.B < 0.12f,
+                            $"GPU water matches physics at {time} s / bed {elevation}: {error.R:F4} m, slope {error.G:F4}, shift {error.B:F4} m");
 
                     }
 

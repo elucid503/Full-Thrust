@@ -27,6 +27,8 @@ public static class WaterPhysics {
         if (bed > VesselCollision.Radius(vessel) + 2.0) { return false; }
 
         Span<Immersed> immersed = stackalloc Immersed[Slices];
+        Span<Ocean.Wave> waves = stackalloc Ocean.Wave[Ocean.WaveCount];
+        Ocean.Components(body, time, waves);
         int count = 0;
         double dz = vessel.Length / Slices;
         double entrySpeed = 0.0;
@@ -40,7 +42,7 @@ public static class WaterPhysics {
             Vector3d centre = vessel.Position + vessel.Nose * (z - vessel.CentreOfMassZ);
             double elevation = Ocean.BedElevation(body, centre, time);
             Vector3d fixedPoint = body.ToBodyFixed(centre, time);
-            Ocean.Surface water = Ocean.Sample(body, fixedPoint, elevation, time);
+            Ocean.Surface water = Ocean.Sample(body, waves, fixedPoint, elevation);
             if (elevation >= water.Height) { continue; }
             Vector3d up = centre.Normalized;
             Vector3d localUp = vessel.Orientation.Conjugate.Rotate(up);

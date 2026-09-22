@@ -78,6 +78,9 @@ public sealed partial class Ground : Node3D {
         public float[] ParentOffsets;
         public float[] CoastalHeights;
 
+        /// <summary>The sea surface over this patch, woven on the same grid, or null on dry land.</summary>
+        public Surface Water;
+
         public Vector3d Anchor;
 
         public double Bound;
@@ -108,6 +111,7 @@ public sealed partial class Ground : Node3D {
         public Patch[] Children;
 
         public MeshInstance3D Instance;
+        public MeshInstance3D Water;
 
         public Task<Surface> Job;
         public CancellationTokenSource Cancellation;
@@ -150,6 +154,7 @@ public sealed partial class Ground : Node3D {
     private Patch[] _roots;
 
     private ShaderMaterial[] _materials;
+    private ShaderMaterial _water;
 
     private readonly List<Task<Surface>> _jobs = new();
     private int _adopted;
@@ -168,12 +173,13 @@ public sealed partial class Ground : Node3D {
     /// frame and the meshes are handed over on this thread, so it is the one number worth watching.</summary>
     public double SyncMilliseconds { get; private set; }
 
-    public void Build(CelestialBody body, ShaderMaterial[] materials) {
+    public void Build(CelestialBody body, ShaderMaterial[] materials, ShaderMaterial water) {
 
         _body = body;
         _terrain = body.Terrain ?? throw new InvalidOperationException("no terrain survey; Assets/Planet/elevation.r16 is missing");
         _radius = body.Radius;
         _materials = materials;
+        _water = water;
 
         _roots = new Patch[6];
 
@@ -399,6 +405,12 @@ public sealed partial class Ground : Node3D {
                 patch.Instance.Visible = true;
                 patch.Visible = true;
 
+                if (patch.Water != null) {
+
+                    patch.Water.Visible = true;
+
+                }
+
             }
 
             return;
@@ -456,6 +468,16 @@ public sealed partial class Ground : Node3D {
 
         AddChild(patch.Instance);
 
+        if (surface.Water != null) {
+
+            patch.Water = Assemble(surface.Water, _water);
+            patch.Water.ExtraCullMargin = 12.0f;
+            patch.Water.SetInstanceShaderParameter("mesh_spacing", (float)(patch.Edge / Grid));
+
+            AddChild(patch.Water);
+
+        }
+
         _adopted++;
 
     }
@@ -466,6 +488,12 @@ public sealed partial class Ground : Node3D {
 
             patch.Instance.Visible = false;
             patch.Visible = false;
+
+            if (patch.Water != null) {
+
+                patch.Water.Visible = false;
+
+            }
 
         }
 
@@ -485,6 +513,8 @@ public sealed partial class Ground : Node3D {
 
             child.Instance?.QueueFree();
             child.Instance = null;
+            child.Water?.QueueFree();
+            child.Water = null;
             child.Cancellation?.Cancel();
 
         }
@@ -538,13 +568,22 @@ public sealed partial class Ground : Node3D {
 
             // Differenced against the floating origin in double and only then cut to float, so a
             // patch a million metres from the planet's centre still holds still under the camera.
-            patch.Instance.Transform = new Transform3D(turn, Frames.Point(_body.ToInertial(patch.Anchor, time)));
+            Transform3D transform = new Transform3D(turn, Frames.Point(_body.ToInertial(patch.Anchor, time)));
+            patch.Instance.Transform = transform;
+
+            if (patch.Water != null) {
+
+                patch.Water.Transform = transform;
+
+            }
+
             float arrival = patch.ActivatedAt < 0.0 ? 0.0f : (float)Math.Clamp(1.0 - (Time.GetTicksMsec() * 0.001 - patch.ActivatedAt) / 0.3, 0.0, 1.0);
             float morph = Math.Max(arrival, patch.Coarseness);
             if (arrival > 0.0f) { SurfaceReady = false; }
             if (morph != patch.LastMorph) {
 
                 patch.Instance.SetInstanceShaderParameter("lod_morph", morph);
+                patch.Water?.SetInstanceShaderParameter("lod_morph", morph);
                 patch.LastMorph = morph;
 
             }
@@ -570,6 +609,7 @@ public sealed partial class Ground : Node3D {
     // Scratch for one patch, kept per worker. The sample grid is the same size every time and is
     // dead the moment the mesh is woven, so allocating it fresh only feeds the collector.
     [ThreadStatic] private static Vector3d[] _points;
+    [ThreadStatic] private static Vector3d[] _datum;
     [ThreadStatic] private static double[] _sounding;
     [ThreadStatic] private static double[] _coastalHeights;
 
@@ -605,6 +645,7 @@ public sealed partial class Ground : Node3D {
         double spacing = span * Math.PI * 0.25 * radius / Grid;
 
         Vector3d[] points = _points ??= new Vector3d[side * side];
+        Vector3d[] datum = _datum ??= new Vector3d[side * side];
         double[] sounding = _sounding ??= new double[side * side];
         double[] coastalHeights = _coastalHeights ??= new double[side * side];
 
@@ -625,17 +666,14 @@ public sealed partial class Ground : Node3D {
 
                 double elevation = terrain.Elevation(direction, spacing, out double coastalHeight);
 
-                // Clamped at the datum: below sea level the mesh is the water's own surface, which
-                // is what a vehicle touches and what the shader shades as sea. The depth is kept,
-                // because the colour of shallow water is the one thing that needs it.
-                double standing = Math.Max(elevation, 0.0);
-
-                lowest = Math.Min(lowest, standing);
-                highest = Math.Max(highest, standing);
+                // The ground runs on down to the seabed; the sea is a second surface at the datum.
+                lowest = Math.Min(lowest, elevation);
+                highest = Math.Max(highest, elevation);
 
                 int index = row * side + column;
 
-                points[index] = direction * (radius + standing);
+                points[index] = direction * (radius + elevation);
+                datum[index] = direction * radius;
                 // Preserve both sides of sea level so the shoreline crosses triangles at zero height.
                 sounding[index] = -elevation;
                 coastalHeights[index] = coastalHeight;
@@ -644,9 +682,26 @@ public sealed partial class Ground : Node3D {
 
         }
 
+        bool wet = lowest < 0.0;
+
+        if (wet) {
+
+            highest = Math.Max(highest, 0.0);
+
+        }
+
         Vector3d anchor = Direction(face, s + span * 0.5, t + span * 0.5) * (radius + (lowest + highest) * 0.5);
 
-        return Weave(radius, s, t, span, points, sounding, coastalHeights, anchor);
+        Surface surface = Weave(radius, s, t, span, points, sounding, coastalHeights, anchor);
+
+        if (wet) {
+
+            surface.Water = Weave(radius, s, t, span, datum, sounding, coastalHeights, anchor);
+            surface.Bound = Math.Max(surface.Bound, surface.Water.Bound);
+
+        }
+
+        return surface;
 
     }
 

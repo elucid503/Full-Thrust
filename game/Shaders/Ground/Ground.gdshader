@@ -102,6 +102,7 @@ uniform float night_dusk = -0.02;
 uniform float night_dark = -0.20;
 
 varying float cloud_light;
+varying float glint_share;
 varying vec3 world_position;
 varying float surface_elevation;
 instance uniform float lod_morph : instance_index(0) = 0.0;
@@ -112,7 +113,6 @@ instance uniform float lod_morph : instance_index(0) = 0.0;
 
 instance uniform float mesh_spacing : instance_index(1) = 1.0;
 instance uniform vec3 material_origin : instance_index(2) = vec3(0.0);
-varying float ocean_room;
 varying vec3 material_position;
 
 #include "res://Shaders/Ground/LandscapeNoise.gdshaderinc"
@@ -123,16 +123,6 @@ void vertex() {
     material_position = VERTEX + material_origin;
     surface_elevation = CUSTOM0.w;
     world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-    ocean_room = 1.0 - step(0.0, CUSTOM0.w);
-    float local = 1.0 - smoothstep(20000.0, 25000.0, camera_altitude);
-    vec3 radial = world_position - planet_centre;
-    vec3 fixed_vertex = vec3(terrain_rotation.x * radial.x - terrain_rotation.y * radial.z,
-        radial.y, terrain_rotation.y * radial.x + terrain_rotation.x * radial.z);
-    vec4 wave = ocean_wave(fixed_vertex, mesh_spacing * (1.0 + lod_morph), CUSTOM0.w);
-    vec3 up = normalize(world_position - planet_centre);
-    float displacement = wave.x * ocean_room * local;
-    VERTEX += inverse(mat3(MODEL_MATRIX)) * up * displacement;
-    world_position += up * displacement;
 
 }
 
@@ -189,11 +179,17 @@ void fragment() {
     // One geographic field selects land/water at every LOD, independently of the camera and waves.
     float coast_elevation = shoreline_height(fixed_position);
     float wave_footprint = max(length(dFdx(UV2)), length(dFdy(UV2)));
-    vec4 geometric_wave = ocean_wave(fixed_position, wave_footprint, coast_elevation);
+    vec3 wave_shift;
+    mat3 wave_jacobian;
+    vec4 geometric_wave = ocean_wave(fixed_position, wave_footprint, coast_elevation, wave_shift, wave_jacobian);
     float depth = max(-coast_elevation, 0.0);
     // Resolve the surveyed zero contour per pixel, including on distant coarse patches.
     float coast_width = max(fwidth(coast_elevation), 0.02);
     float sea = 1.0 - smoothstep(-coast_width, coast_width, coast_elevation);
+    // The water surface stands at the datum. Where a coarse patch rises through it inside the
+    // surveyed coast, the ground draws the sea itself; below it, the ground is the seabed.
+    float cover = sea * smoothstep(-0.25, 0.25, elevation);
+    float seabed = sea - cover;
     // World-space slope, not fwidth: screen derivatives crawl the beach as the eye moves.
     float coast_slope = max(shoreline_slope(fixed_up, coast_elevation), 0.002);
     float coast_distance = coast_elevation / coast_slope;
@@ -302,11 +298,15 @@ void fragment() {
 
     }
 
+    // Sand where waves reach the bed, fine silt past it, bare rock on the steep drop-offs.
+    vec3 sediment = mix(beach_colour * 0.85, vec3(0.15, 0.14, 0.11), smoothstep(4.0, 45.0, depth));
+    ground = mix(ground, mix(sediment, rock_tint * 0.8, bare), seabed);
+
     float procedural = 1.0 - smoothstep(20000.0, 25000.0, camera_altitude);
     vec3 local_ground = ground;
     vec3 relief = vec3(0.0, 0.0, 1.0);
 
-    if (macro > 0.001 && sea < 0.999) {
+    if (macro > 0.001 && cover < 0.999) {
 
         // Broad blotching first: the same material read at a few hundred metres a tile, which is
         // the scale the imagery has already smoothed away.
@@ -319,7 +319,7 @@ void fragment() {
 
     }
 
-    if (detail > 0.001 && sea < 0.999) {
+    if (detail > 0.001 && cover < 0.999) {
 
         vec3 near_grain = mix(textureGrad(soil_colour, near_uv, detail_dx, detail_dy).rgb, textureGrad(rock_colour, near_uv, detail_dx, detail_dy).rgb, bare);
         vec3 far_grain = mix(textureGrad(soil_colour, far_uv, metres_dx / detail_coarse, metres_dy / detail_coarse).rgb,
@@ -347,7 +347,7 @@ void fragment() {
     }
 
     // Vertical faces need height-bearing projections instead of stretched top-down terrain UVs.
-    if (cliff > 0.001 && detail > 0.001 && sea < 0.999) {
+    if (cliff > 0.001 && detail > 0.001 && cover < 0.999) {
 
         vec3 fixed_normal = vec3(terrain_rotation.x * world_normal.x - terrain_rotation.y * world_normal.z,
             world_normal.y, terrain_rotation.y * world_normal.x + terrain_rotation.x * world_normal.z);
@@ -373,7 +373,7 @@ void fragment() {
 
     }
 
-    if (procedural > 0.0 && sea < 0.999) {
+    if (procedural > 0.0 && cover < 0.999) {
 
         local_ground = ground;
         float grain = 0.0;
@@ -424,7 +424,7 @@ void fragment() {
         dot(water_view_normal, normalize(BINORMAL)), dot(water_view_normal, normalize(NORMAL)));
     float swell_fade = 1.0 - smoothstep(swell_near, swell_far, footprint);
     float wave_variance = 0.0;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 6; i++) {
 
         float slope = min(ocean_modes[i].y, depth * 0.08) * ocean_modes[i].x / ocean_radius;
         wave_variance += 0.25 * slope * slope * (1.0 - coherent_swell * coherent_swell);
@@ -437,7 +437,7 @@ void fragment() {
     float land_relief = detail_relief * detail * (1.0 - snow * 0.45);
     float sea_relief = 1.0;
 
-    vec3 perturbed = mix(relief * vec3(land_relief, land_relief, 1.0), swell * vec3(sea_relief, sea_relief, 1.0), sea);
+    vec3 perturbed = mix(relief * vec3(land_relief, land_relief, 1.0), swell * vec3(sea_relief, sea_relief, 1.0), cover);
 
     NORMAL_MAP = normalize(perturbed) * 0.5 + 0.5;
     NORMAL_MAP_DEPTH = 1.0;
@@ -454,7 +454,7 @@ void fragment() {
 
     // Cloud attenuation belongs to direct illumination, not the material reflectance.
     cloud_light = lit;
-    ALBEDO = mix(ground, water, sea);
+    ALBEDO = mix(ground, water, cover);
 
     METALLIC = 0.0;
 
@@ -472,10 +472,12 @@ void fragment() {
     land_roughness = mix(land_roughness, clamp(close_roughness, 0.55, 1.0), close_detail);
     land_roughness = mix(land_roughness, 0.58, damp * (1.0 - beach));
     land_roughness = mix(land_roughness, 0.30, wet_sand);
+    land_roughness = mix(land_roughness, 0.9, seabed);
     AO = mix(1.0, cavity, close_detail * 0.75);
     AO_LIGHT_AFFECT = 0.0;
-    ROUGHNESS = mix(land_roughness, swell_roughness, sea);
-    SPECULAR = mix(0.38, 0.25, sea);
+    ROUGHNESS = mix(land_roughness, swell_roughness, cover);
+    SPECULAR = mix(0.38, 0.25, cover);
+    glint_share = 1.0 - seabed;
 
     float night = (1.0 - smoothstep(night_dark, night_dusk, dot(up, sun_direction)));
 
@@ -499,8 +501,8 @@ void fragment() {
     vec3 sea_horizon = vec3(0.16, 0.29, 0.43) * fresnel * daylight * 0.18;
 
     EMISSION = lights * night_gain * night * lit * (1.0 - sea)
-        + ALBEDO * sky_irradiance * (1.0 - sea)
-        + sea_horizon * sea;
+        + ALBEDO * sky_irradiance * (1.0 - cover)
+        + sea_horizon * cover;
 
     if (shoreline_debug) {
 
@@ -534,5 +536,5 @@ void light() {
     float visibility = 0.5 / max(nl * sqrt(nv * nv * (1.0 - alpha2) + alpha2)
         + nv * sqrt(nl * nl * (1.0 - alpha2) + alpha2), 0.001);
     float fresnel = mix(0.025, 1.0, pow(1.0 - lh, 5.0));
-    SPECULAR_LIGHT += radiance * nl * distribution * visibility * fresnel;
+    SPECULAR_LIGHT += radiance * nl * distribution * visibility * fresnel * glint_share;
 }
