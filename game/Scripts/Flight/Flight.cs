@@ -28,6 +28,10 @@ public sealed partial class Flight : Node {
 
     private const double ThrottleRate = 0.6;
 
+    // Pulse mode fires a short burst on the press and repeats it while held: fine trim, not flight.
+    private const double PulseWidth = 0.08;
+    private const double PulsePeriod = 0.2;
+
     // Warp is stepped down so that whatever factor is running still leaves this long before ignition.
     private const double WarpMargin = 12.0;
 
@@ -86,6 +90,11 @@ public sealed partial class Flight : Node {
     private readonly HashSet<(Vessel, Vessel)> _separating = new();
 
     public int ContactCount { get; private set; }
+
+    /// <summary>Whether the pilot's controls fire in bursts rather than continuously.</summary>
+    public bool RcsPulse { get; set; }
+
+    private double _pulseClock;
 
     private Tracked _own;
 
@@ -983,6 +992,7 @@ public sealed partial class Flight : Node {
                 break;
 
             case Key.R: Vessel.RcsEnabled = !Vessel.RcsEnabled; break;
+            case Key.F: RcsPulse = !RcsPulse; break;
 
             case Key.M: MapView.Active?.Toggle(); break;
 
@@ -1031,7 +1041,7 @@ public sealed partial class Flight : Node {
 
         }
 
-        Autopilot.ManualCommand = new Vector3d(
+        Vector3d rotation = new Vector3d(
 
             Axis(Key.S, Key.W),
             Axis(Key.A, Key.D),
@@ -1039,13 +1049,28 @@ public sealed partial class Flight : Node {
 
         );
 
-        Vessel.TranslationCommand = new Vector3d(
+        Vector3d translation = new Vector3d(
 
             Axis(Key.L, Key.J),
             Axis(Key.I, Key.K),
             Axis(Key.H, Key.N)
 
         );
+
+        bool held = rotation.LengthSquared > 0.0 || translation.LengthSquared > 0.0;
+
+        // The clock starts on the press, so the first burst is never cut short by where a cycle was.
+        _pulseClock = held ? _pulseClock + delta : 0.0;
+
+        if (RcsPulse && (_pulseClock - delta) % PulsePeriod >= PulseWidth) {
+
+            rotation = Vector3d.Zero;
+            translation = Vector3d.Zero;
+
+        }
+
+        Autopilot.ManualCommand = rotation;
+        Vessel.TranslationCommand = translation;
 
     }
 

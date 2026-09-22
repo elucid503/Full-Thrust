@@ -65,7 +65,7 @@ public sealed partial class OceanChecks : Node {
             using Image ramp = Image.CreateEmpty(2, 2, false, Image.Format.Rf);
             ramp.SetPixel(1, 0, Colors.White);
             ramp.SetPixel(1, 1, Colors.White);
-            material.Shader = new Shader { Code = "shader_type canvas_item; render_mode unshaded;\nuniform sampler2D shoreline_map : filter_linear; uniform float planet_radius = 1.0; float coastal_elevation(vec3 p, float h, float latitude) { return h; }\n#include \"res://Shaders/Ground/ShorelineSampling.gdshaderinc\"\nvoid fragment() { COLOR = vec4(vec3(shoreline_survey(vec2(0.251 + UV.x * 0.01, 0.5)) * 25.0), 1.0); }" };
+            material.Shader = new Shader { Code = "shader_type canvas_item; render_mode unshaded;\nuniform sampler2D shoreline_map : filter_linear; uniform float planet_radius = 1.0; float coastal_elevation_at(vec3 p, float h, float latitude, float footprint) { return h; }\n#include \"res://Shaders/Ground/ShorelineSampling.gdshaderinc\"\nvoid fragment() { COLOR = vec4(vec3(shoreline_survey(vec2(0.251 + UV.x * 0.01, 0.5)) * 25.0), 1.0); }" };
             material.SetShaderParameter("shoreline_map", ImageTexture.CreateFromImage(ramp));
             await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
             await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);

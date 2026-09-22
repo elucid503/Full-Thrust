@@ -18,6 +18,10 @@ public sealed partial class ModeBar : Control {
 
     private const float Narrow = 38.0f;
 
+    // The firing-mode chevron rides on the thrusters' switch, split off by a hairline so it reads as its option.
+    private const float Chevron = 18.0f;
+    private const float Seam = 2.0f;
+
     // The bar is the head of the ball's own panel, so it is set out to the same width rather than
     // to the width of its own labels.
     private static readonly float Wide = (Navball.Extent.X - Narrow - Gap * 2.0f) * 0.5f;
@@ -25,16 +29,18 @@ public sealed partial class ModeBar : Control {
     public static readonly Vector2 Extent = new Vector2(Navball.Extent.X, Height);
 
     private Flight _flight;
-    private AttitudeMenu _menu;
+    private ModeMenu _menu;
 
     private Button _sas;
     private Button _reference;
     private Button _rcs;
+    private Button _pulse;
 
     private Control _glyph;
     private Control _gauge;
+    private Control _chevron;
 
-    public void Bind(Flight flight, AttitudeMenu menu) {
+    public void Bind(Flight flight, ModeMenu menu) {
 
         _flight = flight;
         _menu = menu;
@@ -46,14 +52,17 @@ public sealed partial class ModeBar : Control {
 
         _sas = Add("SAS", Wide, 0.0f);
         _reference = Add(string.Empty, Narrow, Wide + Gap);
-        _rcs = Add("RCS", Wide, Wide + Narrow + Gap * 2.0f);
+        _rcs = Add("RCS", Wide - Chevron - Seam, Wide + Narrow + Gap * 2.0f);
+        _pulse = Add(string.Empty, Chevron, Wide * 2.0f + Narrow + Gap * 2.0f - Chevron);
 
         _glyph = Overlay(_reference, DrawReference);
         _gauge = Overlay(_rcs, DrawMonopropellant);
+        _chevron = Overlay(_pulse, DrawChevron);
 
         _sas.Pressed += ToggleAutopilot;
         _reference.Pressed += RaiseMenu;
         _rcs.Pressed += ToggleThrusters;
+        _pulse.Pressed += RaiseThrusters;
 
     }
 
@@ -64,9 +73,11 @@ public sealed partial class ModeBar : Control {
         HudTheme.Light(_sas, armed);
         HudTheme.Light(_reference, armed && _flight.Autopilot.Hold != AttitudeHold.Stability);
         HudTheme.Light(_rcs, _flight.Vessel.RcsEnabled);
+        HudTheme.Light(_pulse, _flight.RcsPulse);
 
         _glyph.QueueRedraw();
         _gauge.QueueRedraw();
+        _chevron.QueueRedraw();
 
     }
 
@@ -101,6 +112,22 @@ public sealed partial class ModeBar : Control {
 
     }
 
+    private void DrawChevron() {
+
+        Vector2 centre = _chevron.Size * 0.5f;
+
+        Color ink = _flight.RcsPulse ? HudTheme.Ink : HudTheme.Faint;
+
+        _chevron.DrawPolyline(new[] {
+
+            centre + new Vector2(-4.5f, 2.0f),
+            centre + new Vector2(0.0f, -2.5f),
+            centre + new Vector2(4.5f, 2.0f),
+
+        }, ink, 1.4f, true);
+
+    }
+
     private void ToggleAutopilot() {
 
         _flight.Autopilot.Hold = _flight.Autopilot.Hold == AttitudeHold.Off ? AttitudeHold.Stability : AttitudeHold.Off;
@@ -110,6 +137,20 @@ public sealed partial class ModeBar : Control {
     private void ToggleThrusters() {
 
         _flight.Vessel.RcsEnabled = !_flight.Vessel.RcsEnabled;
+
+    }
+
+    private void RaiseThrusters() {
+
+        if (_menu.Open) {
+
+            _menu.Dismiss();
+
+            return;
+
+        }
+
+        _menu.RaiseThrusters(_flight, new Vector2(GlobalPosition.X + Extent.X, GlobalPosition.Y - 6.0f));
 
     }
 
@@ -123,7 +164,7 @@ public sealed partial class ModeBar : Control {
 
         }
 
-        _menu.Raise(_flight, new Vector2(GlobalPosition.X, GlobalPosition.Y - 6.0f));
+        _menu.RaiseAttitude(_flight, new Vector2(GlobalPosition.X, GlobalPosition.Y - 6.0f));
 
     }
 

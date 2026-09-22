@@ -30,7 +30,8 @@ public sealed class Autopilot {
 
     public AttitudeHold Hold { get; set; } = AttitudeHold.Off;
 
-    /// <summary>Pilot demand about the body axes, each in [-1, 1]; non-zero input drops the hold.</summary>
+    /// <summary>Pilot demand about the body axes, each in [-1, 1]; non-zero input overrides the hold on its own axes and
+    /// relaxes a pointing hold to stability, so the vessel settles wherever the pilot leaves it.</summary>
     public Vector3d ManualCommand { get; set; }
 
     /// <summary>World direction the maneuver hold points at; set from the planned node each frame.</summary>
@@ -69,9 +70,16 @@ public sealed class Autopilot {
 
         );
 
-        if (manual.LengthSquared > 0.0) {
+        bool steering = manual.LengthSquared > 0.0;
 
-            Hold = AttitudeHold.Off;
+        // The pilot has taken the nose off the reference, so on release the hold keeps the new attitude.
+        if (steering && Hold != AttitudeHold.Off) {
+
+            Hold = AttitudeHold.Stability;
+
+        }
+
+        if (Hold == AttitudeHold.Off) {
 
             vessel.ControlTorque = new Vector3d(manual.X * maxTorque.X, manual.Y * maxTorque.Y, manual.Z * maxTorque.Z);
 
@@ -79,17 +87,18 @@ public sealed class Autopilot {
 
         }
 
-        if (Hold == AttitudeHold.Off) {
-
-            vessel.ControlTorque = Vector3d.Zero;
-
-            return;
-
-        }
-
         Vector3d error = Hold == AttitudeHold.Stability ? Vector3d.Zero : PointingError(vessel);
 
-        vessel.ControlTorque = Brake(error, vessel.AngularVelocity, vessel.Inertia, maxTorque, dt, vessel.GimbalTorqueLimit > 0.0 ? vessel.Active.GimbalResponseSeconds : 0.0);
+        Vector3d hold = Brake(error, vessel.AngularVelocity, vessel.Inertia, maxTorque, dt, vessel.GimbalTorqueLimit > 0.0 ? vessel.Active.GimbalResponseSeconds : 0.0);
+
+        // Axes the pilot is driving take the stick; the rest go on being damped.
+        vessel.ControlTorque = new Vector3d(
+
+            manual.X != 0.0 ? manual.X * maxTorque.X : hold.X,
+            manual.Y != 0.0 ? manual.Y * maxTorque.Y : hold.Y,
+            manual.Z != 0.0 ? manual.Z * maxTorque.Z : hold.Z
+
+        );
 
     }
 

@@ -22,6 +22,9 @@ public sealed partial class MapPath : Control {
     private const double Equatorial = 0.002;
     private const double Circular = 1e-4;
 
+    // Surface points (impact) sit on the occluder, so float noise flipped them behind it every frame.
+    private const double Clearance = 250.0;
+
     private const float MarkReach = 12.0f;
     private const float ConicReach = 9.0f;
 
@@ -728,7 +731,9 @@ public sealed partial class MapPath : Control {
         }
 
         double b = 2.0 * (offsetX * rayX + offsetY * rayY + offsetZ * rayZ);
-        double c = offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ - _flight.Body.Radius * _flight.Body.Radius;
+        double occluder = _flight.Body.Radius - Clearance;
+
+        double c = offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ - occluder * occluder;
 
         double discriminant = b * b - 4.0 * a * c;
 

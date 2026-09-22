@@ -21,7 +21,7 @@ public sealed partial class Hud : CanvasLayer {
     private EnginePanel _engines;
 
     private Popover _popover;
-    private AttitudeMenu _menu;
+    private ModeMenu _menu;
     private LossPanel _loss;
 
     /// <summary>Takes the interface down without taking anything else with it, for the debug panel.</summary>
@@ -41,7 +41,7 @@ public sealed partial class Hud : CanvasLayer {
 
         // Both of these are raised over everything else, so they are the last things in the layer.
         _popover = Attach(new Popover());
-        _menu = Attach(new AttitudeMenu());
+        _menu = Attach(new ModeMenu());
 
         // Except this, which is raised over them in turn: there is nothing left to interact with.
         _loss = Attach(new LossPanel());

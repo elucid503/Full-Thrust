@@ -679,7 +679,7 @@ public static partial class Program {
         autopilot.ManualCommand = Vector3d.UnitX;
         autopilot.Update(vessel, step);
 
-        Expect("pilot input drops the hold", autopilot.Hold == AttitudeHold.Off, $"hold is {autopilot.Hold}");
+        Expect("pilot input relaxes a pointing hold to stability", autopilot.Hold == AttitudeHold.Stability, $"hold is {autopilot.Hold}");
         Near("and commands full torque", vessel.ControlTorque.X, StackTorque, 1e-9);
 
         autopilot.ManualCommand = Vector3d.Zero;

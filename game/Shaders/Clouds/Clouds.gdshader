@@ -43,7 +43,11 @@ void fragment() {
                 ivec2 pixel = clamp(base + ivec2(x, y), ivec2(0), size - 1);
                 float distance = texelFetch(cloud_depth, pixel, 0).r;
                 float weight = (x == 0 ? 1.0 - fraction.x : fraction.x) * (y == 0 ? 1.0 - fraction.y : fraction.y);
-                weight *= exp(-abs(distance - scene_distance) / max(scene_distance * 0.03, 1.0));
+                // Tight near the vessel, where colour must not bleed onto it; loose over distant
+                // scenery, where a strict match sends grazing terrain to the unaccumulated fallback.
+                float tolerance = mix(max(scene_distance * 0.03, 1.0), scene_distance * 0.5,
+                    smoothstep(2000.0, 10000.0, min(distance, scene_distance)));
+                weight *= exp(-abs(distance - scene_distance) / tolerance);
                 filtered += texelFetch(cloud_buffer, pixel, 0) * weight;
                 total += weight;
 

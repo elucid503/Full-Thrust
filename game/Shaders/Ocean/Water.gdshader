@@ -18,22 +18,14 @@ uniform float planet_radius = 1274200.0;
 uniform bool shoreline_debug = false;
 uniform float cloud_shadow : hint_range(0.0, 1.0) = 0.32;
 
-// Inherent optical properties per metre, red to blue. Clear ocean loses red within metres and blue
-// over tens; coastal water carries sediment and dissolved organics that turn it green.
-uniform vec3 ocean_absorption = vec3(0.40, 0.065, 0.022);
-uniform vec3 ocean_backscatter = vec3(0.0012, 0.0016, 0.0022);
-uniform vec3 coastal_absorption = vec3(0.55, 0.14, 0.22);
-uniform vec3 coastal_backscatter = vec3(0.008, 0.012, 0.011);
-uniform float coastal_depth = 30.0;
-
 // Light passing through a crest facing away from the sun.
 uniform vec3 crest_colour : source_color = vec3(0.10, 0.42, 0.36);
 uniform float crest_strength = 0.12;
 
 uniform float refraction = 0.05;
 
-// The baked spectrum at two tile sizes, each read twice at different drift so the pattern evolves
-// rather than slides. Both tiles divide the lattice's 4096 m period, so patches meet without seams.
+// The baked spectrum at two tile sizes, stochastically tiled, with neighbouring cells drifting at
+// different speeds so the pattern evolves rather than slides. Both divide the 4096 m lattice period.
 uniform vec2 detail_tiles = vec2(4.0, 64.0);
 uniform vec4 detail_drift_near = vec4(0.0);
 uniform vec4 detail_drift_far = vec4(0.0);
@@ -70,6 +62,7 @@ instance uniform float mesh_spacing : instance_index(1) = 1.0;
 #include "res://Shaders/Ground/LandscapeNoise.gdshaderinc"
 #include "res://Shaders/Ground/CoastalLandforms.gdshaderinc"
 #include "res://Shaders/Ground/ShorelineSampling.gdshaderinc"
+#include "res://Shaders/Ocean/WaterOptics.gdshaderinc"
 
 vec3 to_fixed(vec3 v) {
 
@@ -145,6 +138,40 @@ float wake_field(vec3 p, vec3 up, out vec3 gradient, out float foam) {
 
     }
     return height;
+
+}
+
+// Stochastic tiling: each cell half a tile wide shows the tile at its own random offset, blended
+// across cell borders, so the period never lines up across the sea. Cells divide the lattice's
+// 4096 m period, so neighbouring patches agree on every offset. Returns slope, then breaking rank.
+vec3 detail_sample(vec2 metres, float tile, vec4 drift) {
+
+    float cell = tile * 0.5;
+    vec2 p = metres / cell - 0.5;
+    vec2 base = floor(p);
+    vec2 blend = smoothstep(0.2, 0.8, p - base);
+    vec2 uv = metres / tile;
+    // Explicit gradients: the offset jumps at cell borders, the footprint does not.
+    vec2 dx = dFdx(uv);
+    vec2 dy = dFdy(uv);
+    vec2 slope = vec2(0.0);
+    float rank = 0.0;
+    float squares = 0.0;
+    for (int i = 0; i < 4; i++) {
+
+        vec2 corner = vec2(float(i & 1), float(i >> 1));
+        float weight = mix(1.0 - blend.x, blend.x, corner.x) * mix(1.0 - blend.y, blend.y, corner.y);
+        if (weight < 0.001) { continue; }
+        vec2 id = mod(base + corner, 4096.0 / cell);
+        vec2 offset = vec2(landscape_hash(vec3(id, tile)), landscape_hash(vec3(id, tile + 17.0)));
+        vec4 texel = textureGrad(wave_detail, uv + offset + (i == 0 || i == 3 ? drift.xy : drift.zw), dx, dy);
+        slope += (texel.rg * 2.0 - 1.0) * weight;
+        rank += texel.b * weight;
+        squares += weight * weight;
+
+    }
+    // Independent reads average towards flat water; renormalising keeps the slope variance.
+    return vec3(slope * inversesqrt(squares), rank);
 
 }
 
@@ -224,11 +251,11 @@ void fragment() {
 
     vec3 radial = world_position - planet_centre;
     vec3 up = normalize(radial);
-    float coast = shoreline_height(rest_position);
+    float footprint = max(max(length(dFdx(UV2)), length(dFdy(UV2))), 0.0001);
+    float coast = shoreline_height_at(rest_position, footprint);
     float coast_width = max(fwidth(coast), 0.02);
     float sea = 1.0 - smoothstep(-coast_width, coast_width, coast);
     float depth = max(-coast, 0.0);
-    float footprint = max(max(length(dFdx(UV2)), length(dFdy(UV2))), 0.0001);
 
     float lit = 1.0;
     if (dot(up, sun_direction) > 0.0) {
@@ -264,12 +291,10 @@ void fragment() {
         float lost = clamp(log2(footprint * 64.0 / tile) / 4.0, 0.0, 1.0);
         variance += layer_variance * lost;
         if (lost >= 1.0) { continue; }
-        vec2 uv = UV2 / tile;
-        vec4 first = texture(wave_detail, uv + drift.xy);
-        vec4 second = texture(wave_detail, uv + drift.zw);
-        detail_slope += (first.rg + second.rg - 1.0) * 1.4142 * detail_gain * (1.0 - lost);
+        vec3 read = detail_sample(UV2, tile, drift);
+        detail_slope += read.xy * detail_gain * (1.0 - lost);
         float weight = (1.0 - lost) * (tier == 0 ? 1.0 : 0.6);
-        breaking += max(first.b, second.b) * weight;
+        breaking += read.z * weight;
         breaking_weight += weight;
 
     }
@@ -322,19 +347,19 @@ void fragment() {
     // Far off the bed is a coarse patch; the surveyed depth holds the colour steady at every LOD.
     path = mix(path, (depth + max(wave.x, 0.0)) / cosine_up, smoothstep(250.0, 2000.0, surface_distance));
 
-    float coastal = exp(-depth / coastal_depth);
-    vec3 absorption = mix(ocean_absorption, coastal_absorption, coastal);
-    vec3 backscatter = mix(ocean_backscatter, coastal_backscatter, coastal);
-    // The bed was lit as if in air: light has to reach it through the column and come back out.
-    vec3 transmittance = exp(-(absorption + backscatter * 20.0) * path - (absorption + backscatter) * 1.2 * path * cosine_up);
+    vec3 absorption;
+    vec3 backscatter;
+    water_column(depth, absorption, backscatter);
+    vec3 transmittance = water_transmittance(absorption, backscatter, path, path * cosine_up);
     vec3 bed = textureLod(screen_texture, refracted_uv, clamp(log2(1.0 + path * 0.35), 0.0, 4.0)).rgb;
-    vec3 deep_reflectance = 0.33 * backscatter / absorption;
+    vec3 deep_reflectance = water_reflectance(absorption, backscatter);
 
     float nv = clamp(dot(view_normal, VIEW), 0.0, 1.0);
     float fresnel = 0.02 + 0.98 * pow(1.0 - nv, 5.0);
     float daylight = max(dot(up, sun_direction), 0.0);
 
-    vec4 mirrored = surface_distance < 600.0 && foam < 0.9
+    // The march costs dozens of depth reads; skip it where Fresnel would leave its result invisible.
+    vec4 mirrored = surface_distance < 600.0 && foam < 0.9 && fresnel > 0.035
         ? reflection(VERTEX, view_normal, PROJECTION_MATRIX, INV_PROJECTION_MATRIX) : vec4(0.0);
     mirrored.a *= 1.0 - smoothstep(300.0, 600.0, surface_distance);
 

@@ -62,12 +62,6 @@ uniform float rock_slope_high = 0.32;
 
 uniform float snow_band = 180.0;
 
-uniform vec3 shallow_colour : source_color = vec3(0.045, 0.155, 0.178);
-uniform vec3 deep_colour : source_color = vec3(0.003, 0.012, 0.029);
-
-uniform float shallow_depth = 12.0;
-uniform float shallow_strength : hint_range(0.0, 1.0) = 0.12;
-
 
 // A mirror-smooth sea aliases into sparkle the moment one wave falls under a pixel. The waves are
 // faded out over the same range the roughness comes up over, which is the same statement made twice:
@@ -154,6 +148,7 @@ float overcast(vec3 radial, vec3 up) {
 #include "res://Shaders/Ground/TerrainDetail.gdshaderinc"
 #include "res://Shaders/Ground/CoastalLandforms.gdshaderinc"
 #include "res://Shaders/Ground/ShorelineSampling.gdshaderinc"
+#include "res://Shaders/Ocean/WaterOptics.gdshaderinc"
 
 
 void fragment() {
@@ -177,8 +172,8 @@ void fragment() {
     vec3 ground;
 
     // One geographic field selects land/water at every LOD, independently of the camera and waves.
-    float coast_elevation = shoreline_height(fixed_position);
     float wave_footprint = max(length(dFdx(UV2)), length(dFdy(UV2)));
+    float coast_elevation = shoreline_height_at(fixed_position, wave_footprint);
     vec3 wave_shift;
     mat3 wave_jacobian;
     vec4 geometric_wave = ocean_wave(fixed_position, wave_footprint, coast_elevation, wave_shift, wave_jacobian);
@@ -191,7 +186,7 @@ void fragment() {
     float cover = sea * smoothstep(-0.25, 0.25, elevation);
     float seabed = sea - cover;
     // World-space slope, not fwidth: screen derivatives crawl the beach as the eye moves.
-    float coast_slope = max(shoreline_slope(fixed_up, coast_elevation), 0.002);
+    float coast_slope = max(shoreline_slope(fixed_up, coast_elevation, wave_footprint), 0.002);
     float coast_distance = coast_elevation / coast_slope;
 
     // Metres of ground under one pixel. Every fade below is driven off this rather than off the
@@ -300,7 +295,8 @@ void fragment() {
 
     // Sand where waves reach the bed, fine silt past it, bare rock on the steep drop-offs.
     vec3 sediment = mix(beach_colour * 0.85, vec3(0.15, 0.14, 0.11), smoothstep(4.0, 45.0, depth));
-    ground = mix(ground, mix(sediment, rock_tint * 0.8, bare), seabed);
+    vec3 bed_colour = mix(sediment, rock_tint * 0.8, bare);
+    ground = mix(ground, bed_colour, seabed);
 
     float procedural = 1.0 - smoothstep(20000.0, 25000.0, camera_altitude);
     vec3 local_ground = ground;
@@ -430,9 +426,14 @@ void fragment() {
         wave_variance += 0.25 * slope * slope * (1.0 - coherent_swell * coherent_swell);
 
     }
-    float shore_tint = 1.0 - smoothstep(40.0, 180.0, max(-coast_distance, 0.0));
-    float shallow = exp(-depth / shallow_depth);
-    vec3 water = mix(deep_colour, shallow_colour, shallow * shallow * shallow_strength * shore_tint);
+    // Where the ground stands in for the sea it shows the same column over the same bed the water
+    // mesh would, so a coarse patch poking through cannot read as a darker pond.
+    vec3 absorption;
+    vec3 backscatter;
+    water_column(depth, absorption, backscatter);
+    float cosine_up = max(dot(normalize(mat3(INV_VIEW_MATRIX) * VIEW), up), 0.02);
+    vec3 through = water_transmittance(absorption, backscatter, depth / cosine_up, depth);
+    vec3 water = bed_colour * through + water_reflectance(absorption, backscatter) * (1.0 - through);
 
     float land_relief = detail_relief * detail * (1.0 - snow * 0.45);
     float sea_relief = 1.0;

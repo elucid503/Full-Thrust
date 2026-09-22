@@ -42,6 +42,8 @@ public sealed partial class Wakes : Node3D {
     private readonly List<Mark> _current = new();
     private readonly List<Mark> _splashes = new();
     private readonly List<(Splash Effect, Vector3d Anchor, double Born)> _effects = new();
+    private readonly List<Vessel> _gone = new();
+    private double _now;
 
     private readonly Vector4[] _start = new Vector4[Capacity];
     private readonly Vector4[] _end = new Vector4[Capacity];
@@ -206,7 +208,8 @@ public sealed partial class Wakes : Node3D {
     /// <summary>Hands this frame's marks to the water shader, nearest in time first.</summary>
     public void Publish(ShaderMaterial water, double time) {
 
-        _splashes.RemoveAll(mark => time - mark.Born > SplashLife || time < mark.Born);
+        _now = time;
+        _splashes.RemoveAll(SplashSpent);
 
         int count = 0;
         Vector3 low = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
@@ -252,11 +255,10 @@ public sealed partial class Wakes : Node3D {
         }
 
         ulong frame = Engine.GetProcessFrames();
-        List<Vessel> gone = null;
 
         foreach ((Vessel vessel, Hull hull) in _hulls) {
 
-            hull.Trail.RemoveAll(mark => time - mark.Born > TrailLife || time < mark.Born);
+            hull.Trail.RemoveAll(TrailSpent);
 
             for (int index = hull.Trail.Count - 1; index >= 0; index--) {
 
@@ -270,17 +272,19 @@ public sealed partial class Wakes : Node3D {
 
             if (frame - hull.Frame > 120 && hull.Trail.Count == 0) {
 
-                (gone ??= new List<Vessel>()).Add(vessel);
+                _gone.Add(vessel);
 
             }
 
         }
 
-        foreach (Vessel vessel in gone ?? new List<Vessel>()) {
+        foreach (Vessel vessel in _gone) {
 
             _hulls.Remove(vessel);
 
         }
+
+        _gone.Clear();
 
         _current.Clear();
         SyncEffects(time);
@@ -301,6 +305,11 @@ public sealed partial class Wakes : Node3D {
         _published = count;
 
     }
+
+    // Cached predicates over the publish time, so the per-frame sweeps allocate nothing.
+    private bool SplashSpent(Mark mark) => _now - mark.Born > SplashLife || _now < mark.Born;
+
+    private bool TrailSpent(Mark mark) => _now - mark.Born > TrailLife || _now < mark.Born;
 
     // Spray is anchored to the turning body while the scene origin follows the vessel.
     private void SyncEffects(double time) {
