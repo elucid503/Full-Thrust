@@ -316,7 +316,7 @@ public sealed partial class DebugBridge : Node {
 
         if (planet == null || string.IsNullOrEmpty(target)) {
 
-            return new Dictionary<string, object> { ["error"] = "usage: /tune?target=surface|clouds|atmosphere|vessel&<uniform>=<value>" };
+            return new Dictionary<string, object> { ["error"] = "usage: /tune?target=surface|clouds|atmosphere|vessel|audio&<uniform or bus>=<value>" };
 
         }
 
@@ -332,7 +332,8 @@ public sealed partial class DebugBridge : Node {
 
             // The vessel owns both of its volumes - the plume and the entry sheath - and a
             // uniform belongs to whichever of them declares it, so one target reaches both.
-            bool ok = target == "plume" || target == "entry" || target == "vessel"
+            bool ok = target == "audio" ? Soundscape.Tune(key, query[key])
+                : target == "plume" || target == "entry" || target == "vessel"
                 ? VesselView.Active != null && VesselView.Active.Tune(key, query[key])
                 : planet.Tune(target, key, query[key]);
 
@@ -873,6 +874,13 @@ public sealed partial class DebugBridge : Node {
             state["rcsThrust"] = flight.Vessel.RcsForce.Length;
             state["warp"] = flight.Warp;
             state["hold"] = flight.Autopilot.Hold.ToString();
+
+            // Peak meters per bus, so a mix can be judged without ears.
+            for (int bus = 0; bus < AudioServer.BusCount; bus++) {
+
+                state["audio" + AudioServer.GetBusName(bus)] = Mathf.Max(AudioServer.GetBusPeakVolumeLeftDb(bus, 0), AudioServer.GetBusPeakVolumeRightDb(bus, 0));
+
+            }
 
             state["eccentricity"] = flight.Orbit.Eccentricity;
             state["timeToApoapsis"] = flight.Orbit.TimeToApoapsis(flight.Time);

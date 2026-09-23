@@ -29,6 +29,7 @@ public sealed partial class Main : Node3D {
     private OrbitCamera _camera;
     private FreeCamera _free;
     private DebugPanel _debug;
+    private Soundscape _sound;
 
     private DirectionalLight3D _sun;
     private DirectionalLight3D _earthshine;
@@ -109,6 +110,8 @@ public sealed partial class Main : Node3D {
         _vessel.Build(_flight.Vessel);
         _hud.Build(_flight);
         _debug.Build(this, _flight, _free, _camera, _hud);
+        _sound = new Soundscape { Name = "Soundscape" };
+        AddChild(_sound);
         DisplayServer.WindowSetMode(DisplayServer.WindowMode.Fullscreen);
 
         _flight.Staged += Release;
@@ -217,6 +220,10 @@ public sealed partial class Main : Node3D {
         _free.Fly(SceneTransition.Loading ? 0.0 : delta);
         _map.Sync(delta);
 
+        // The map is a chart, not a place; the ear stays with whichever camera the flight left.
+        bool free = _map.Open ? _map.ReturnToFreeCamera : FreeCamera.Flying;
+        _sound.Sync(delta, free ? _free.GlobalTransform : _camera.View, !free);
+
         // Two bounded cascades retain trunk/rock contact shadows without covering kilometres of scatter.
         _sun.DirectionalShadowMaxDistance = Mathf.Clamp(_camera.Distance + ShadowSlack, 180.0f, 300.0f);
 
@@ -266,6 +273,12 @@ public sealed partial class Main : Node3D {
             Vector3 at = Frames.Point(entry.Key.Position);
 
             bool near = at.DistanceSquaredTo(focus) < Flight.DebrisRange * Flight.DebrisRange;
+
+            if (!near && entry.Value.Visible) {
+
+                entry.Value.Hush();
+
+            }
 
             entry.Value.Visible = near;
 

@@ -114,11 +114,15 @@ float cloud_envelope(vec3 p, float footprint, vec2 conditions) {
 
 float density_from_base(vec3 p, float footprint, vec4 base) {
 
-    float body = clamp(base.x, 0.0, 1.0);
-    if (body < 0.001) { return 0.0; }
-    if (body >= 1.0) { return base.y * mix(0.85, 1.25, base.z); }
+    // The body field climbs about one unit per 900 m across an edge. An edge sharper than the pixel
+    // it falls in crawls and flickers under any sub-pixel motion, TAA's jitter included, so the
+    // transition is never narrower than a footprint and a sub-pixel cloud fades instead of blinking.
+    float width = max(0.335, footprint * 0.0017);
+    if (base.x < 0.001) { return 0.0; }
+    if (base.x >= max(1.0, 0.015 + width)) { return base.y * mix(0.85, 1.25, base.z); }
+    float body = base.x;
     float erosion = mix(0.30, 0.08, smoothstep(250.0, 2400.0, footprint));
-    body = max(body - base.w * erosion * (1.0 - body), 0.0);
+    body = max(body - base.w * erosion * max(1.0 - body, 0.0), 0.0);
 
     // Only resolve fine edge erosion when its projected footprint can retain it.
     float close = 1.0 - smoothstep(12.0, 48.0, footprint);
@@ -128,11 +132,11 @@ float density_from_base(vec3 p, float footprint, vec4 base) {
         vec3 fixed_p = cloud_unspin(p);
         float fray = textureLod(detail_noise, fixed_p * 0.0045, detail_lod_at(footprint, 0.0045)).r;
 
-        body = max(body - fray * 0.35 * close * (1.0 - body), 0.0);
+        body = max(body - fray * 0.35 * close * max(1.0 - body, 0.0), 0.0);
 
     }
 
-    body = smoothstep(0.015, 0.35, body);
+    body = smoothstep(0.015, 0.015 + width, body);
     return body * base.y * mix(0.85, 1.25, base.z);
 
 }

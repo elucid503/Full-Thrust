@@ -108,6 +108,7 @@ instance uniform float lod_morph : instance_index(0) = 0.0;
 instance uniform float mesh_spacing : instance_index(1) = 1.0;
 instance uniform vec3 material_origin : instance_index(2) = vec3(0.0);
 varying vec3 material_position;
+varying vec3 bed_shelf;
 
 #include "res://Shaders/Ground/LandscapeNoise.gdshaderinc"
 
@@ -116,6 +117,7 @@ void vertex() {
     VERTEX += CUSTOM0.xyz * lod_morph;
     material_position = VERTEX + material_origin;
     surface_elevation = CUSTOM0.w;
+    bed_shelf = CUSTOM1.xyz;
     world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 
 }
@@ -174,6 +176,8 @@ void fragment() {
     // One geographic field selects land/water at every LOD, independently of the camera and waves.
     float wave_footprint = max(length(dFdx(UV2)), length(dFdy(UV2)));
     float coast_elevation = shoreline_height_at(fixed_position, wave_footprint);
+    // The survey is too costly to difference per pixel; the beach's slope comes with the mesh.
+    vec3 coast_gradient = abs(coast_elevation) < 30.0 ? -bed_shelf : vec3(0.0);
     vec3 wave_shift;
     mat3 wave_jacobian;
     vec4 geometric_wave = ocean_wave(fixed_position, wave_footprint, coast_elevation, wave_shift, wave_jacobian);
@@ -183,10 +187,10 @@ void fragment() {
     float sea = 1.0 - smoothstep(-coast_width, coast_width, coast_elevation);
     // The water surface stands at the datum. Where a coarse patch rises through it inside the
     // surveyed coast, the ground draws the sea itself; below it, the ground is the seabed.
-    float cover = sea * smoothstep(-0.25, 0.25, elevation);
+    float cover = sea * smoothstep(-0.02, 0.02, elevation);
     float seabed = sea - cover;
     // World-space slope, not fwidth: screen derivatives crawl the beach as the eye moves.
-    float coast_slope = max(shoreline_slope(fixed_up, coast_elevation, wave_footprint), 0.002);
+    float coast_slope = abs(coast_elevation) >= 28.0 ? 0.1 : max(length(coast_gradient), 0.002);
     float coast_distance = coast_elevation / coast_slope;
 
     // Metres of ground under one pixel. Every fade below is driven off this rather than off the

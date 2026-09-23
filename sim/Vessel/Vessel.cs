@@ -60,6 +60,14 @@ public sealed partial class Vessel {
     public double SubmergedVolume { get; set; }
     public bool InWater => SubmergedVolume > 0.001;
 
+    /// <summary>Largest velocity change a solid contact forced on the vessel during the last flight
+    /// step, metres per second. Zero when nothing solid was touched.</summary>
+    public double ContactJolt { get; set; }
+
+    /// <summary>Speed the hull slid along the surface during the last flight step while touching it,
+    /// metres per second.</summary>
+    public double ContactSlide { get; set; }
+
     /// <summary>Temperature of the leading skin, kelvin.</summary>
     public double SkinTemperature { get; set; } = Thermal.AmbientTemperature;
 

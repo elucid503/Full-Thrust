@@ -95,10 +95,9 @@ vec4 cloud_radiance(vec3 origin, vec3 ray, float scene_distance, float angular_f
     float span = finish - start - gap;
     if (span <= 0.0) { return vec4(0.0); }
 
-    // Distant samples span kilometres; unaccumulated jitter makes unresolved edges flash.
-#ifndef CLOUD_TEMPORAL
-    jitter = mix(jitter, 0.5, smoothstep(10000.0, 40000.0, start));
-#endif
+    // The jitter pattern is fixed to the screen, so anything it dithers crawls as the view moves;
+    // only near clouds, where fixed offsets would show as slices, can afford it.
+    jitter = mix(jitter, 0.5, smoothstep(3000.0, 12000.0, start));
     float mu = dot(ray, sun_direction);
     float scattering = 0.72 * phase(mu, 0.55) + 0.28 * phase(mu, -0.2);
     vec2 light_uv = vec2(0.0);

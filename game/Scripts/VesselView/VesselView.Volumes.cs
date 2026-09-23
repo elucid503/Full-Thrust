@@ -21,6 +21,7 @@ public sealed partial class VesselView {
         public int Index { get; init; }
         public string FuelName { get; set; }
         public float Power { get; set; }
+        public EnginePhase Heard { get; set; }
         public Node3D Pivot { get; init; }
         public Plume Plume { get; set; }
 
@@ -33,6 +34,7 @@ public sealed partial class VesselView {
         public Vector3 Axis { get; init; }
         public float Radius { get; init; }
         public float Duty { get; set; }
+        public bool Firing { get; set; }
         public EngineState Valve { get; } = new();
 
     }

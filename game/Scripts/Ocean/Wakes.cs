@@ -22,7 +22,10 @@ public sealed partial class Wakes : Node3D {
     // Below this the hull only settles; it does not throw water.
     private const double SplashSpeed = 1.0;
 
-    private enum Kind { Collar, Trail, Splash, Jet }
+    private enum Kind { Collar, Trail, Splash, Jet, Kelvin }
+
+    // Below this a drifting hull's ship waves are ripples under a centimetre long.
+    private const double KelvinSpeed = 0.4;
 
     private readonly record struct Mark(Vector3d Start, Vector3d End, double Radius, Kind Kind, double Born, double Strength, double Height, double Speed);
 
@@ -98,6 +101,17 @@ public sealed partial class Wakes : Node3D {
         _current.Add(new Mark(from, to, radius, Kind.Collar, time, 0.55 + 0.45 * churn, 0.0, 0.0));
 
         Vector3d centre = (from + to) * 0.5;
+
+        if (drift > KelvinSpeed) {
+
+            // Ship waves grow with the square of the hull's Froude number, capped where the hull
+            // would be ploughing rather than riding.
+            Vector3d heading = _body.ToBodyFixed((relative - up * Vector3d.Dot(relative, up)) / drift, time);
+            double froude = drift / Math.Sqrt(_body.SurfaceGravity * Math.Max(radius, 0.1));
+            double amplitude = Math.Min(0.12 * radius * froude * froude, 0.4);
+            _current.Add(new Mark(centre, centre + heading, radius, Kind.Kelvin, time, 0.0, amplitude, drift));
+
+        }
 
         if (hull.Trail.Count == 0 || (hull.Trail[^1].End - centre).Length > TrailSpacing) {
 
@@ -235,7 +249,9 @@ public sealed partial class Wakes : Node3D {
 
             low = low.Min(start).Min(end);
             high = high.Max(start).Max(end);
-            reach = Mathf.Max(reach, (float)(radius * 3.0 + mark.Speed * age + 2.0));
+            // Ship waves trail thirty transverse wavelengths behind the hull.
+            double trail = mark.Kind == Kind.Kelvin ? 30.0 * Math.Tau * mark.Speed * mark.Speed / _body.SurfaceGravity : mark.Speed * age;
+            reach = Mathf.Max(reach, (float)(radius * 3.0 + trail + 2.0));
             count++;
 
             return true;

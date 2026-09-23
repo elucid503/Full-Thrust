@@ -66,15 +66,3 @@ float shoreline_height(vec3 position) {
     return shoreline_height_at(position, 0.0);
 
 }
-
-float shoreline_slope(vec3 direction, float elevation, float footprint) {
-
-    if (abs(elevation) >= 28.0) { return 0.1; }
-    vec3 east = normalize(cross(abs(direction.y) < 0.99 ? vec3(0, 1, 0) : vec3(1, 0, 0), direction));
-    vec3 north = cross(direction, east);
-    vec3 point = direction * planet_radius;
-    vec2 gradient = vec2(shoreline_height_at(point + east * 32.0, footprint) - elevation,
-        shoreline_height_at(point + north * 32.0, footprint) - elevation) / 32.0;
-    return max(length(gradient), 0.002);
-
-}

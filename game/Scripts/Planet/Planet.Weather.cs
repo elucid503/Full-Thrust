@@ -22,6 +22,7 @@ public sealed partial class Planet {
         material.SetShaderParameter("ocean_modes", modes);
         material.SetShaderParameter("ocean_radius", (float)body.Radius);
         material.SetShaderParameter("ocean_wind", (float)(body.Weather?.SeaSpeedAt(time) ?? 10.0));
+        material.SetShaderParameter("ocean_wind_axis", Frames.Direction(Weather.Axis));
 
     }
 

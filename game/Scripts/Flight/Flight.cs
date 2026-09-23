@@ -235,6 +235,13 @@ public sealed partial class Flight : Node {
 
         _stepOnce = false;
 
+        foreach (Tracked track in _traffic) {
+
+            track.Vessel.ContactJolt = 0.0;
+            track.Vessel.ContactSlide = 0.0;
+
+        }
+
         if (InfiniteFuel) {
 
             Fill(Vessel);
@@ -349,12 +356,17 @@ public sealed partial class Flight : Node {
                 if (!(Clamped && vessel == Vessel)) {
                     bool damage = !(Invulnerable && vessel == Vessel);
                     bool contact = WaterPhysics.Apply(Body, vessel, Time - remaining + interval, interval, damage);
-                    contact |= GroundCollision.Resolve(Body, vessel, previous, orientation,
+                    Vector3d arriving = vessel.Velocity;
+                    bool solid = GroundCollision.Resolve(Body, vessel, previous, orientation,
                         Time - remaining, Time - remaining + interval, damage);
                     if (vessel.Intact && Planet.Active != null) {
-                        contact |= Planet.Active.ResolveScatter(vessel, previous, orientation,
+                        solid |= Planet.Active.ResolveScatter(vessel, previous, orientation,
                             Time - remaining, Time - remaining + interval, damage);
                     }
+                    if (solid) {
+                        Touch(vessel, arriving);
+                    }
+                    contact |= solid;
                     if (contact) {
                         ContactCount++;
                         WarpStep = 0;
@@ -406,6 +418,17 @@ public sealed partial class Flight : Node {
         // Warped time is not simulated time; the vessel is held rigid rather than spun by a step it never took.
         vessel.AngularVelocity = Vector3d.Zero;
         vessel.ControlTorque = Vector3d.Zero;
+
+    }
+
+    // The resolvers keep their closing speeds to themselves; what they did to the velocity is the same story.
+    private void Touch(Vessel vessel, Vector3d arriving) {
+
+        vessel.ContactJolt = Math.Max(vessel.ContactJolt, (vessel.Velocity - arriving).Length);
+
+        Vector3d relative = vessel.Velocity - Body.AirVelocityAt(vessel.Position);
+        Vector3d up = vessel.Position.Normalized;
+        vessel.ContactSlide = Math.Max(vessel.ContactSlide, (relative - up * Vector3d.Dot(relative, up)).Length);
 
     }
 
@@ -492,7 +515,11 @@ public sealed partial class Flight : Node {
 
                 }
 
+                Vector3d arrivingA = a.Vessel.Velocity;
+                Vector3d arrivingB = b.Vessel.Velocity;
                 VesselCollision.Resolve(a.Vessel, b.Vessel, hit);
+                a.Vessel.ContactJolt = Math.Max(a.Vessel.ContactJolt, (a.Vessel.Velocity - arrivingA).Length);
+                b.Vessel.ContactJolt = Math.Max(b.Vessel.ContactJolt, (b.Vessel.Velocity - arrivingB).Length);
                 a.Rails = a.Vessel.OrbitAround(Body, Time);
                 b.Rails = b.Vessel.OrbitAround(Body, Time);
                 ContactCount++;

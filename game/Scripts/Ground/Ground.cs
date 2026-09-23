@@ -76,7 +76,8 @@ public sealed partial class Ground : Node3D {
         public Color[] Depths;
         public int[] Indices;
         public float[] ParentOffsets;
-        public float[] CoastalHeights;
+        /// <summary>Gradient of depth along the bed, per vertex, where the swell feels it.</summary>
+        public float[] Shelf;
 
         /// <summary>The sea surface over this patch, woven on the same grid, or null on dry land.</summary>
         public Surface Water;
@@ -537,12 +538,12 @@ public sealed partial class Ground : Node3D {
         arrays[(int)Mesh.ArrayType.TexUV2] = surface.Detail;
         arrays[(int)Mesh.ArrayType.Index] = surface.Indices;
         arrays[(int)Mesh.ArrayType.Custom0] = surface.ParentOffsets;
-        arrays[(int)Mesh.ArrayType.Custom1] = surface.CoastalHeights;
+        arrays[(int)Mesh.ArrayType.Custom1] = surface.Shelf;
 
         ArrayMesh mesh = new ArrayMesh();
 
         Mesh.ArrayFormat format = (Mesh.ArrayFormat)((ulong)Mesh.ArrayCustomFormat.RgbaFloat << (int)Mesh.ArrayFormat.FormatCustom0Shift);
-        format |= (Mesh.ArrayFormat)((ulong)Mesh.ArrayCustomFormat.RFloat << (int)Mesh.ArrayFormat.FormatCustom1Shift);
+        format |= (Mesh.ArrayFormat)((ulong)Mesh.ArrayCustomFormat.RgbFloat << (int)Mesh.ArrayFormat.FormatCustom1Shift);
         mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays, flags: format);
 
         return new MeshInstance3D {
@@ -611,7 +612,8 @@ public sealed partial class Ground : Node3D {
     [ThreadStatic] private static Vector3d[] _points;
     [ThreadStatic] private static Vector3d[] _datum;
     [ThreadStatic] private static double[] _sounding;
-    [ThreadStatic] private static double[] _coastalHeights;
+    [ThreadStatic] private static double[] _bank;
+    [ThreadStatic] private static Vector3d[] _shelf;
 
     private static Surface Tessellate(Terrain terrain, double radius, int face, double s, double t, double span, CancellationToken cancellation) {
 
@@ -647,7 +649,13 @@ public sealed partial class Ground : Node3D {
         Vector3d[] points = _points ??= new Vector3d[side * side];
         Vector3d[] datum = _datum ??= new Vector3d[side * side];
         double[] sounding = _sounding ??= new double[side * side];
-        double[] coastalHeights = _coastalHeights ??= new double[side * side];
+        double[] bank = _bank ??= new double[side * side];
+
+        // The coast is drawn per pixel from the survey; between vertices the mesh can only guess at
+        // it. Sinking land just above the datum by that error keeps the sea surface over every
+        // surveyed wet pixel, so the survey, not a triangle edge, decides where water meets land.
+        double margin = Math.Clamp(spacing * 0.05, 0.05, 3.0);
+        Vector3d[] shelf = _shelf ??= new Vector3d[side * side];
 
         double lowest = double.MaxValue;
         double highest = double.MinValue;
@@ -664,19 +672,21 @@ public sealed partial class Ground : Node3D {
 
                 Vector3d direction = Direction(face, u, v);
 
-                double elevation = terrain.Elevation(direction, spacing, out double coastalHeight);
+                double elevation = terrain.Elevation(direction, spacing);
 
                 // The ground runs on down to the seabed; the sea is a second surface at the datum.
-                lowest = Math.Min(lowest, elevation);
-                highest = Math.Max(highest, elevation);
+                double standing = elevation - margin * Math.Clamp(1.0 - elevation / (2.0 * margin), 0.0, 1.0);
+                lowest = Math.Min(lowest, standing);
+                highest = Math.Max(highest, standing);
 
                 int index = row * side + column;
 
-                points[index] = direction * (radius + elevation);
+                points[index] = direction * (radius + standing);
                 datum[index] = direction * radius;
                 // Preserve both sides of sea level so the shoreline crosses triangles at zero height.
                 sounding[index] = -elevation;
-                coastalHeights[index] = coastalHeight;
+                bank[index] = -standing;
+                shelf[index] = Math.Abs(elevation) < 30.0 ? Shelf(terrain, radius, direction, spacing) : Vector3d.Zero;
 
             }
 
@@ -692,11 +702,11 @@ public sealed partial class Ground : Node3D {
 
         Vector3d anchor = Direction(face, s + span * 0.5, t + span * 0.5) * (radius + (lowest + highest) * 0.5);
 
-        Surface surface = Weave(radius, s, t, span, points, sounding, coastalHeights, anchor);
+        Surface surface = Weave(radius, s, t, span, points, bank, shelf, anchor);
 
         if (wet) {
 
-            surface.Water = Weave(radius, s, t, span, datum, sounding, coastalHeights, anchor);
+            surface.Water = Weave(radius, s, t, span, datum, sounding, shelf, anchor);
             surface.Bound = Math.Max(surface.Bound, surface.Water.Bound);
 
         }
@@ -705,7 +715,21 @@ public sealed partial class Ground : Node3D {
 
     }
 
-    private static Surface Weave(double radius, double s, double t, double span, Vector3d[] points, double[] sounding, double[] coastalHeights, Vector3d anchor) {
+    // The beach's width comes from its slope, which the ground shader cannot afford to take from the survey per pixel.
+    private static Vector3d Shelf(Terrain terrain, double radius, Vector3d direction, double spacing) {
+
+        const double reach = 32.0;
+        Vector3d first = Vector3d.Cross(Math.Abs(direction.Z) < 0.9 ? Vector3d.UnitZ : Vector3d.UnitX, direction).Normalized;
+        Vector3d second = Vector3d.Cross(direction, first);
+        Vector3d centre = direction * radius;
+        double alongFirst = terrain.Elevation((centre + first * reach).Normalized, spacing) - terrain.Elevation((centre - first * reach).Normalized, spacing);
+        double alongSecond = terrain.Elevation((centre + second * reach).Normalized, spacing) - terrain.Elevation((centre - second * reach).Normalized, spacing);
+
+        return -(first * alongFirst + second * alongSecond) / (2.0 * reach);
+
+    }
+
+    private static Surface Weave(double radius, double s, double t, double span, Vector3d[] points, double[] sounding, Vector3d[] shelf, Vector3d anchor) {
 
         int side = Grid + 3;
         int line = Grid + 1;
@@ -721,7 +745,7 @@ public sealed partial class Ground : Node3D {
         Vector2[] detail = new Vector2[count];
         Color[] depths = new Color[count];
         float[] parentOffsets = new float[count * 4];
-        float[] coastal = new float[count];
+        float[] bed = new float[count * 3];
 
         // The detail lattice is metres from an origin each patch picks for itself, because a
         // face-wide coordinate interpolated in single precision steps visibly once a patch is a few
@@ -785,7 +809,10 @@ public sealed partial class Ground : Node3D {
                 parentOffsets[index * 4 + 1] = parentOffset.Y;
                 parentOffsets[index * 4 + 2] = parentOffset.Z;
                 parentOffsets[index * 4 + 3] = (float)-sounding[sample];
-                coastal[index] = (float)coastalHeights[sample];
+                Vector3 incline = Frames.Direction(shelf[sample]);
+                bed[index * 3] = incline.X;
+                bed[index * 3 + 1] = incline.Y;
+                bed[index * 3 + 2] = incline.Z;
 
                 Vector3 axis = Frames.Direction(tangent);
 
@@ -843,7 +870,7 @@ public sealed partial class Ground : Node3D {
             Depths = depths,
             Indices = indices,
             ParentOffsets = parentOffsets,
-            CoastalHeights = coastal,
+            Shelf = bed,
 
             Anchor = anchor,
 
@@ -907,7 +934,7 @@ public sealed partial class Ground : Node3D {
 
             Array.Copy(surface.Tangents, source * 4, surface.Tangents, wall * 4, 4);
             Array.Copy(surface.ParentOffsets, source * 4, surface.ParentOffsets, wall * 4, 4);
-            surface.CoastalHeights[wall] = surface.CoastalHeights[source];
+            Array.Copy(surface.Shelf, source * 3, surface.Shelf, wall * 3, 3);
 
         }
 

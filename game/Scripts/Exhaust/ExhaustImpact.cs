@@ -30,6 +30,10 @@ public sealed partial class ExhaustImpact : Node3D {
 
     public bool Active { get; private set; }
 
+    public float Strength { get; private set; }
+    public bool Water => _water;
+    public Vector3d Point { get; private set; }
+
     public static ExhaustImpact Create(PlumeTemplate template, float bellRadius, int nozzles) {
 
         ExhaustImpact impact = new ExhaustImpact { Name = "Impact", TopLevel = true, _template = template, _bellRadius = bellRadius };
@@ -323,11 +327,15 @@ public sealed partial class ExhaustImpact : Node3D {
         _smoke.Emitting = true;
         _spray.Emitting = water;
         _spray.AmountRatio = strength;
+        Strength = strength;
+        Point = point;
         Active = true;
 
     }
 
     private void Stop() {
+
+        Strength = 0.0f;
 
         if (!Active) {
 

@@ -24,6 +24,7 @@ public sealed partial class OrbitCamera : Node3D {
 
     public Vector3 Eye => _camera.GlobalPosition;
     public Vector3 Forward => -_camera.GlobalTransform.Basis.Z;
+    public Transform3D View => _camera.GlobalTransform;
 
     public bool IsCurrent => _camera.Current;
 

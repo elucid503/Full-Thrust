@@ -10,7 +10,8 @@ public static class Ocean {
     // Integer cycles round the body are only seam-free while a band keeps its wavelength, so the sea
     // state moves energy between fixed bands rather than moving the bands.
     private static readonly double[] Wavelengths = { 151.0, 97.0, 61.0, 37.0, 23.0, 14.0 };
-    private static readonly double[] Spreads = { 0.0, 0.57, -0.68, 1.1, -0.31, 0.83 };
+    // The long bands carry swell from distant weather across the wind; the wind sea runs with it.
+    private static readonly double[] Spreads = { 0.42, -0.55, 0.16, -0.24, 0.3, -0.1 };
 
     // Swell from distant weather: open water is never glass, whatever the local wind.
     private static readonly double[] Swell = { 0.22, 0.12, 0.0, 0.0, 0.0, 0.0 };

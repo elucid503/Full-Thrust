@@ -68,6 +68,7 @@ public sealed partial class VesselView : Node3D {
         public readonly List<Engine> Engines = new List<Engine>();
         public Plume Cluster;
         public ExhaustImpact Impact;
+        public EngineVoice Voice;
 
         public readonly List<Jet> Jets = new List<Jet>();
         public EntryField SingleEntry;
@@ -196,6 +197,7 @@ public sealed partial class VesselView : Node3D {
         SyncPlume();
         SyncHeat();
         SyncSheath();
+        SyncSound();
 
     }
 

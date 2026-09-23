@@ -76,8 +76,36 @@ vec3 from_fixed(vec3 v) {
 
 }
 
+// Kelvin's ship waves by stationary phase: the transverse and divergent systems a hull moving at
+// speed leaves inside the 19.5 degree cusp line, each faded once the spacing cannot resolve it.
+float kelvin(vec3 relative, vec3 heading, vec3 side, float speed, float amplitude, float radius, float spacing) {
+
+    const float CUSP = 0.35355;
+    float behind = -dot(relative, heading);
+    float across = abs(dot(relative, side));
+    if (behind <= 0.0) { return 0.0; }
+    float ratio = across / behind;
+    if (ratio >= CUSP) { return 0.0; }
+    float k = 9.81 / (speed * speed);
+    float root = sqrt(max(1.0 - 8.0 * ratio * ratio, 0.0));
+    float transverse = 2.0 * ratio / (1.0 + root);
+    float divergent = (1.0 + root) / max(4.0 * ratio, 0.001);
+    float wavelength = TAU / k;
+    float transverse_resolved = 1.0 - smoothstep(0.12, 0.35, spacing / (wavelength / (1.0 + transverse * transverse)));
+    float divergent_resolved = (1.0 - smoothstep(0.12, 0.35, spacing / (wavelength / (1.0 + divergent * divergent))))
+        * smoothstep(0.0, 0.06, ratio);
+    float waves = 0.6 * transverse_resolved * sin(k * (behind + across * transverse) * sqrt(1.0 + transverse * transverse))
+        + 0.4 * divergent_resolved * sin(k * (behind + across * divergent) * sqrt(1.0 + divergent * divergent));
+    // Energy spreads as one over the square root of distance; the pattern dies out after thirty waves.
+    float spread = sqrt(radius * 4.0 / (behind + radius * 4.0));
+    float extent = smoothstep(0.0, radius * 1.5, behind) * exp(-behind / (wavelength * 30.0))
+        * (1.0 - smoothstep(CUSP * 0.85, CUSP, ratio));
+    return amplitude * spread * extent * waves;
+
+}
+
 // Height, horizontal gradient and foam cover from every vessel disturbance near p.
-float wake_field(vec3 p, vec3 up, out vec3 gradient, out float foam) {
+float wake_field(vec3 p, vec3 up, float spacing, out vec3 gradient, out float foam) {
 
     gradient = vec3(0.0);
     foam = 0.0;
@@ -122,6 +150,20 @@ float wake_field(vec3 p, vec3 up, out vec3 gradient, out float foam) {
             float ring = exp(-state.x / 14.0) * exp(-away * away / (band * band * 0.5));
             foam += state.y * max(crown, ring * 0.8);
 
+        } else if (kind > 3.5) {
+
+            // Kelvin wake, differenced for its slope: the pattern has no convenient closed-form gradient.
+            vec3 heading = span / max(length(span), 0.001);
+            vec3 side = cross(up, heading);
+            vec3 relative = p - start;
+            relative -= up * dot(relative, up);
+            float step_length = TAU * state.w * state.w / 9.81 / 16.0;
+            float here = kelvin(relative, heading, side, state.w, state.z, radius, spacing);
+            float ahead = kelvin(relative + heading * step_length, heading, side, state.w, state.z, radius, spacing);
+            float beside = kelvin(relative + side * step_length, heading, side, state.w, state.z, radius, spacing);
+            height += here;
+            gradient += (heading * (ahead - here) + side * (beside - here)) / step_length;
+
         } else {
 
             // Jet: exhaust pressure pushes a crater and drives ripples out across the rim.
@@ -143,17 +185,22 @@ float wake_field(vec3 p, vec3 up, out vec3 gradient, out float foam) {
 
 // Stochastic tiling: each cell half a tile wide shows the tile at its own random offset, blended
 // across cell borders, so the period never lines up across the sea. Cells divide the lattice's
-// 4096 m period, so neighbouring patches agree on every offset. Returns slope, then breaking rank.
-vec3 detail_sample(vec2 metres, float tile, vec4 drift) {
+// 4096 m period, so neighbouring patches agree on every offset. Each read is turned about its cell
+// centre so the baked waves run downwind; wind is a unit vector on the lattice. Returns slope, then
+// whitecap cover. Each read is thresholded before blending: thresholding a blended rank would draw
+// the cap edges along the straight cell borders.
+vec3 detail_sample(vec2 metres, float tile, vec4 drift, vec2 wind, vec2 edges) {
 
     float cell = tile * 0.5;
     vec2 p = metres / cell - 0.5;
     vec2 base = floor(p);
     vec2 blend = smoothstep(0.2, 0.8, p - base);
-    vec2 uv = metres / tile;
+    vec2 across = vec2(-wind.y, wind.x);
     // Explicit gradients: the offset jumps at cell borders, the footprint does not.
-    vec2 dx = dFdx(uv);
-    vec2 dy = dFdy(uv);
+    vec2 step_x = dFdx(metres) / tile;
+    vec2 step_y = dFdy(metres) / tile;
+    vec2 dx = vec2(dot(step_x, wind), dot(step_x, across));
+    vec2 dy = vec2(dot(step_y, wind), dot(step_y, across));
     vec2 slope = vec2(0.0);
     float rank = 0.0;
     float squares = 0.0;
@@ -164,9 +211,12 @@ vec3 detail_sample(vec2 metres, float tile, vec4 drift) {
         if (weight < 0.001) { continue; }
         vec2 id = mod(base + corner, 4096.0 / cell);
         vec2 offset = vec2(landscape_hash(vec3(id, tile)), landscape_hash(vec3(id, tile + 17.0)));
-        vec4 texel = textureGrad(wave_detail, uv + offset + (i == 0 || i == 3 ? drift.xy : drift.zw), dx, dy);
-        slope += (texel.rg * 2.0 - 1.0) * weight;
-        rank += texel.b * weight;
+        vec2 local = (metres - (base + corner + 0.5) * cell) / tile;
+        vec2 uv = vec2(dot(local, wind), dot(local, across)) + offset + (i == 0 || i == 3 ? drift.xy : drift.zw);
+        vec4 texel = textureGrad(wave_detail, uv, dx, dy);
+        vec2 turned = texel.rg * 2.0 - 1.0;
+        slope += (wind * turned.x + across * turned.y) * weight;
+        rank += smoothstep(edges.x, edges.y, texel.b) * weight;
         squares += weight * weight;
 
     }
@@ -184,11 +234,13 @@ void vertex() {
     rest_position = to_fixed(radial);
     vec3 shift;
     mat3 jacobian;
-    vec4 wave = ocean_wave(rest_position, mesh_spacing * (1.0 + lod_morph), CUSTOM0.w, shift, jacobian);
+    float spacing = mesh_spacing * (1.0 + lod_morph);
+    // The survey can only be read per fragment; the bed's depth gradient comes with the mesh.
+    vec4 wave = ocean_wave(rest_position, spacing, CUSTOM0.w, shift, jacobian);
     float local = 1.0 - smoothstep(20000.0, 25000.0, camera_altitude);
     vec3 wake_gradient;
     float wake_foam;
-    float wake = wake_field(world, up, wake_gradient, wake_foam);
+    float wake = wake_field(world, up, spacing, wake_gradient, wake_foam);
     vec3 displacement = (from_fixed(shift) + up * wave.x) * local + up * wake;
     VERTEX += inverse(mat3(MODEL_MATRIX)) * displacement;
     world_position = world + displacement;
@@ -271,6 +323,7 @@ void fragment() {
     // Swell: the Jacobian turns rest-frame slopes into slopes of the surface as drawn.
     vec3 shift;
     mat3 jacobian;
+    vec3 fixed_up = normalize(rest_position);
     vec4 wave = ocean_wave(rest_position, footprint, coast, shift, jacobian);
     vec3 swell_slope = from_fixed(inverse(transpose(jacobian)) * wave.yzw);
     float fold = determinant(jacobian);
@@ -281,6 +334,18 @@ void fragment() {
     // Detail: slopes on the lattice, mapped through the patch's own s and t axes.
     vec3 tangent = normalize(mat3(INV_VIEW_MATRIX) * TANGENT);
     vec3 binormal = normalize(mat3(INV_VIEW_MATRIX) * BINORMAL);
+    vec3 wind_fixed = normalize(cross(ocean_wind_axis, fixed_up));
+    vec3 wind_world = from_fixed(wind_fixed);
+    vec2 wind = normalize(vec2(dot(wind_world, tangent), -dot(wind_world, binormal)) + vec2(1e-6, 0.0));
+    // Whitecaps where the spectrum breaks first, riding the swell crests with a trail left behind
+    // each. The shift along the wind is the swell's quadrature: with the height it gives how long ago
+    // the local crest passed, zero on it and growing behind it.
+    float quadrature = dot(shift, wind_fixed);
+    float passed = atan(quadrature, wave.x);
+    float group = length(vec2(wave.x, quadrature)) / max(reach, 0.02);
+    float riding = (passed < 0.0 ? exp(-passed * passed / 0.06) : exp(-passed / 0.8)) * smoothstep(0.35, 0.9, group);
+    float boost = 1.0 + riding * 6.0 + max(1.0 - fold, 0.0) * 12.0;
+    vec2 edges = vec2(1.0 - whitecaps * boost * 1.4, 1.0 - whitecaps * boost * 0.6 + 0.0001);
     vec2 detail_slope = vec2(0.0);
     float breaking = 0.0;
     float breaking_weight = 0.0;
@@ -291,9 +356,10 @@ void fragment() {
         float lost = clamp(log2(footprint * 64.0 / tile) / 4.0, 0.0, 1.0);
         variance += layer_variance * lost;
         if (lost >= 1.0) { continue; }
-        vec3 read = detail_sample(UV2, tile, drift);
+        vec3 read = detail_sample(UV2, tile, drift, wind, edges);
         detail_slope += read.xy * detail_gain * (1.0 - lost);
-        float weight = (1.0 - lost) * (tier == 0 ? 1.0 : 0.6);
+        // The broad layer shapes the caps; the fine one only breaks up their edges.
+        float weight = (1.0 - lost) * (tier == 0 ? 0.35 : 1.0);
         breaking += read.z * weight;
         breaking_weight += weight;
 
@@ -302,7 +368,7 @@ void fragment() {
 
     vec3 wake_gradient;
     float wake_foam;
-    float wake_height = wake_field(world_position, up, wake_gradient, wake_foam);
+    float wake_height = wake_field(world_position, up, footprint, wake_gradient, wake_foam);
 
     vec3 normal = normalize(up - swell_slope - detail_gradient - wake_gradient);
     vec3 view_normal = normalize(mat3(VIEW_MATRIX) * normal);
@@ -310,11 +376,8 @@ void fragment() {
     vec3 dn_dy = dFdy(view_normal);
     variance += 0.5 * (dot(dn_dx, dn_dx) + dot(dn_dy, dn_dy));
 
-    // Foam: whitecaps where the spectrum breaks first (swell crests break sooner), surf in the
-    // shallows, a line at the waterline, and whatever the vessels have churned up.
-    float resolved_breaking = breaking_weight > 0.0 ? breaking / breaking_weight : 0.0;
-    float boost = 1.0 + max(1.0 - fold, 0.0) * 20.0 + max(crest, 0.0) * 0.5;
-    float caps = smoothstep(1.0 - whitecaps * boost * 1.4, 1.0 - whitecaps * boost * 0.6 + 0.0001, resolved_breaking);
+    // Foam: the whitecaps, a line at the waterline, and the vessel churn.
+    float caps = breaking_weight > 0.0 ? breaking / breaking_weight : 0.0;
     caps = mix(caps, whitecaps * 0.8, 1.0 - clamp(breaking_weight, 0.0, 1.0));
 
     float surface_distance = length(VERTEX);
@@ -323,8 +386,7 @@ void fragment() {
     vec3 view_world = normalize(mat3(INV_VIEW_MATRIX) * VIEW);
     float cosine_up = max(dot(view_world, up), 0.02);
     float contact = (1.0 - smoothstep(0.0, 0.45, column * cosine_up)) * (1.0 - smoothstep(60.0, 300.0, surface_distance));
-    float surf = (1.0 - smoothstep(0.4, 5.0, depth)) * smoothstep(0.1, 0.8, crest) * step(0.001, reach);
-    float cover = clamp(caps + contact * 0.85 + surf * 0.75 + wake_foam, 0.0, 1.0);
+    float cover = clamp(caps + contact * 0.85 + wake_foam, 0.0, 1.0);
     vec4 foam_sample = texture(foam_detail, UV2 / foam_tile + foam_drift);
     float pattern = foam_sample.r * 0.65 + foam_sample.g * 0.35;
     float foam = smoothstep(1.0 - cover, 1.3 - cover, pattern);
