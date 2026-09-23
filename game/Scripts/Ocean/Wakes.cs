@@ -312,11 +312,11 @@ public sealed partial class Wakes : Node3D {
         }
 
         Vector3 centre = (low + high) * 0.5f;
-        water.SetShaderParameter("wake_count", count);
-        water.SetShaderParameter("wake_start", _start);
-        water.SetShaderParameter("wake_end", _end);
-        water.SetShaderParameter("wake_state", _state);
-        water.SetShaderParameter("wake_bounds", count == 0 ? new Vector4(0.0f, 0.0f, 0.0f, -1.0f)
+        water.SetParameter("wake_count", count);
+        water.SetParameter("wake_start", _start);
+        water.SetParameter("wake_end", _end);
+        water.SetParameter("wake_state", _state);
+        water.SetParameter("wake_bounds", count == 0 ? new Vector4(0.0f, 0.0f, 0.0f, -1.0f)
             : new Vector4(centre.X, centre.Y, centre.Z, (high - centre).Length() + reach));
         _published = count;
 

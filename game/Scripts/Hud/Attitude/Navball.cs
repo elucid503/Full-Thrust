@@ -110,9 +110,9 @@ public sealed partial class Navball : Control {
 
         _verticalSpeed = Vector3d.Dot(vessel.Velocity, upWorld);
 
-        _ballMaterial.SetShaderParameter("local_up", _up);
-        _ballMaterial.SetShaderParameter("local_east", _east);
-        _ballMaterial.SetShaderParameter("local_north", _north);
+        _ballMaterial.SetParameter("local_up", _up);
+        _ballMaterial.SetParameter("local_east", _east);
+        _ballMaterial.SetParameter("local_north", _north);
         _ballViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Once;
 
         QueueRedraw();

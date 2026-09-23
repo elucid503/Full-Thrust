@@ -81,36 +81,36 @@ public sealed partial class PlumeLayer : Resource {
 
     public void Write(ShaderMaterial material) {
 
-        material.SetShaderParameter("vacuum_opening", VacuumOpening);
-        material.SetShaderParameter("vacuum_envelope", VacuumEnvelope ? 1.0f : 0.0f);
-        material.SetShaderParameter("shock_only", ShockOnly);
-        material.SetShaderParameter("residual_gas", ResidualGas ? 1.0f : 0.0f);
-        material.SetShaderParameter("diffuse_tail", DiffuseTail ? 1.0f : 0.0f);
-        material.SetShaderParameter("start_tint", StartTint);
-        material.SetShaderParameter("end_tint", EndTint);
-        material.SetShaderParameter("tint_falloff", TintFalloff);
-        material.SetShaderParameter("brightness", Brightness);
-        material.SetShaderParameter("falloff", Falloff);
-        material.SetShaderParameter("falloff_start", FalloffStart);
-        material.SetShaderParameter("fresnel", Fresnel);
-        material.SetShaderParameter("fresnel_invert", FresnelInvert);
-        material.SetShaderParameter("fade_in", FadeIn);
-        material.SetShaderParameter("fade_out", FadeOut);
-        material.SetShaderParameter("symmetry", Symmetry);
-        material.SetShaderParameter("symmetry_strength", SymmetryStrength);
+        material.SetParameter("vacuum_opening", VacuumOpening);
+        material.SetParameter("vacuum_envelope", VacuumEnvelope ? 1.0f : 0.0f);
+        material.SetParameter("shock_only", ShockOnly);
+        material.SetParameter("residual_gas", ResidualGas ? 1.0f : 0.0f);
+        material.SetParameter("diffuse_tail", DiffuseTail ? 1.0f : 0.0f);
+        material.SetParameter("start_tint", StartTint);
+        material.SetParameter("end_tint", EndTint);
+        material.SetParameter("tint_falloff", TintFalloff);
+        material.SetParameter("brightness", Brightness);
+        material.SetParameter("falloff", Falloff);
+        material.SetParameter("falloff_start", FalloffStart);
+        material.SetParameter("fresnel", Fresnel);
+        material.SetParameter("fresnel_invert", FresnelInvert);
+        material.SetParameter("fade_in", FadeIn);
+        material.SetParameter("fade_out", FadeOut);
+        material.SetParameter("symmetry", Symmetry);
+        material.SetParameter("symmetry_strength", SymmetryStrength);
 
-        material.SetShaderParameter("expand_offset", ExpandOffset);
-        material.SetShaderParameter("expand_linear", ExpandLinear);
-        material.SetShaderParameter("expand_square", ExpandSquare);
-        material.SetShaderParameter("expand_bounded", ExpandBounded);
+        material.SetParameter("expand_offset", ExpandOffset);
+        material.SetParameter("expand_linear", ExpandLinear);
+        material.SetParameter("expand_square", ExpandSquare);
+        material.SetParameter("expand_bounded", ExpandBounded);
 
-        material.SetShaderParameter("noise_strength", Noise);
-        material.SetShaderParameter("tile", Tile);
-        material.SetShaderParameter("scroll", Scroll);
+        material.SetParameter("noise_strength", Noise);
+        material.SetParameter("tile", Tile);
+        material.SetParameter("scroll", Scroll);
 
-        material.SetShaderParameter("cell_strength", CellStrength);
-        material.SetShaderParameter("cell_pinch", CellPinch);
-        material.SetShaderParameter("cell_decay", CellDecay);
+        material.SetParameter("cell_strength", CellStrength);
+        material.SetParameter("cell_pinch", CellPinch);
+        material.SetParameter("cell_decay", CellDecay);
 
     }
 

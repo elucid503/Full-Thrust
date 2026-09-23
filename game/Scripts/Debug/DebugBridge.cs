@@ -839,7 +839,6 @@ public sealed partial class DebugBridge : Node {
             state["altitude"] = flight.Altitude;
             state["groundAltitude"] = flight.Body.HeightAboveGround(flight.Vessel.Position, flight.Time);
             state["clamped"] = flight.Clamped;
-            state["dynamicPressure"] = flight.Vessel.Aero.DynamicPressure;
             state["patches"] = Planet.Active?.PatchCount ?? 0;
             state["destroyedScatter"] = Planet.Active?.DestroyedScatter ?? 0;
             state["scatterEffects"] = Planet.Active?.ScatterEffects ?? 0;

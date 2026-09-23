@@ -191,8 +191,7 @@ public sealed class ScatterObstacles {
         Vector3d relative = vessel.Velocity - body.AirVelocityAt(vessel.Position)
             + Vector3d.Cross(vessel.Orientation.Rotate(vessel.AngularVelocity), lever);
         Vector3d torqueAxis = vessel.Orientation.Conjugate.Rotate(Vector3d.Cross(lever, worldNormal));
-        Vector3d inverseTorque = new(torqueAxis.X / vessel.Inertia.X,
-            torqueAxis.Y / vessel.Inertia.Y, torqueAxis.Z / vessel.Inertia.Z);
+        Vector3d inverseTorque = vessel.InverseInertia(torqueAxis);
         double inverseMass = 1.0 / vessel.Mass + Vector3d.Dot(torqueAxis, inverseTorque);
         void ApplyImpulse(double magnitude) {
             vessel.Velocity += worldNormal * (magnitude / vessel.Mass);

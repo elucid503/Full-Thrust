@@ -34,9 +34,7 @@ public sealed partial class Forest : Node3D {
 
     private CelestialBody _body;
     private Terrain _terrain;
-    private byte[] _biomes;
-    private int _width;
-    private int _height;
+    private BiomeMap _biomes;
     private int _rows;
     private double _latitudeStep;
     private Mesh[] _meshes;
@@ -63,16 +61,7 @@ public sealed partial class Forest : Node3D {
         _distant = distant;
         _body = body;
         _terrain = body.Terrain;
-        using Image image = biomes.GetImage();
-        if (image.IsCompressed()) {
-
-            image.Decompress();
-
-        }
-        image.Convert(Image.Format.Rgba8);
-        _width = image.GetWidth();
-        _height = image.GetHeight();
-        _biomes = image.GetData();
+        _biomes = BiomeMap.Of(biomes);
         _rows = (int)Math.Ceiling(Math.PI * body.Radius / CellSize);
         _latitudeStep = Math.PI / _rows;
         if (_distant) {
@@ -87,9 +76,9 @@ public sealed partial class Forest : Node3D {
         ArrayMesh birch = TreeAssets.Load("Birch_1", 2);
         _meshes = new[] { broadleaf, pine, birch, pine, broadleaf, pine };
         _material = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Trees/Trees.gdshader") };
-        _material.SetShaderParameter("broadleaf_map", GD.Load<Texture2D>("res://Assets/Trees/Broadleaf/Tree_Leaves.png"));
-        _material.SetShaderParameter("pine_map", GD.Load<Texture2D>("res://Assets/Trees/Pine/Pine_Leaves.png"));
-        _material.SetShaderParameter("birch_map", GD.Load<Texture2D>("res://Assets/Trees/Birch/Birch_Leaves_Green.png"));
+        _material.SetParameter("broadleaf_map", GD.Load<Texture2D>("res://Assets/Trees/Broadleaf/Tree_Leaves.png"));
+        _material.SetParameter("pine_map", GD.Load<Texture2D>("res://Assets/Trees/Pine/Pine_Leaves.png"));
+        _material.SetParameter("birch_map", GD.Load<Texture2D>("res://Assets/Trees/Birch/Birch_Leaves_Green.png"));
 
     }
 
@@ -162,8 +151,8 @@ public sealed partial class Forest : Node3D {
 
         }
         Basis turn = new Basis(Vector3.Up, (float)_body.SpinAt(time));
-        _material.SetShaderParameter("eye_position", Frames.Point(eye));
-        _material.SetShaderParameter("wind_time", (float)(time % 4096.0));
+        _material.SetParameter("eye_position", Frames.Point(eye));
+        _material.SetParameter("wind_time", (float)(time % 4096.0));
         foreach (Grove grove in _groves.Values) {
 
             if (grove.Instance != null) {
@@ -298,25 +287,7 @@ public sealed partial class Forest : Node3D {
 
     }
 
-    private Color Cover(Vector3d direction) {
-
-        double x = (Math.Atan2(direction.Y, direction.X) / (Math.PI * 2.0) + 0.5) * _width - 0.5;
-        double y = (0.5 - Math.Asin(direction.Z) / Math.PI) * _height - 0.5;
-        int left = (int)Math.Floor(x);
-        int top = (int)Math.Floor(y);
-        Color upper = Pixel(left, top).Lerp(Pixel(left + 1, top), (float)(x - left));
-        Color lower = Pixel(left, top + 1).Lerp(Pixel(left + 1, top + 1), (float)(x - left));
-        return upper.Lerp(lower, (float)(y - top));
-
-    }
-
-    private Color Pixel(int x, int y) {
-
-        int index = (Math.Clamp(y, 0, _height - 1) * _width + ((x % _width) + _width) % _width) * 4;
-        return new Color(_biomes[index] / 255.0f, _biomes[index + 1] / 255.0f,
-            _biomes[index + 2] / 255.0f, _biomes[index + 3] / 255.0f);
-
-    }
+    private Color Cover(Vector3d direction) => _biomes.Cover(direction);
 
     private Grove Generate(Key key, CancellationToken cancellation) {
 
@@ -349,13 +320,13 @@ public sealed partial class Forest : Node3D {
             cancellation.ThrowIfCancellationRequested();
             for (int x = 0; x < Samples; x++) {
 
-                Vector3d direction = Direction(key, (x + 0.1 + Random(ref seed) * 0.8) / Samples,
-                    (y + 0.1 + Random(ref seed) * 0.8) / Samples);
+                Vector3d direction = Direction(key, (x + 0.1 + Landscape.Random(ref seed) * 0.8) / Samples,
+                    (y + 0.1 + Landscape.Random(ref seed) * 0.8) / Samples);
                 Color cover = Cover(direction);
-                double chance = Random(ref seed);
-                double scale = 0.75 + Random(ref seed) * 0.65;
-                double rotation = Random(ref seed) * Math.PI * 2.0;
-                double variation = Random(ref seed);
+                double chance = Landscape.Random(ref seed);
+                double scale = 0.75 + Landscape.Random(ref seed) * 0.65;
+                double rotation = Landscape.Random(ref seed) * Math.PI * 2.0;
+                double variation = Landscape.Random(ref seed);
                 double mosaic = Landscape.Mosaic(direction, _body.Radius);
                 double woodland = Landscape.Woodland(mosaic);
                 if (chance > cover.G * (0.035 + woodland * 1.15) || cover.A > 0.15) {
@@ -364,7 +335,7 @@ public sealed partial class Forest : Node3D {
 
                 }
                 double height = _terrain.Elevation(direction);
-                double snowLine = 950.0 + (80.0 - 950.0) * Smooth(0.3, 0.96, Math.Abs(direction.Z));
+                double snowLine = 950.0 + (80.0 - 950.0) * Ocean.Smooth(0.3, 0.96, Math.Abs(direction.Z));
                 if (height < 1.0 || height > snowLine - 50.0 || Cleared(direction)) {
 
                     continue;
@@ -439,20 +410,6 @@ public sealed partial class Forest : Node3D {
         };
         AddChild(grove.Instance);
         if (!_distant) { Obstacles.Add(grove.Key, grove.Anchor, grove.Trees, multi, grove.Instance); }
-
-    }
-
-    private static double Random(ref uint seed) {
-
-        seed = unchecked(seed * 1664525u + 1013904223u);
-        return (seed >> 8) / 16777216.0;
-
-    }
-
-    private static double Smooth(double low, double high, double value) {
-
-        double t = Math.Clamp((value - low) / (high - low), 0.0, 1.0);
-        return t * t * (3.0 - 2.0 * t);
 
     }
 

@@ -35,10 +35,10 @@ public sealed partial class CloudRender : CompositorEffect {
     public void BindRefraction(ShaderMaterial material) {
 
         bool ready = Enabled && Ready;
-        material.SetShaderParameter("cloud_buffer_ready", ready);
+        material.SetParameter("cloud_buffer_ready", ready);
         if (!ready) { return; }
-        material.SetShaderParameter("cloud_buffer", _color);
-        material.SetShaderParameter("cloud_depth", _depth);
+        material.SetParameter("cloud_buffer", _color);
+        material.SetParameter("cloud_depth", _depth);
 
     }
 
@@ -62,23 +62,23 @@ public sealed partial class CloudRender : CompositorEffect {
         Enabled = visible;
         if (_color.TextureRdRid.IsValid) {
 
-            material.SetShaderParameter("cloud_buffer", _color);
-            material.SetShaderParameter("cloud_depth", _depth);
+            material.SetParameter("cloud_buffer", _color);
+            material.SetParameter("cloud_depth", _depth);
 
         }
-        material.SetShaderParameter("cloud_buffer_ready", _color.TextureRdRid.IsValid);
+        material.SetParameter("cloud_buffer_ready", _color.TextureRdRid.IsValid);
         if (!visible) { return; }
         float[] data = new float[80];
         void Pack(int slot, string vector, string scalar, float fallback = 0.0f) {
 
-            Vector3 v = material.GetShaderParameter(vector).AsVector3();
-            Variant value = material.GetShaderParameter(scalar);
+            Vector3 v = material.GetParameter(vector).AsVector3();
+            Variant value = material.GetParameter(scalar);
             Put(data, slot, new Vector4(v.X, v.Y, v.Z, value.VariantType == Variant.Type.Nil ? fallback : value.AsSingle()));
 
         }
         float Scalar(string name, float fallback) {
 
-            Variant value = material.GetShaderParameter(name);
+            Variant value = material.GetParameter(name);
             return value.VariantType == Variant.Type.Nil ? fallback : value.AsSingle();
 
         }
@@ -90,14 +90,14 @@ public sealed partial class CloudRender : CompositorEffect {
         Pack(5, "shadow_north", "sun_power", 2.0f);
         Pack(6, "coastal_weather_direction", "weather_coverage");
         Put(data, 7, new Vector4(Scalar("base_radius", 0), Scalar("top_radius", 0), Scalar("ambient_gain", 0.28f), Scalar("sun_shafts", 1)));
-        Basis cloudFrame = material.GetShaderParameter("cloud_frame").AsBasis();
+        Basis cloudFrame = material.GetParameter("cloud_frame").AsBasis();
         Put(data, 8, new Vector4(cloudFrame.X.X, cloudFrame.X.Y, cloudFrame.X.Z, Scalar("fog_enabled", 1)));
         Put(data, 9, new Vector4(cloudFrame.Y.X, cloudFrame.Y.Y, cloudFrame.Y.Z, 0.0f));
         Put(data, 10, new Vector4(cloudFrame.Z.X, cloudFrame.Z.Y, cloudFrame.Z.Z, 0.0f));
         Rid[] textures = new Rid[TextureNames.Length];
         for (int i = 0; i < textures.Length; i++) {
 
-            if (material.GetShaderParameter(TextureNames[i]).AsGodotObject() is not Texture texture) { return; }
+            if (material.GetParameter(TextureNames[i]).AsGodotObject() is not Texture texture) { return; }
             textures[i] = texture.GetRid();
 
         }

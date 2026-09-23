@@ -36,13 +36,13 @@ public sealed partial class CloudShadows : Node {
     public void Build(Texture2D weather, Texture3D shape, Texture3D detail, float radius, float cloudBase, float cloudTop, Vector3 coastalWeather) {
 
         _material = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Clouds/CloudShadow.gdshader") };
-        _material.SetShaderParameter("cloud_map", weather);
-        _material.SetShaderParameter("shape_noise", shape);
-        _material.SetShaderParameter("detail_noise", detail);
-        _material.SetShaderParameter("base_radius", radius + cloudBase);
-        _material.SetShaderParameter("top_radius", radius + cloudTop);
-        _material.SetShaderParameter("map_radius", radius);
-        _material.SetShaderParameter("coastal_weather_direction", coastalWeather);
+        _material.SetParameter("cloud_map", weather);
+        _material.SetParameter("shape_noise", shape);
+        _material.SetParameter("detail_noise", detail);
+        _material.SetParameter("base_radius", radius + cloudBase);
+        _material.SetParameter("top_radius", radius + cloudTop);
+        _material.SetParameter("map_radius", radius);
+        _material.SetParameter("coastal_weather_direction", coastalWeather);
         _viewport = new SubViewport {
 
             Size = new Vector2I(512, 512),
@@ -71,7 +71,7 @@ public sealed partial class CloudShadows : Node {
         }
         _lightingMaterial = (ShaderMaterial)_material.Duplicate();
         _lightingMaterial.Shader = GD.Load<Shader>("res://Shaders/Clouds/CloudLighting.gdshader");
-        _lightingMaterial.SetShaderParameter("map_span", 64000.0f);
+        _lightingMaterial.SetParameter("map_span", 64000.0f);
         _backLightingMaterial = (ShaderMaterial)_lightingMaterial.Duplicate();
         _lightingViewport = LightingViewport(_lightingMaterial);
         _backLightingViewport = LightingViewport(_backLightingMaterial);
@@ -98,8 +98,8 @@ public sealed partial class CloudShadows : Node {
     public void AddReceiver(ShaderMaterial material) {
 
         _receivers.Add(material);
-        material.SetShaderParameter("local_cloud_shadow", _viewport.GetTexture());
-        material.SetShaderParameter("local_cloud_lighting", _lightingViewport.GetTexture());
+        material.SetParameter("local_cloud_shadow", _viewport.GetTexture());
+        material.SetParameter("local_cloud_lighting", _lightingViewport.GetTexture());
 
     }
 
@@ -107,7 +107,7 @@ public sealed partial class CloudShadows : Node {
 
         foreach (ShaderMaterial material in _materials) {
 
-            material.SetShaderParameter(name, volume);
+            material.SetParameter(name, volume);
 
         }
 
@@ -115,7 +115,7 @@ public sealed partial class CloudShadows : Node {
 
     public void SetWeather(float coverage) {
 
-        foreach (ShaderMaterial material in _materials) { material.SetShaderParameter("weather_coverage", coverage); }
+        foreach (ShaderMaterial material in _materials) { material.SetParameter("weather_coverage", coverage); }
 
     }
 
@@ -133,8 +133,8 @@ public sealed partial class CloudShadows : Node {
             _visibleTime = _updatedTime;
             foreach (ShaderMaterial receiver in _receivers) {
 
-                receiver.SetShaderParameter("local_cloud_shadow", _viewport.GetTexture());
-                receiver.SetShaderParameter("local_cloud_lighting", _lightingViewport.GetTexture());
+                receiver.SetParameter("local_cloud_shadow", _viewport.GetTexture());
+                receiver.SetParameter("local_cloud_lighting", _lightingViewport.GetTexture());
 
             }
             _pending = false;
@@ -143,7 +143,7 @@ public sealed partial class CloudShadows : Node {
         }
         if (eye.Length - body.Radius > 12000.0) {
 
-            foreach (ShaderMaterial receiver in _receivers) { receiver.SetShaderParameter("shadow_ready", 0.0f); }
+            foreach (ShaderMaterial receiver in _receivers) { receiver.SetParameter("shadow_ready", 0.0f); }
             return;
 
         }
@@ -163,16 +163,16 @@ public sealed partial class CloudShadows : Node {
                 _north = Vector3d.Cross(up, _east);
 
             }
-            _backMaterial.SetShaderParameter("map_centre", Frames.Direction(_anchor));
-            _backMaterial.SetShaderParameter("map_east", Frames.Direction(_east));
-            _backMaterial.SetShaderParameter("map_north", Frames.Direction(_north));
-            _backMaterial.SetShaderParameter("map_sun", Frames.Direction(body.ToBodyFixed(Frames.Sim(sun), time)));
-            _backMaterial.SetShaderParameter("cloud_frame", CloudWind.Frame(body, time, true));
-            _backLightingMaterial.SetShaderParameter("map_centre", Frames.Direction(_anchor));
-            _backLightingMaterial.SetShaderParameter("map_east", Frames.Direction(_east));
-            _backLightingMaterial.SetShaderParameter("map_north", Frames.Direction(_north));
-            _backLightingMaterial.SetShaderParameter("map_sun", Frames.Direction(body.ToBodyFixed(Frames.Sim(sun), time)));
-            _backLightingMaterial.SetShaderParameter("cloud_frame", CloudWind.Frame(body, time, true));
+            _backMaterial.SetParameter("map_centre", Frames.Direction(_anchor));
+            _backMaterial.SetParameter("map_east", Frames.Direction(_east));
+            _backMaterial.SetParameter("map_north", Frames.Direction(_north));
+            _backMaterial.SetParameter("map_sun", Frames.Direction(body.ToBodyFixed(Frames.Sim(sun), time)));
+            _backMaterial.SetParameter("cloud_frame", CloudWind.Frame(body, time, true));
+            _backLightingMaterial.SetParameter("map_centre", Frames.Direction(_anchor));
+            _backLightingMaterial.SetParameter("map_east", Frames.Direction(_east));
+            _backLightingMaterial.SetParameter("map_north", Frames.Direction(_north));
+            _backLightingMaterial.SetParameter("map_sun", Frames.Direction(body.ToBodyFixed(Frames.Sim(sun), time)));
+            _backLightingMaterial.SetParameter("cloud_frame", CloudWind.Frame(body, time, true));
             _backViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Once;
             _backLightingViewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Once;
             _updated = now;
@@ -189,10 +189,10 @@ public sealed partial class CloudShadows : Node {
         Vector3 north = Frames.Direction(body.ToInertial(CloudWind.Advect(_visibleNorth, elapsed, body.Radius, body.Weather, _visibleTime), time));
         foreach (ShaderMaterial receiver in _receivers) {
 
-            receiver.SetShaderParameter("shadow_centre", centre);
-            receiver.SetShaderParameter("shadow_east", east);
-            receiver.SetShaderParameter("shadow_north", north);
-            receiver.SetShaderParameter("shadow_ready", _hasMap ? (float)(1.0 - Landscape.Smooth(10000.0, 12000.0, eye.Length - body.Radius)) : 0.0f);
+            receiver.SetParameter("shadow_centre", centre);
+            receiver.SetParameter("shadow_east", east);
+            receiver.SetParameter("shadow_north", north);
+            receiver.SetParameter("shadow_ready", _hasMap ? (float)(1.0 - Ocean.Smooth(10000.0, 12000.0, eye.Length - body.Radius)) : 0.0f);
 
         }
 

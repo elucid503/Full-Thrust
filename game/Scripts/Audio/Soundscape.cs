@@ -92,6 +92,12 @@ public sealed partial class Soundscape : Node3D {
     /// <summary>One of a numbered set of takes, so a repeated event is not the same recording twice.</summary>
     public static string Pick(string stem, int count) => $"{stem}_{GD.RandRange(1, count)}.wav";
 
+    public override void _ExitTree() {
+
+        if (Active == this) { Active = null; }
+
+    }
+
     public override void _Ready() {
 
         Active = this;

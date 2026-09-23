@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Threading;
 
 using FullThrust.Sim;
+using static FullThrust.Game.Checks;
 
 using Godot;
 
@@ -12,7 +13,6 @@ namespace FullThrust.Game;
 
 public sealed partial class GroundScatterChecks : Node {
 
-    private int _checks;
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
     public override void _Ready() {
@@ -23,13 +23,12 @@ public sealed partial class GroundScatterChecks : Node {
             Run(true);
             ObstacleChecks();
             ImportedTreeChecks();
-            GD.Print($"Terrain scatter: {_checks} checks passed");
+            GD.Print($"Terrain scatter: {Passed} checks passed");
             GetTree().Quit();
 
         } catch (Exception error) {
 
-            GD.PushError(error.ToString());
-            GetTree().Quit(1);
+            Fail(this, error);
 
         }
 
@@ -117,14 +116,6 @@ public sealed partial class GroundScatterChecks : Node {
         for (int i = 0; i < 1000; i++) { rocks.Resolve(body, vessel, vessel.Position, QuaternionD.Identity, 0, 0); }
         Check(GC.GetAllocatedBytesForCurrentThread() - allocated < 1024, "distant collision queries avoid managed allocation");
         rocks.Remove((7, 8));
-    }
-
-    private void Check(bool condition, string label) {
-
-        if (!condition) { throw new InvalidOperationException(label); }
-        _checks++;
-        GD.Print($"PASS {label}");
-
     }
 
     private void Run(bool broad) {

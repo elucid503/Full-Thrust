@@ -1,6 +1,8 @@
 using System;
 using System.Threading.Tasks;
 
+using static FullThrust.Game.Checks;
+
 using Godot;
 
 namespace FullThrust.Game;
@@ -9,7 +11,6 @@ public sealed partial class CloudVolumeChecks : Node {
 
     private ShaderMaterial _material;
     private SubViewport _viewport;
-    private int _checks;
 
     private static ImageTexture3D ConstantVolume(float value) {
 
@@ -19,14 +20,6 @@ public sealed partial class CloudVolumeChecks : Node {
         ImageTexture3D volume = new();
         if (volume.Create(Image.Format.Rf, 2, 2, 2, false, slices) != Error.Ok) { throw new InvalidOperationException("Volume upload failed"); }
         return volume;
-
-    }
-
-    private void Check(bool condition, string message) {
-
-        if (!condition) { throw new InvalidOperationException(message); }
-        GD.Print("PASS " + message);
-        _checks++;
 
     }
 
@@ -108,13 +101,12 @@ public sealed partial class CloudVolumeChecks : Node {
             Check((await Read()).R > 0.999f, "opaque cloud termination leaves no background horizon leak");
             _material.SetShaderParameter("scene_distance", 0.0f);
             Check((await Read()).R < 0.001f, "foreground scene depth clips cloud integration");
-            GD.Print($"Cloud volume: {_checks} GPU checks passed");
+            GD.Print($"Cloud volume: {Passed} GPU checks passed");
             GetTree().Quit();
 
         } catch (Exception exception) {
 
-            GD.PushError(exception.ToString());
-            GetTree().Quit(1);
+            Fail(this, exception);
 
         }
 

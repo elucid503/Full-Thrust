@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode unshaded, blend_premul_alpha, cull_front, depth_draw_never, depth_test_disabled, shadows_disabled;
+render_mode unshaded, blend_premul_alpha, cull_front, depth_draw_never, depth_test_disabled, shadows_disabled, fog_disabled;
 
 uniform sampler3D flow_noise : filter_linear, repeat_enable;
 uniform sampler2D depth_buffer : hint_depth_texture, filter_nearest;

@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Threading.Tasks;
 
 using FullThrust.Sim;
+using static FullThrust.Game.Checks;
 
 using Godot;
 
@@ -322,8 +323,7 @@ public sealed partial class EngineVisualChecks : Node {
 
         } catch (Exception exception) {
 
-            GD.PushError(exception.ToString());
-            GetTree().Quit(1);
+            Fail(this, exception);
 
         }
 

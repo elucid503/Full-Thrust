@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode unshaded, blend_premul_alpha, depth_draw_never, depth_test_disabled, cull_disabled;
+render_mode unshaded, blend_premul_alpha, depth_draw_never, depth_test_disabled, cull_disabled, fog_disabled;
 
 // Single-scatter Rayleigh/Mie; integral bounds from ray-sphere hits and the depth buffer, not the
 // mesh. The shell composites rather than adds: what is behind it is dimmed by the air in front of

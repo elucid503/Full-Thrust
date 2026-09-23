@@ -32,7 +32,6 @@ public sealed partial class VesselView {
         public Plume Plume { get; init; }
         public Vector3 Exit { get; init; }
         public Vector3 Axis { get; init; }
-        public float Radius { get; init; }
         public float Duty { get; set; }
         public bool Firing { get; set; }
         public EngineState Valve { get; } = new();
@@ -46,6 +45,7 @@ public sealed partial class VesselView {
     private EntryField _entryField;
     private MeshInstance3D _wake;
     private ShaderMaterial _wakeMaterial;
+    private ShaderMaterial[] _entryMaterials;
     private OmniLight3D _entryLight;
     private double _lastExhaustTime;
     private float _effectTime;
@@ -67,8 +67,8 @@ public sealed partial class VesselView {
 
         ShaderMaterial material = new ShaderMaterial { Shader = GD.Load<Shader>(shader), RenderPriority = priority };
 
-        material.SetShaderParameter("seed", (float)(_seeds++ * 7.31));
-        material.SetShaderParameter("flow_noise", _noise);
+        material.SetParameter("seed", (float)(_seeds++ * 7.31));
+        material.SetParameter("flow_noise", _noise);
 
         return material;
 
@@ -93,8 +93,8 @@ public sealed partial class VesselView {
 
     private static void Bounds(MeshInstance3D volume, ShaderMaterial material, Vector3 low, Vector3 high) {
 
-        material.SetShaderParameter("bounds_min", low);
-        material.SetShaderParameter("bounds_max", high);
+        material.SetParameter("bounds_min", low);
+        material.SetParameter("bounds_max", high);
         volume.CustomAabb = new Aabb(low, high - low);
 
     }
@@ -279,7 +279,6 @@ public sealed partial class VesselView {
             Plume = plume,
             Exit = exit,
             Axis = axis,
-            Radius = NozzleMouth * scale,
 
         });
 
@@ -289,6 +288,7 @@ public sealed partial class VesselView {
 
         _sheathMaterial = VolumeMaterial("res://Shaders/Exhaust/Entry.gdshader", 4);
         _wakeMaterial = VolumeMaterial("res://Shaders/Exhaust/EntryWake.gdshader", 2);
+        _entryMaterials = new[] { _sheathMaterial, _wakeMaterial };
         _sheath = Volume("Sheath", _sheathMaterial);
         _wake = Volume("EntryWake", _wakeMaterial);
         _body.AddChild(_sheath);
@@ -333,11 +333,11 @@ public sealed partial class VesselView {
         Piece active = Find(_vessel.Active);
         _entryField = _pieces.Count == 1 ? active.SingleEntry : active.StackEntry;
 
-        foreach (ShaderMaterial material in new[] { _sheathMaterial, _wakeMaterial }) {
+        foreach (ShaderMaterial material in _entryMaterials) {
 
-            material.SetShaderParameter("hull_field", _entryField.Distance);
-            material.SetShaderParameter("field_domain", _entryField.Domain);
-            material.SetShaderParameter("body_radius", _entryField.Radius);
+            material.SetParameter("hull_field", _entryField.Distance);
+            material.SetParameter("field_domain", _entryField.Domain);
+            material.SetParameter("body_radius", _entryField.Radius);
 
         }
 
@@ -631,10 +631,10 @@ public sealed partial class VesselView {
 
             _entryField.Project(cosine);
             _projectionAge = 0.0f;
-            _wakeMaterial.SetShaderParameter("footprint", _entryField.Footprint);
-            _wakeMaterial.SetShaderParameter("footprint_extent", _entryField.FootprintExtent);
-            _sheathMaterial.SetShaderParameter("footprint", _entryField.Footprint);
-            _sheathMaterial.SetShaderParameter("footprint_extent", _entryField.FootprintExtent);
+            _wakeMaterial.SetParameter("footprint", _entryField.Footprint);
+            _wakeMaterial.SetParameter("footprint_extent", _entryField.FootprintExtent);
+            _sheathMaterial.SetParameter("footprint", _entryField.Footprint);
+            _sheathMaterial.SetParameter("footprint_extent", _entryField.FootprintExtent);
 
         }
 
@@ -649,20 +649,19 @@ public sealed partial class VesselView {
         double ambient = body.Atmosphere.TemperatureAt(altitude);
         EntrySpectrum spectrum = EntrySpectrum.For(air, ambient, _vessel.SkinTemperature);
 
-        foreach (ShaderMaterial material in new[] { _sheathMaterial, _wakeMaterial }) {
+        foreach (ShaderMaterial material in _entryMaterials) {
 
-            material.SetShaderParameter("flow_to_body", transform);
-            material.SetShaderParameter("intensity", _sheathHeat);
-            material.SetShaderParameter("heat", Mathf.Clamp((float)air.AirSpeed / 5000.0f, 0.0f, 1.0f));
-            material.SetShaderParameter("standoff", standoff);
-            material.SetShaderParameter("wake_length", wake);
-            material.SetShaderParameter("ablation", ablation);
-            material.SetShaderParameter("effect_time", _effectTime);
-            material.SetShaderParameter("sample_phase", (float)(Godot.Engine.GetProcessFrames() % 8) * 0.61803399f);
-            material.SetShaderParameter("air_hot_colour", spectrum.Hot);
-            material.SetShaderParameter("air_cool_colour", spectrum.Cool);
-            material.SetShaderParameter("ablation_colour", spectrum.Ablation);
-            material.SetShaderParameter("cooling_rate", spectrum.CoolingRate);
+            material.SetParameter("flow_to_body", transform);
+            material.SetParameter("intensity", _sheathHeat);
+            material.SetParameter("heat", Mathf.Clamp((float)air.AirSpeed / 5000.0f, 0.0f, 1.0f));
+            material.SetParameter("standoff", standoff);
+            material.SetParameter("wake_length", wake);
+            material.SetParameter("ablation", ablation);
+            material.SetParameter("effect_time", _effectTime);
+            material.SetParameter("air_hot_colour", spectrum.Hot);
+            material.SetParameter("air_cool_colour", spectrum.Cool);
+            material.SetParameter("ablation_colour", spectrum.Ablation);
+            material.SetParameter("cooling_rate", spectrum.CoolingRate);
 
         }
 
@@ -673,10 +672,10 @@ public sealed partial class VesselView {
         Vector2 bowExtent = new Vector2(Mathf.Max(lateral, radius * 0.25f), radius);
         float bowOffset = radius * 0.16f + standoff * 0.35f;
         float bowBend = radius * 0.22f;
-        _sheathMaterial.SetShaderParameter("bow_extent", bowExtent);
-        _sheathMaterial.SetShaderParameter("bow_front", _entryField.Ahead);
-        _sheathMaterial.SetShaderParameter("bow_offset", bowOffset);
-        _sheathMaterial.SetShaderParameter("bow_bend", bowBend);
+        _sheathMaterial.SetParameter("bow_extent", bowExtent);
+        _sheathMaterial.SetParameter("bow_front", _entryField.Ahead);
+        _sheathMaterial.SetParameter("bow_offset", bowOffset);
+        _sheathMaterial.SetParameter("bow_bend", bowBend);
 
         // Bounds include the bow's full curved support, including its diffuse wings.
         float bowSlope = 2.0f * bowBend * 1.65f / Mathf.Min(bowExtent.X, bowExtent.Y);

@@ -314,7 +314,7 @@ public sealed class Terrain {
 
             }
 
-            double blend = Smoothstep(plateau.OuterRadius, plateau.InnerRadius, distance);
+            double blend = Ocean.Smooth(plateau.OuterRadius, plateau.InnerRadius, distance);
 
             height = height + (plateau.Height - height) * blend;
 
@@ -341,7 +341,7 @@ public sealed class Terrain {
 
         double slope = Math.Sqrt(Square(east / (2.0 * metresEast)) + Square(north / (2.0 * metresNorth)));
 
-        return Smoothstep(SmoothSlope, BrokenSlope, slope);
+        return Ocean.Smooth(SmoothSlope, BrokenSlope, slope);
 
     }
 
@@ -365,10 +365,10 @@ public sealed class Terrain {
             : 0.0;
         double province = Noise.Value(at.X * 0.31 + 13.0, at.Y * 0.31, at.Z * 0.31 - 7.0);
         rolling *= 1.15 + province * 0.75;
-        rolling *= 0.18 + 0.82 * Smoothstep(0.0, 18.0, Math.Abs(measured));
+        rolling *= 0.18 + 0.82 * Ocean.Smooth(0.0, 18.0, Math.Abs(measured));
 
-        double coastal = Smoothstep(0.0, 2.0, measured) * (1.0 - Smoothstep(15.0, 45.0, measured))
-            * (1.0 - Smoothstep(0.55, 0.75, Math.Abs(unit.Z)));
+        double coastal = Ocean.Smooth(0.0, 2.0, measured) * (1.0 - Ocean.Smooth(15.0, 45.0, measured))
+            * (1.0 - Ocean.Smooth(0.55, 0.75, Math.Abs(unit.Z)));
         if (coastal > 0.0) {
 
             Vector3d hummocks = unit * (_radius / 120.0);
@@ -376,9 +376,9 @@ public sealed class Terrain {
             rolling += Noise.Fractal(hummocks.X, hummocks.Y, hummocks.Z, localOctaves, 0.48) * coastal * 1.4;
             double dune = Math.Sin(hummocks.X * 2.1 + hummocks.Y * 1.3 + hummocks.Z * 0.7
                 + Noise.Value(hummocks.X * 0.15, hummocks.Y * 0.15, hummocks.Z * 0.15) * 4.0);
-            double resolvedDunes = 1.0 - Smoothstep(20.0, 90.0, spacing);
+            double resolvedDunes = 1.0 - Ocean.Smooth(20.0, 90.0, spacing);
             rolling += (dune + 0.3 * Math.Sin(dune * 2.4)) * coastal * resolvedDunes
-                * Smoothstep(1.5, 5.0, measured) * (0.8 + Math.Max(province, 0.0) * 3.0);
+                * Ocean.Smooth(1.5, 5.0, measured) * (0.8 + Math.Max(province, 0.0) * 3.0);
 
         }
 
@@ -399,9 +399,9 @@ public sealed class Terrain {
         // Its amplitude is faded over the last one instead.
         double drainage = Noise.Value(at.X * 5.0 + warp, at.Y * 5.0 - warp, at.Z * 5.0 + 71.0);
         double gullies = Math.Pow(Math.Max(0.0, 1.0 - Math.Abs(drainage) * 3.0), 4.0);
-        double resolvedGullies = 1.0 - Smoothstep(120.0, 500.0, spacing);
+        double resolvedGullies = 1.0 - Ocean.Smooth(120.0, 500.0, spacing);
         return rolling + ridged * RidgeAmplitude * ruggedness * Math.Min(ridgeOctaves, 1.0)
-            - gullies * ruggedness * resolvedGullies * Smoothstep(5.0, 40.0, measured) * (12.0 + 8.0 * province);
+            - gullies * ruggedness * resolvedGullies * Ocean.Smooth(5.0, 40.0, measured) * (12.0 + 8.0 * province);
 
     }
 
@@ -426,7 +426,7 @@ public sealed class Terrain {
         double lower = Count(left, bottom) + (Count(right, bottom) - Count(left, bottom)) * fx;
 
         double sampled = _floor + (upper + (lower - upper) * fy) * _step;
-        double smoothing = 1.0 - Smoothstep(8.0, 28.0, Math.Abs(sampled));
+        double smoothing = 1.0 - Ocean.Smooth(8.0, 28.0, Math.Abs(sampled));
         if (smoothing > 0.0 && _width >= 4 && _height >= 4) {
 
             // Match fragment sampling without smoothing away small islands or inventing overshoot.
@@ -456,19 +456,11 @@ public sealed class Terrain {
     private static double PreserveCoast(double measured, double detailed) {
 
         // Relief must reach zero continuously instead of being cut into vertical walls at the shore.
-        double relief = (detailed - measured) * Smoothstep(0.0, 24.0, Math.Abs(measured));
+        double relief = (detailed - measured) * Ocean.Smooth(0.0, 24.0, Math.Abs(measured));
         return measured + Math.Clamp(relief, -Math.Abs(measured) * 0.9, Math.Abs(measured) * 0.9);
 
     }
 
     private static double Square(double value) => value * value;
-
-    private static double Smoothstep(double edge0, double edge1, double value) {
-
-        double t = Math.Clamp((value - edge0) / (edge1 - edge0), 0.0, 1.0);
-
-        return t * t * (3.0 - 2.0 * t);
-
-    }
 
 }

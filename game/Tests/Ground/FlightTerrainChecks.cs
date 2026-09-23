@@ -1,19 +1,14 @@
 using System;
 using System.Reflection;
 using FullThrust.Sim;
+using static FullThrust.Game.Checks;
 using Godot;
 
 namespace FullThrust.Game;
 
 // End-to-end checks: actual Flight.Advance, real survey, no visual cell warm-up.
 public sealed partial class FlightTerrainChecks : Node {
-    private int _checks;
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
-    private void Check(bool condition, string message) {
-        if (!condition) { throw new InvalidOperationException(message); }
-        _checks++;
-        GD.Print("PASS " + message);
-    }
     public override void _Ready() {
         try {
             Main main = GD.Load<PackedScene>("res://Main.tscn").Instantiate<Main>();
@@ -89,11 +84,10 @@ public sealed partial class FlightTerrainChecks : Node {
             Check(Planet.Active.DestroyedScatter > destroyed, "actual flight destroys a tree before visual streaming");
             Check(flight.Vessel.Fate == VesselFate.Impacted, "tree impact damages vessel");
             GD.Print($"Cold-cell collision scenario: {timer.Elapsed.TotalMilliseconds:F2} ms");
-            GD.Print($"Flight terrain: {_checks} checks passed");
+            GD.Print($"Flight terrain: {Passed} checks passed");
             GetTree().Quit();
         } catch (Exception error) {
-            GD.PushError(error.ToString());
-            GetTree().Quit(1);
+            Fail(this, error);
         }
     }
 }

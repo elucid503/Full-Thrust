@@ -80,7 +80,7 @@ public static class GroundCollision {
             + Vector3d.Cross(vessel.Orientation.Rotate(vessel.AngularVelocity), lever);
         double closing = Math.Max(0.0, -Vector3d.Dot(relative, hit.Normal));
         Vector3d torque = vessel.Orientation.Conjugate.Rotate(Vector3d.Cross(lever, hit.Normal));
-        Vector3d inverseTorque = new(torque.X / vessel.Inertia.X, torque.Y / vessel.Inertia.Y, torque.Z / vessel.Inertia.Z);
+        Vector3d inverseTorque = vessel.InverseInertia(torque);
         double inverseMass = 1.0 / vessel.Mass + Vector3d.Dot(torque, inverseTorque);
         double impulse = closing / inverseMass;
         vessel.Velocity += hit.Normal * (impulse / vessel.Mass);
@@ -92,7 +92,7 @@ public static class GroundCollision {
         if (speed > 1e-10) {
             Vector3d direction = tangent / speed;
             Vector3d frictionTorque = vessel.Orientation.Conjugate.Rotate(Vector3d.Cross(lever, direction));
-            Vector3d inverseFriction = new(frictionTorque.X / vessel.Inertia.X, frictionTorque.Y / vessel.Inertia.Y, frictionTorque.Z / vessel.Inertia.Z);
+            Vector3d inverseFriction = vessel.InverseInertia(frictionTorque);
             double effective = 1.0 / vessel.Mass + Vector3d.Dot(frictionTorque, inverseFriction);
             double friction = Math.Min(speed / effective, impulse * 0.65);
             vessel.Velocity -= direction * (friction / vessel.Mass);
@@ -104,7 +104,7 @@ public static class GroundCollision {
         Vector3d momentum = new(angularSlip.X * vessel.Inertia.X, angularSlip.Y * vessel.Inertia.Y, angularSlip.Z * vessel.Inertia.Z);
         double resistance = Math.Min(momentum.Length, impulse * vessel.Profile.MaxRadius * 0.035);
         Vector3d rolling = momentum.Normalized * resistance;
-        vessel.AngularVelocity -= new Vector3d(rolling.X / vessel.Inertia.X, rolling.Y / vessel.Inertia.Y, rolling.Z / vessel.Inertia.Z);
+        vessel.AngularVelocity -= vessel.InverseInertia(rolling);
         // Consume the unspent step; rewinding every resting contact discarded the planet's motion.
         double remainder = (time - startTime) * (1.0 - hitTime);
         vessel.Position += vessel.Velocity * remainder;

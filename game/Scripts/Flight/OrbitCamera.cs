@@ -38,6 +38,12 @@ public sealed partial class OrbitCamera : Node3D {
 
     }
 
+    public override void _ExitTree() {
+
+        if (Active == this) { Active = null; }
+
+    }
+
     public override void _Ready() {
 
         Active = this;

@@ -98,6 +98,12 @@ public sealed partial class Flight : Node {
 
     private Tracked _own;
 
+    public override void _ExitTree() {
+
+        if (Active == this) { Active = null; }
+
+    }
+
     public override void _Ready() {
 
         Active = this;
@@ -144,11 +150,6 @@ public sealed partial class Flight : Node {
     /// does can end it.</summary>
     public bool InfiniteFuel { get; set; }
     public bool Invulnerable { get; set; }
-
-    private bool _stepOnce;
-
-    /// <summary>Runs a single frame while paused, for watching a contact or a separation happen.</summary>
-    public void StepFrame() => _stepOnce = true;
 
     /// <summary>True while the clamps still have hold of the vehicle.</summary>
     public bool Clamped { get; private set; } = true;
@@ -221,7 +222,7 @@ public sealed partial class Flight : Node {
 
     public void Advance(double delta) {
 
-        if (DebugPaused && !_stepOnce) {
+        if (DebugPaused) {
 
             foreach (Tracked track in _traffic) {
 
@@ -232,8 +233,6 @@ public sealed partial class Flight : Node {
             return;
 
         }
-
-        _stepOnce = false;
 
         foreach (Tracked track in _traffic) {
 
@@ -451,13 +450,7 @@ public sealed partial class Flight : Node {
 
                 double speed = (b.Velocity - a.Velocity).Length;
                 double reach = VesselCollision.Radius(a) + VesselCollision.Radius(b) + speed * remaining + 1.0;
-                double exhaustReach = 0.0;
-                foreach (Vessel source in new[] { a, b }) {
-                    if (source.CurrentThrust <= 0.0) { continue; }
-                    foreach (EngineState engine in source.Active.EngineStates) {
-                        exhaustReach = Math.Max(exhaustReach, engine.ExitRadius * ExhaustInteraction.ReachRadii);
-                    }
-                }
+                double exhaustReach = Math.Max(ExhaustReach(a), ExhaustReach(b));
                 if (exhaustReach > 0.0 && (b.Position - a.Position).Length < reach + exhaustReach) {
                     interval = Math.Min(interval, IntegrationStep);
                 }
@@ -476,6 +469,22 @@ public sealed partial class Flight : Node {
         }
 
         return interval;
+
+    }
+
+    private static double ExhaustReach(Vessel source) {
+
+        double reach = 0.0;
+
+        if (source.CurrentThrust <= 0.0) { return reach; }
+
+        foreach (EngineState engine in source.Active.EngineStates) {
+
+            reach = Math.Max(reach, engine.ExitRadius * ExhaustInteraction.ReachRadii);
+
+        }
+
+        return reach;
 
     }
 

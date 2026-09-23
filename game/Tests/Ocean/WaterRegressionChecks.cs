@@ -2,6 +2,7 @@ using System;
 using System.Reflection;
 
 using FullThrust.Sim;
+using static FullThrust.Game.Checks;
 
 using Godot;
 
@@ -19,18 +20,9 @@ public sealed partial class WaterRegressionChecks : Node {
     private ShaderMaterial[] _faces;
     private ShaderMaterial _water;
     private int _frames;
-    private int _checks;
     private bool _closeOnly;
     private bool _stress;
     private bool _shoreClose;
-
-    private void Check(bool condition, string label) {
-
-        if (!condition) { throw new InvalidOperationException(label); }
-        _checks++;
-        GD.Print("PASS " + label);
-
-    }
 
     public override void _Ready() {
 
@@ -211,15 +203,14 @@ public sealed partial class WaterRegressionChecks : Node {
                 using Image shot = GetViewport().GetTexture().GetImage();
                 shot.SavePng("res://.artifacts/water-close-exhaust.png");
                 Check(Planet.Active.WorkerFailures == 0, "camera travel produces no terrain worker failures");
-                GD.Print($"Water regression: {_checks} checks passed");
+                GD.Print($"Water regression: {Passed} checks passed");
                 GetTree().Quit();
 
             }
 
         } catch (Exception exception) {
 
-            GD.PushError(exception.ToString());
-            GetTree().Quit(1);
+            Fail(this, exception);
 
         }
 

@@ -49,6 +49,9 @@ public sealed partial class Vessel {
     // Diagonal only; every stack modelled so far is a solid of revolution about its nose axis.
     public Vector3d Inertia { get; set; } = Vector3d.UnitX + Vector3d.UnitY + Vector3d.UnitZ;
 
+    /// <summary>Body-frame angular acceleration a body-frame torque produces.</summary>
+    public Vector3d InverseInertia(Vector3d torque) => new(torque.X / Inertia.X, torque.Y / Inertia.Y, torque.Z / Inertia.Z);
+
     /// <summary>The mould line reduced to what the air cares about, rebuilt whenever the stack changes.</summary>
     public AeroProfile Profile { get; private set; }
 

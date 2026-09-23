@@ -1,6 +1,8 @@
 using System;
 using System.Threading.Tasks;
 
+using static FullThrust.Game.Checks;
+
 using Godot;
 
 namespace FullThrust.Game;
@@ -9,19 +11,6 @@ public sealed partial class RenderingStabilityChecks : Node {
 
     private SubViewport _viewport;
     private ShaderMaterial _material;
-    private int _checks;
-
-    private void Check(bool condition, string message) {
-
-        if (!condition) {
-
-            throw new InvalidOperationException(message);
-
-        }
-        GD.Print("PASS " + message);
-        _checks++;
-
-    }
 
     private async Task<Color> Read() {
 
@@ -103,13 +92,12 @@ public sealed partial class RenderingStabilityChecks : Node {
                 Check((await Read()).R < 0.01f, $"cloud opacity {alpha} occludes only fog behind it");
 
             }
-            GD.Print($"Rendering stability: {_checks} GPU checks passed");
+            GD.Print($"Rendering stability: {Passed} GPU checks passed");
             GetTree().Quit();
 
         } catch (Exception exception) {
 
-            GD.PushError(exception.ToString());
-            GetTree().Quit(1);
+            Fail(this, exception);
 
         }
 

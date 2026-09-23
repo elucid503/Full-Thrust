@@ -4,7 +4,6 @@ uniform sampler2D depth_buffer : hint_depth_texture, filter_nearest;
 uniform sampler3D flow_noise : filter_linear, repeat_enable;
 uniform float seed = 0.0;
 uniform float effect_time = 0.0;
-uniform float sample_phase = 0.0;
 
 varying vec3 volume_position;
 varying flat vec3 volume_camera;

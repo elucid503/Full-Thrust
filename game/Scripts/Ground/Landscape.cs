@@ -40,14 +40,14 @@ internal static class Landscape {
     }
 
     public static double Coastal(double latitude, double elevation, double aridity) =>
-        (1.0 - Smooth(0.55, 0.75, Math.Abs(latitude))) * (1.0 - Smooth(15.0, 45.0, elevation)) * (1.0 - aridity);
+        (1.0 - Ocean.Smooth(0.55, 0.75, Math.Abs(latitude))) * (1.0 - Ocean.Smooth(15.0, 45.0, elevation)) * (1.0 - aridity);
 
-    public static double Woodland(double mosaic) => Smooth(0.42, 0.68, mosaic);
+    public static double Woodland(double mosaic) => Ocean.Smooth(0.42, 0.68, mosaic);
 
-    public static double Smooth(double low, double high, double value) {
+    public static double Random(ref uint seed) {
 
-        double t = Math.Clamp((value - low) / (high - low), 0.0, 1.0);
-        return t * t * (3.0 - 2.0 * t);
+        seed = unchecked(seed * 1664525u + 1013904223u);
+        return (seed >> 8) / 16777216.0;
 
     }
 
@@ -65,9 +65,9 @@ internal static class Landscape {
         int x = Cell(px);
         int y = Cell(py);
         int z = Cell(pz);
-        double u = Smooth(0.0, 1.0, px - Math.Floor(px));
-        double v = Smooth(0.0, 1.0, py - Math.Floor(py));
-        double w = Smooth(0.0, 1.0, pz - Math.Floor(pz));
+        double u = Ocean.Smooth(0.0, 1.0, px - Math.Floor(px));
+        double v = Ocean.Smooth(0.0, 1.0, py - Math.Floor(py));
+        double w = Ocean.Smooth(0.0, 1.0, pz - Math.Floor(pz));
         return Lerp(Lerp(Lerp(Hash(x, y, z), Hash(x + 1, y, z), u),
                          Lerp(Hash(x, y + 1, z), Hash(x + 1, y + 1, z), u), v),
                     Lerp(Lerp(Hash(x, y, z + 1), Hash(x + 1, y, z + 1), u),

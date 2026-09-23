@@ -2,6 +2,7 @@ using System;
 using System.Reflection;
 
 using FullThrust.Sim;
+using static FullThrust.Game.Checks;
 
 using Godot;
 
@@ -9,15 +10,6 @@ namespace FullThrust.Game;
 
 public sealed partial class OceanChecks : Node {
 
-    private int _checks;
-
-    private void Check(bool condition, string label) {
-
-        if (!condition) { throw new InvalidOperationException(label); }
-        GD.Print("PASS " + label);
-        _checks++;
-
-    }
 
     public override async void _Ready() {
 
@@ -103,13 +95,12 @@ public sealed partial class OceanChecks : Node {
             panel.Sync();
             PanelContainer frame = (PanelContainer)typeof(DebugPanel).GetField("_frame", fields).GetValue(panel);
             Check(frame.Visible && frame.Size.Y <= GetViewport().GetVisibleRect().Size.Y - 40.0f, "F1 weather controls fit the viewport");
-            GD.Print($"Ocean: {_checks} checks passed");
+            GD.Print($"Ocean: {Passed} checks passed");
             GetTree().Quit();
 
         } catch (Exception exception) {
 
-            GD.PushError(exception.ToString());
-            GetTree().Quit(1);
+            Fail(this, exception);
 
         }
 

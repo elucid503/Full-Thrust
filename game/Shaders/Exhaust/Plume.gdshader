@@ -199,7 +199,9 @@ void fragment() {
         fade *= 1.0 - smoothstep(0.72, 0.9, boundary);
         float churn = exp2((turbulence - 0.5) * 5.0 * mixing);
         float around = atan(radial.x, radial.y);
-        float symmetry_mask = mix(1.0, pow(cos(symmetry * around * 0.5), 2.0), symmetry_strength);
+        // Squared by hand: pow() of a negative base is undefined in GLSL.
+        float symmetry_cos = cos(symmetry * around * 0.5);
+        float symmetry_mask = mix(1.0, symmetry_cos * symmetry_cos, symmetry_strength);
         float hollow = mix(1.0, smoothstep(0.0, 0.8, r), clamp(fresnel_invert, 0.0, 1.0) * 0.4);
         float density = edge * fade * churn * symmetry_mask * hollow / max(radius, 0.001);
         // Expansion dilutes emissive gas; a wider cone must not retain the core's surface brightness.
@@ -215,12 +217,15 @@ void fragment() {
             float shock_width = mouth;
             float softness = max(shock_width * 0.1, ds * 0.35);
             float half_width = max(min(cell_length * 0.065, shock_width * 0.3), ds * abs(ray.y) * 0.5);
-            float disk = exp(-2.0 * pow(axial / max(half_width, 0.001), 2.0))
-                * exp(-3.0 * pow(radial_distance / (shock_width * 0.42), 2.0));
+            float disk_axial = axial / max(half_width, 0.001);
+            float disk_radial = radial_distance / (shock_width * 0.42);
+            float disk = exp(-2.0 * disk_axial * disk_axial - 3.0 * disk_radial * disk_radial);
             float shock_radius = shock_width * (0.18 + 0.82 * abs(cell * 2.0 - 1.0));
-            float sheets = exp(-pow((radial_distance - shock_radius) / softness, 2.0));
+            float sheet_offset = (radial_distance - shock_radius) / softness;
+            float sheets = exp(-sheet_offset * sheet_offset);
             sheets *= pow(max(sin(cell * 3.14159265), 0.0), 0.7);
-            float body = exp(-3.0 * pow(radial_distance / shock_width, 2.0));
+            float body_radial = radial_distance / shock_width;
+            float body = exp(-3.0 * body_radial * body_radial);
             density = (disk + sheets * 0.42 + body * 0.06) * fade
                 * exp(-phase / max(cell_decay, 0.1)) * cell_strength / shock_width;
 

@@ -191,7 +191,7 @@ public sealed partial class Main : Node3D {
         Frames.Follow(_flight.Body, _flight.Time);
         Frames.Rebase(_flight.Vessel.Position);
 
-        FlightMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        FlightMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
 
         Vector3 up = Frames.Direction(_flight.Vessel.Position.Normalized);
 
@@ -207,7 +207,7 @@ public sealed partial class Main : Node3D {
 
         SyncDebris(focus);
         _planet.Wakes.Track(_flight.Vessel, _flight.Time);
-        VesselMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - vesselStarted) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        VesselMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(vesselStarted).TotalMilliseconds;
 
         _earthlight.Position = focus;
 
@@ -252,15 +252,15 @@ public sealed partial class Main : Node3D {
         long planetStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         Vector3d flightEye = _map.ReturnToFreeCamera ? _free.Where : Frames.Origin + Frames.Sim(_camera.Eye);
         _planet.Sync(_flight.Time, eye, _map.Open ? flightEye : null);
-        PlanetMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - planetStarted) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        PlanetMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(planetStarted).TotalMilliseconds;
         _complex.Sync(_flight.Time, eye);
 
         long hudStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         _hud.Sync();
-        HudMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - hudStarted) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        HudMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(hudStarted).TotalMilliseconds;
 
         _debug.Sync();
-        UpdateMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        UpdateMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
 
     }
 
@@ -312,11 +312,11 @@ public sealed partial class Main : Node3D {
             (float)_flight.Body.AtmosphereTop, (float)altitude);
         float starVisibility = (1.0f - day) * (1.0f - lowerAtmosphere * day);
 
-        _starfield.SetShaderParameter("planet_up", up);
-        _starfield.SetShaderParameter("sun_direction", SunDirection);
-        _starfield.SetShaderParameter("atmosphere_amount", air);
-        _starfield.SetShaderParameter("daylight", day);
-        _starfield.SetShaderParameter("star_visibility", starVisibility * starVisibility);
+        _starfield.SetParameter("planet_up", up);
+        _starfield.SetParameter("sun_direction", SunDirection);
+        _starfield.SetParameter("atmosphere_amount", air);
+        _starfield.SetParameter("daylight", day);
+        _starfield.SetParameter("star_visibility", starVisibility * starVisibility);
 
     }
 
@@ -332,7 +332,7 @@ public sealed partial class Main : Node3D {
 
         _starfield = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Atmosphere/Sky.gdshader") };
 
-        _starfield.SetShaderParameter("star_map", GD.Load<Texture2D>("res://Assets/Sky/stars.png"));
+        _starfield.SetParameter("star_map", GD.Load<Texture2D>("res://Assets/Sky/stars.png"));
 
         return new Godot.Environment {
 

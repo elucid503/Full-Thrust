@@ -76,8 +76,6 @@ public sealed partial class Ground : Node3D {
         public Color[] Depths;
         public int[] Indices;
         public float[] ParentOffsets;
-        /// <summary>Gradient of depth along the bed, per vertex, where the swell feels it.</summary>
-        public float[] Shelf;
 
         /// <summary>The sea surface over this patch, woven on the same grid, or null on dry land.</summary>
         public Surface Water;
@@ -462,9 +460,9 @@ public sealed partial class Ground : Node3D {
 
         patch.Instance = Assemble(surface, _materials[patch.Face]);
         patch.Instance.ExtraCullMargin = 12.0f;
-        patch.Instance.SetInstanceShaderParameter("mesh_spacing", (float)(patch.Edge / Grid));
+        patch.Instance.SetInstanceParameter("mesh_spacing", (float)(patch.Edge / Grid));
         Vector3d anchor = surface.Anchor;
-        patch.Instance.SetInstanceShaderParameter("material_origin", new Vector3(
+        patch.Instance.SetInstanceParameter("material_origin", new Vector3(
             (float)(anchor.X % 4096.0), (float)(anchor.Z % 4096.0), (float)(-anchor.Y % 4096.0)));
 
         AddChild(patch.Instance);
@@ -473,7 +471,7 @@ public sealed partial class Ground : Node3D {
 
             patch.Water = Assemble(surface.Water, _water);
             patch.Water.ExtraCullMargin = 12.0f;
-            patch.Water.SetInstanceShaderParameter("mesh_spacing", (float)(patch.Edge / Grid));
+            patch.Water.SetInstanceParameter("mesh_spacing", (float)(patch.Edge / Grid));
 
             AddChild(patch.Water);
 
@@ -538,12 +536,10 @@ public sealed partial class Ground : Node3D {
         arrays[(int)Mesh.ArrayType.TexUV2] = surface.Detail;
         arrays[(int)Mesh.ArrayType.Index] = surface.Indices;
         arrays[(int)Mesh.ArrayType.Custom0] = surface.ParentOffsets;
-        arrays[(int)Mesh.ArrayType.Custom1] = surface.Shelf;
 
         ArrayMesh mesh = new ArrayMesh();
 
         Mesh.ArrayFormat format = (Mesh.ArrayFormat)((ulong)Mesh.ArrayCustomFormat.RgbaFloat << (int)Mesh.ArrayFormat.FormatCustom0Shift);
-        format |= (Mesh.ArrayFormat)((ulong)Mesh.ArrayCustomFormat.RgbFloat << (int)Mesh.ArrayFormat.FormatCustom1Shift);
         mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays, flags: format);
 
         return new MeshInstance3D {
@@ -583,8 +579,8 @@ public sealed partial class Ground : Node3D {
             if (arrival > 0.0f) { SurfaceReady = false; }
             if (morph != patch.LastMorph) {
 
-                patch.Instance.SetInstanceShaderParameter("lod_morph", morph);
-                patch.Water?.SetInstanceShaderParameter("lod_morph", morph);
+                patch.Instance.SetInstanceParameter("lod_morph", morph);
+                patch.Water?.SetInstanceParameter("lod_morph", morph);
                 patch.LastMorph = morph;
 
             }
@@ -613,7 +609,6 @@ public sealed partial class Ground : Node3D {
     [ThreadStatic] private static Vector3d[] _datum;
     [ThreadStatic] private static double[] _sounding;
     [ThreadStatic] private static double[] _bank;
-    [ThreadStatic] private static Vector3d[] _shelf;
 
     private static Surface Tessellate(Terrain terrain, double radius, int face, double s, double t, double span, CancellationToken cancellation) {
 
@@ -655,7 +650,6 @@ public sealed partial class Ground : Node3D {
         // it. Sinking land just above the datum by that error keeps the sea surface over every
         // surveyed wet pixel, so the survey, not a triangle edge, decides where water meets land.
         double margin = Math.Clamp(spacing * 0.05, 0.05, 3.0);
-        Vector3d[] shelf = _shelf ??= new Vector3d[side * side];
 
         double lowest = double.MaxValue;
         double highest = double.MinValue;
@@ -686,7 +680,6 @@ public sealed partial class Ground : Node3D {
                 // Preserve both sides of sea level so the shoreline crosses triangles at zero height.
                 sounding[index] = -elevation;
                 bank[index] = -standing;
-                shelf[index] = Math.Abs(elevation) < 30.0 ? Shelf(terrain, radius, direction, spacing) : Vector3d.Zero;
 
             }
 
@@ -702,11 +695,11 @@ public sealed partial class Ground : Node3D {
 
         Vector3d anchor = Direction(face, s + span * 0.5, t + span * 0.5) * (radius + (lowest + highest) * 0.5);
 
-        Surface surface = Weave(radius, s, t, span, points, bank, shelf, anchor);
+        Surface surface = Weave(radius, s, t, span, points, bank, anchor);
 
         if (wet) {
 
-            surface.Water = Weave(radius, s, t, span, datum, sounding, shelf, anchor);
+            surface.Water = Weave(radius, s, t, span, datum, sounding, anchor);
             surface.Bound = Math.Max(surface.Bound, surface.Water.Bound);
 
         }
@@ -715,21 +708,7 @@ public sealed partial class Ground : Node3D {
 
     }
 
-    // The beach's width comes from its slope, which the ground shader cannot afford to take from the survey per pixel.
-    private static Vector3d Shelf(Terrain terrain, double radius, Vector3d direction, double spacing) {
-
-        const double reach = 32.0;
-        Vector3d first = Vector3d.Cross(Math.Abs(direction.Z) < 0.9 ? Vector3d.UnitZ : Vector3d.UnitX, direction).Normalized;
-        Vector3d second = Vector3d.Cross(direction, first);
-        Vector3d centre = direction * radius;
-        double alongFirst = terrain.Elevation((centre + first * reach).Normalized, spacing) - terrain.Elevation((centre - first * reach).Normalized, spacing);
-        double alongSecond = terrain.Elevation((centre + second * reach).Normalized, spacing) - terrain.Elevation((centre - second * reach).Normalized, spacing);
-
-        return -(first * alongFirst + second * alongSecond) / (2.0 * reach);
-
-    }
-
-    private static Surface Weave(double radius, double s, double t, double span, Vector3d[] points, double[] sounding, Vector3d[] shelf, Vector3d anchor) {
+    private static Surface Weave(double radius, double s, double t, double span, Vector3d[] points, double[] sounding, Vector3d anchor) {
 
         int side = Grid + 3;
         int line = Grid + 1;
@@ -745,7 +724,6 @@ public sealed partial class Ground : Node3D {
         Vector2[] detail = new Vector2[count];
         Color[] depths = new Color[count];
         float[] parentOffsets = new float[count * 4];
-        float[] bed = new float[count * 3];
 
         // The detail lattice is metres from an origin each patch picks for itself, because a
         // face-wide coordinate interpolated in single precision steps visibly once a patch is a few
@@ -809,10 +787,6 @@ public sealed partial class Ground : Node3D {
                 parentOffsets[index * 4 + 1] = parentOffset.Y;
                 parentOffsets[index * 4 + 2] = parentOffset.Z;
                 parentOffsets[index * 4 + 3] = (float)-sounding[sample];
-                Vector3 incline = Frames.Direction(shelf[sample]);
-                bed[index * 3] = incline.X;
-                bed[index * 3 + 1] = incline.Y;
-                bed[index * 3 + 2] = incline.Z;
 
                 Vector3 axis = Frames.Direction(tangent);
 
@@ -870,7 +844,6 @@ public sealed partial class Ground : Node3D {
             Depths = depths,
             Indices = indices,
             ParentOffsets = parentOffsets,
-            Shelf = bed,
 
             Anchor = anchor,
 
@@ -934,7 +907,6 @@ public sealed partial class Ground : Node3D {
 
             Array.Copy(surface.Tangents, source * 4, surface.Tangents, wall * 4, 4);
             Array.Copy(surface.ParentOffsets, source * 4, surface.ParentOffsets, wall * 4, 4);
-            Array.Copy(surface.Shelf, source * 3, surface.Shelf, wall * 3, 3);
 
         }
 
@@ -956,9 +928,6 @@ public sealed partial class Ground : Node3D {
 
     private static Vector2 Coordinate(double s, double t) => new Vector2((float)((s + 1.0) * 0.5), (float)((1.0 - t) * 0.5));
 
-    // Arc from the middle of the face along one axis. The detail lattice is laid out on this rather
-    // than on the face coordinate, so a metre of ground stays a metre of lattice wherever it sits
-    // and the pattern does not stretch towards the corners of the cube.
     public override void _ExitTree() {
 
         foreach (Patch root in _roots ?? Array.Empty<Patch>()) {

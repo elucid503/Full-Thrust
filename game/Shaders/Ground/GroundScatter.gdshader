@@ -12,7 +12,6 @@ varying vec3 local_position;
 varying vec3 local_normal;
 varying mat3 stone_to_view;
 varying float blade;
-varying float variation;
 varying vec3 world_position;
 varying float cloud_light;
 #include "res://Shaders/Clouds/CloudShadowSampling.gdshaderinc"
@@ -24,7 +23,7 @@ void vertex() {
     local_normal = NORMAL;
     stone_to_view = MODELVIEW_NORMAL_MATRIX;
     blade = UV2.x;
-    variation = COLOR.a;
+    float variation = COLOR.a;
     vec3 root = MODEL_MATRIX[3].xyz;
     float distance_to_eye = length(root - eye_position);
     float fade = 1.0 - smoothstep(mix(stone_range.x, grass_range.x, blade), mix(stone_range.y, grass_range.y, blade), distance_to_eye);

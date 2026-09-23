@@ -29,7 +29,6 @@ internal sealed class EntryField {
     public float Base { get; }
     public float Tip { get; }
     public float Ahead { get; private set; }
-    public float Behind { get; private set; }
     public float Cosine { get; private set; } = 2.0f;
 
     public EntryField(Vessel vessel) {
@@ -109,7 +108,6 @@ internal sealed class EntryField {
         float half = (Tip - Base) * 0.5f;
         FootprintExtent = new Vector2(Radius * Mathf.Abs(cosine) + half * sine, Radius) + Vector2.One * Radius * 0.35f;
         Ahead = 0.0f;
-        Behind = 0.0f;
 
         Array.Fill(_front, float.NegativeInfinity);
         Array.Fill(_back, float.PositiveInfinity);
@@ -140,7 +138,6 @@ internal sealed class EntryField {
                 Raster(q, s, r);
 
                 Ahead = Mathf.Max(Ahead, Mathf.Max(p.Y, r.Y));
-                Behind = Mathf.Max(Behind, -Mathf.Min(p.Y, r.Y));
 
             }
 

@@ -19,7 +19,9 @@ public static class ExhaustInteraction {
         Vector3d axis = vessel.Orientation.Conjugate.Rotate(direction);
         double nearest = reach;
         bool found = false;
-        foreach (Stage stage in vessel.Stages) {
+        IReadOnlyList<Stage> stages = vessel.Stages;
+        for (int i = 0; i < stages.Count; i++) {
+            Stage stage = stages[i];
             Hull hull = stage.ContactHull ?? stage.Hull;
             double hit = VesselSurface.RaycastProfile(hull.Stations, local, axis, nearest, hull);
             if (hit >= 0) { nearest = hit; found = true; }

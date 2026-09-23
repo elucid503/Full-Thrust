@@ -154,10 +154,10 @@ public sealed partial class Planet : Node3D {
         _atmosphere = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Atmosphere/Atmosphere.gdshader") };
         _cloudShadows.AddReceiver(_atmosphere);
 
-        _atmosphere.SetShaderParameter("planet_radius", radius);
-        _atmosphere.SetShaderParameter("atmosphere_radius", atmosphereRadius);
-        _atmosphere.SetShaderParameter("sun_direction", sunDirection);
-        _atmosphere.SetShaderParameter("rayleigh_height", (float)body.Atmosphere.ScaleHeight);
+        _atmosphere.SetParameter("planet_radius", radius);
+        _atmosphere.SetParameter("atmosphere_radius", atmosphereRadius);
+        _atmosphere.SetParameter("sun_direction", sunDirection);
+        _atmosphere.SetParameter("rayleigh_height", (float)body.Atmosphere.ScaleHeight);
         _opticalParameters["planet_radius"] = radius;
         _opticalParameters["atmosphere_radius"] = atmosphereRadius;
         _opticalParameters["rayleigh_height"] = body.Atmosphere.ScaleHeight;
@@ -172,15 +172,15 @@ public sealed partial class Planet : Node3D {
         _clouds = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Clouds/Clouds.gdshader") };
         _cloudShadows.AddReceiver(_clouds);
 
-        _clouds.SetShaderParameter("cloud_map", cloud);
-        _clouds.SetShaderParameter("shape_noise", _cloudShape);
-        _clouds.SetShaderParameter("detail_noise", _cloudDetail);
-        _clouds.SetShaderParameter("coastal_weather_direction", CoastalWeatherDirection());
+        _clouds.SetParameter("cloud_map", cloud);
+        _clouds.SetParameter("shape_noise", _cloudShape);
+        _clouds.SetParameter("detail_noise", _cloudDetail);
+        _clouds.SetParameter("coastal_weather_direction", CoastalWeatherDirection());
 
-        _clouds.SetShaderParameter("sun_direction", sunDirection);
-        _clouds.SetShaderParameter("planet_radius", radius);
-        _clouds.SetShaderParameter("base_radius", radius + CloudBase);
-        _clouds.SetShaderParameter("top_radius", radius + CloudTop);
+        _clouds.SetParameter("sun_direction", sunDirection);
+        _clouds.SetParameter("planet_radius", radius);
+        _clouds.SetParameter("base_radius", radius + CloudBase);
+        _clouds.SetParameter("top_radius", radius + CloudTop);
 
         _clouds.RenderPriority = 2;
 
@@ -254,28 +254,28 @@ public sealed partial class Planet : Node3D {
 
             ShaderMaterial material = new ShaderMaterial { Shader = shader };
 
-            material.SetShaderParameter("biome_map", biomes);
-            material.SetShaderParameter("shoreline_map", shoreline);
-            material.SetShaderParameter("night_map", GD.Load<Texture2D>($"res://Assets/Planet/Night/night_{face}.jpg"));
-            material.SetShaderParameter("cloud_map", cloud);
-            material.SetShaderParameter("shape_noise", _cloudShape);
-            material.SetShaderParameter("detail_noise", _cloudDetail);
-            material.SetShaderParameter("coastal_weather_direction", CoastalWeatherDirection());
-            material.SetShaderParameter("base_radius", radius + CloudBase);
-            material.SetShaderParameter("top_radius", radius + CloudTop);
+            material.SetParameter("biome_map", biomes);
+            material.SetParameter("shoreline_map", shoreline);
+            material.SetParameter("night_map", GD.Load<Texture2D>($"res://Assets/Planet/Night/night_{face}.jpg"));
+            material.SetParameter("cloud_map", cloud);
+            material.SetParameter("shape_noise", _cloudShape);
+            material.SetParameter("detail_noise", _cloudDetail);
+            material.SetParameter("coastal_weather_direction", CoastalWeatherDirection());
+            material.SetParameter("base_radius", radius + CloudBase);
+            material.SetParameter("top_radius", radius + CloudTop);
 
             for (int index = 0; index < closeNames.Length; index++) {
 
-                material.SetShaderParameter(closeNames[index], closeMaps[index]);
+                material.SetParameter(closeNames[index], closeMaps[index]);
 
             }
-            material.SetShaderParameter("rock_colour", rockColour);
-            material.SetShaderParameter("rock_normal", rockNormal);
-            material.SetShaderParameter("soil_colour", soilColour);
-            material.SetShaderParameter("soil_normal", soilNormal);
+            material.SetParameter("rock_colour", rockColour);
+            material.SetParameter("rock_normal", rockNormal);
+            material.SetParameter("soil_colour", soilColour);
+            material.SetParameter("soil_normal", soilNormal);
 
-            material.SetShaderParameter("planet_radius", radius);
-            material.SetShaderParameter("sun_direction", sunDirection);
+            material.SetParameter("planet_radius", radius);
+            material.SetParameter("sun_direction", sunDirection);
 
             _faces[face] = material;
 
@@ -307,7 +307,7 @@ public sealed partial class Planet : Node3D {
 
             foreach (ShaderMaterial face in _faces) {
 
-                face.SetShaderParameter(parameter, setting);
+                face.SetParameter(parameter, setting);
 
             }
 
@@ -331,7 +331,7 @@ public sealed partial class Planet : Node3D {
 
         }
 
-        material.SetShaderParameter(parameter, setting);
+        material.SetParameter(parameter, setting);
 
         return true;
 
@@ -349,11 +349,11 @@ public sealed partial class Planet : Node3D {
 
         foreach ((string name, double value) in _opticalParameters) {
 
-            _atmosphere.SetShaderParameter(name, (float)value);
+            _atmosphere.SetParameter(name, (float)value);
 
         }
 
-        _atmosphere.SetShaderParameter("sun_optical_depth", AtmosphereLookup.Build(
+        _atmosphere.SetParameter("sun_optical_depth", AtmosphereLookup.Build(
             _opticalParameters["planet_radius"], _opticalParameters["atmosphere_radius"],
             _opticalParameters["rayleigh_height"], _opticalParameters["mie_height"],
             _opticalParameters["ozone_height"], _opticalParameters["ozone_half_width"]));
@@ -379,8 +379,8 @@ public sealed partial class Planet : Node3D {
         Vector3 centre = Frames.Point(Vector3d.Zero);
 
         _deck.Position = centre;
-        _clouds.SetShaderParameter("fog_enabled", _body.HasAtmosphere ? 1.0f : 0.0f);
-        _clouds.SetShaderParameter("sun_shafts", 1.0f);
+        _clouds.SetParameter("fog_enabled", _body.HasAtmosphere ? 1.0f : 0.0f);
+        _clouds.SetParameter("sun_shafts", 1.0f);
 
         if (_air != null) {
 
@@ -409,34 +409,34 @@ public sealed partial class Planet : Node3D {
 
         foreach (ShaderMaterial face in _faces) {
 
-            face.SetShaderParameter("planet_centre", centre);
-            face.SetShaderParameter("camera_altitude", materialAltitude);
-            face.SetShaderParameter("terrain_rotation", rotation);
-            face.SetShaderParameter("cloud_frame", cloudFrame);
+            face.SetParameter("planet_centre", centre);
+            face.SetParameter("camera_altitude", materialAltitude);
+            face.SetParameter("terrain_rotation", rotation);
+            face.SetParameter("cloud_frame", cloudFrame);
 
         }
 
         SyncWater(time, centre, materialAltitude, rotation, cloudFrame);
 
-        _clouds.SetShaderParameter("planet_centre", centre);
-        _clouds.SetShaderParameter("cloud_frame", cloudFrame);
-        _clouds.SetShaderParameter("eye_height", (float)(eye.Length - _body.Radius));
-        _clouds.SetShaderParameter("eye_up", Frames.Direction(eye.Normalized));
+        _clouds.SetParameter("planet_centre", centre);
+        _clouds.SetParameter("cloud_frame", cloudFrame);
+        _clouds.SetParameter("eye_height", (float)(eye.Length - _body.Radius));
+        _clouds.SetParameter("eye_up", Frames.Direction(eye.Normalized));
 
         CloudPass.Sync(_clouds, _deck.Visible);
 
-        _atmosphere.SetShaderParameter("planet_centre", centre);
-        _atmosphere.SetShaderParameter("sun_shafts", 1.0f);
+        _atmosphere.SetParameter("planet_centre", centre);
+        _atmosphere.SetParameter("sun_shafts", 1.0f);
 
     }
 
     private void Publish(string name, Texture3D volume) {
 
-        _clouds.SetShaderParameter(name, volume);
-        _water.SetShaderParameter(name, volume);
+        _clouds.SetParameter(name, volume);
+        _water.SetParameter(name, volume);
         foreach (ShaderMaterial face in _faces) {
 
-            face.SetShaderParameter(name, volume);
+            face.SetParameter(name, volume);
 
         }
         _cloudShadows.SetVolume(name, volume);

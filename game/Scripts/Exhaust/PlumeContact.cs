@@ -9,7 +9,6 @@ namespace FullThrust.Game;
 // shared by every nozzle; transforms are computed from simulation state, never view update order.
 internal sealed class PlumeContact {
     private sealed class Field {
-        public int Stages;
         public ImageTexture Texture;
         public Vector4 Domain;
         public int Revision;
@@ -99,30 +98,30 @@ internal sealed class PlumeContact {
             Aabb bounds = transform.AffineInverse() * field.Bounds;
             if (bounds.End.Y < -reach) { continue; }
             string suffix = written.ToString();
-            material.SetShaderParameter("contact_transform" + suffix, transform);
-            material.SetShaderParameter("contact_bounds_min" + suffix, bounds.Position);
-            material.SetShaderParameter("contact_bounds_max" + suffix, bounds.End);
+            material.SetParameter("contact_transform" + suffix, transform);
+            material.SetParameter("contact_bounds_min" + suffix, bounds.Position);
+            material.SetParameter("contact_bounds_max" + suffix, bounds.End);
             bool replaced = binding.Fields[written] != field;
             if (replaced) {
                 binding.Fields[written] = field;
-                material.SetShaderParameter("contact_field" + suffix, field.Texture);
-                material.SetShaderParameter("contact_domain" + suffix, field.Domain);
-                material.SetShaderParameter("contact_engine_count" + suffix, field.Engines.Count);
+                material.SetParameter("contact_field" + suffix, field.Texture);
+                material.SetParameter("contact_domain" + suffix, field.Domain);
+                material.SetParameter("contact_engine_count" + suffix, field.Engines.Count);
                 if (field.Engines.Count > 0) {
-                    material.SetShaderParameter("contact_hardware" + suffix, field.Hardware);
-                    material.SetShaderParameter("contact_engine_domains" + suffix, field.EngineDomains);
+                    material.SetParameter("contact_hardware" + suffix, field.Hardware);
+                    material.SetParameter("contact_engine_domains" + suffix, field.EngineDomains);
                 }
             }
             if (field.Engines.Count > 0 && (replaced || binding.Poses[written] != field.PoseRevision)) {
-                material.SetShaderParameter("contact_engine_bounds" + suffix, field.EngineBounds);
+                material.SetParameter("contact_engine_bounds" + suffix, field.EngineBounds);
                 Godot.Collections.Array<Transform3D> transforms = new(field.EngineTransforms);
                 using Godot.Collections.Array nativeTransforms = (Godot.Collections.Array)transforms;
-                material.SetShaderParameter("contact_engine_transforms" + suffix, transforms);
+                material.SetParameter("contact_engine_transforms" + suffix, transforms);
                 binding.Poses[written] = field.PoseRevision;
             }
             written++;
         }
-        material.SetShaderParameter("contact_count", written);
+        material.SetParameter("contact_count", written);
     }
 
     private static Field Bake(Vessel vessel) {
@@ -131,7 +130,7 @@ internal sealed class PlumeContact {
         float padding = Mathf.Max(radius, 0.5f);
         Vector4 domain = new Vector4(0.0f, (float)vessel.Base - padding, radius + padding, (float)(vessel.Tip - vessel.Base) + padding * 2.0f);
         using Image hull = BakeImage(domain, p => VesselSurface.HullDistance(vessel, p));
-        Field field = new Field { Stages = vessel.StageCount, Revision = VesselSurface.Revision(vessel), Domain = domain, Texture = ImageTexture.CreateFromImage(hull) };
+        Field field = new Field { Revision = VesselSurface.Revision(vessel), Domain = domain, Texture = ImageTexture.CreateFromImage(hull) };
         Array.Fill(field.EngineTransforms, Transform3D.Identity);
         Godot.Collections.Array<Image> images = new();
         using Godot.Collections.Array nativeImages = (Godot.Collections.Array)images;

@@ -7,14 +7,11 @@ public static class WaterPhysics {
     private const int Slices = 24;
     private readonly record struct Immersed(Vector3d Point, Vector3d Up, Vector3d Flow, double Volume, double Radius);
 
-    private static Vector3d InverseInertia(Vessel vessel, Vector3d torque) => new(
-        torque.X / vessel.Inertia.X, torque.Y / vessel.Inertia.Y, torque.Z / vessel.Inertia.Z);
-
     private static void Impulse(Vessel vessel, Vector3d point, Vector3d impulse) {
 
         vessel.Velocity += impulse / vessel.Mass;
         Vector3d torque = vessel.Orientation.Conjugate.Rotate(Vector3d.Cross(point - vessel.Position, impulse));
-        vessel.AngularVelocity += InverseInertia(vessel, torque);
+        vessel.AngularVelocity += vessel.InverseInertia(torque);
 
     }
 
@@ -105,7 +102,7 @@ public static class WaterPhysics {
             if (speed < 1e-9) { continue; }
             Vector3d direction = relative / speed;
             Vector3d torque = vessel.Orientation.Conjugate.Rotate(Vector3d.Cross(lever, direction));
-            double inverseMass = 1.0 / vessel.Mass + Vector3d.Dot(torque, InverseInertia(vessel, torque));
+            double inverseMass = 1.0 / vessel.Mass + Vector3d.Dot(torque, vessel.InverseInertia(torque));
             double area = sample.Volume / Math.Max(sample.Radius * 0.8, 0.1);
             double coefficient = 0.5 * Ocean.Density * area * (speed + 0.5);
             // Exponential point impulses cannot reverse slip, even for a light spent tank.

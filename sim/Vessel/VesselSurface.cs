@@ -33,7 +33,9 @@ public static class VesselSurface {
 
     public static int Revision(Vessel vessel) {
         int revision = vessel.StageCount;
-        foreach (Stage stage in vessel.Stages) { revision = unchecked(revision * 31 + stage.ContactRevision); }
+        // Indexed: foreach over IReadOnlyList boxes its enumerator, and this runs on every contact query.
+        IReadOnlyList<Stage> stages = vessel.Stages;
+        for (int i = 0; i < stages.Count; i++) { revision = unchecked(revision * 31 + stages[i].ContactRevision); }
         return revision;
     }
 
@@ -57,8 +59,9 @@ public static class VesselSurface {
     public static double HullDistance(Vessel vessel, Vector3d local) {
         double radial = Math.Sqrt(local.X * local.X + local.Y * local.Y);
         double result = double.MaxValue;
-        foreach (Stage stage in vessel.Stages) {
-            Hull hull = stage.ContactHull ?? stage.Hull;
+        IReadOnlyList<Stage> stages = vessel.Stages;
+        for (int i = 0; i < stages.Count; i++) {
+            Hull hull = stages[i].ContactHull ?? stages[i].Hull;
             double distance = ProfileDistance(hull.Stations, local);
             if (hull.HasBay) { distance = Math.Max(distance, -Math.Max(radial - hull.BayRadius, hull.BayFloor - local.Z)); }
             result = Math.Min(result, distance);
@@ -68,8 +71,9 @@ public static class VesselSurface {
 
     public static double Distance(Vessel vessel, Vector3d local) {
         double distance = HullDistance(vessel, local);
-        foreach (Stage stage in vessel.Stages) {
-            foreach (EngineState engine in stage.EngineStates) {
+        IReadOnlyList<Stage> stages = vessel.Stages;
+        for (int i = 0; i < stages.Count; i++) {
+            foreach (EngineState engine in stages[i].EngineStates) {
                 if (engine.ContactProfile == null) { continue; }
                 Vector3d p = engine.ContactRotation.Conjugate.Rotate(local - engine.Mount);
                 if ((p - Vector3d.UnitZ * engine.ContactCentreZ).Length - engine.ContactBound > distance) { continue; }

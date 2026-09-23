@@ -3,6 +3,7 @@ using System.IO;
 using System.Reflection;
 
 using FullThrust.Sim;
+using static FullThrust.Game.Checks;
 
 using Godot;
 
@@ -85,8 +86,7 @@ public sealed partial class CoastalLandformChecks : Node {
 
         } catch (Exception exception) {
 
-            GD.PushError(exception.ToString());
-            GetTree().Quit(1);
+            Fail(this, exception);
 
         }
 

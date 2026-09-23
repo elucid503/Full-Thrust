@@ -239,8 +239,9 @@ public static class VesselCollision {
 
     public static double ContactThickness(Vessel vessel) {
         double thickness = vessel.Profile.MaxRadius * 0.2;
-        foreach (Stage stage in vessel.Stages) {
-            Hull hull = stage.ContactHull ?? stage.Hull;
+        IReadOnlyList<Stage> stages = vessel.Stages;
+        for (int i = 0; i < stages.Count; i++) {
+            Hull hull = stages[i].ContactHull ?? stages[i].Hull;
             if (hull.HasBay) { thickness = Math.Min(thickness, hull.WallThickness * 0.4); }
         }
         return Math.Max(thickness, 0.005);
@@ -627,7 +628,7 @@ public static class VesselCollision {
     private static Vector3d InverseInertia(Vessel vessel, Vector3d torque) {
 
         Vector3d local = vessel.Orientation.Conjugate.Rotate(torque);
-        return vessel.Orientation.Rotate(new Vector3d(local.X / vessel.Inertia.X, local.Y / vessel.Inertia.Y, local.Z / vessel.Inertia.Z));
+        return vessel.Orientation.Rotate(vessel.InverseInertia(local));
 
     }
 

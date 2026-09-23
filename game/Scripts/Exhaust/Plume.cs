@@ -50,6 +50,7 @@ public sealed partial class Plume : Node3D {
     }
 
     private static readonly BoxMesh Proxy = new() { Size = Vector3.One };
+    private static readonly int InputCount = Enum.GetValues<PlumeModifier.Input>().Length;
     private static ImageTexture _noise;
     private static FastNoiseLite _flicker;
     private static Shader _layerShader;
@@ -158,8 +159,8 @@ public sealed partial class Plume : Node3D {
     private void AddLayer(PlumeLayer definition) {
 
         ShaderMaterial material = new ShaderMaterial { Shader = _layerShader, RenderPriority = 4 + _layers.Count };
-        material.SetShaderParameter("merged_layer", _cluster ? 1.0f : 0.0f);
-        material.SetShaderParameter("seed", _seed + _layers.Count * 0.37f);
+        material.SetParameter("merged_layer", _cluster ? 1.0f : 0.0f);
+        material.SetParameter("seed", _seed + _layers.Count * 0.37f);
         definition.Write(material);
 
         MeshInstance3D mesh = new MeshInstance3D {
@@ -212,9 +213,9 @@ public sealed partial class Plume : Node3D {
         }
 
         _distortionMaterial = new ShaderMaterial { Shader = _distortionShader, RenderPriority = 3 };
-        _distortionMaterial.SetShaderParameter("noise_texture", _noise);
-        _distortionMaterial.SetShaderParameter("seed", _seed);
-        _distortionMaterial.SetShaderParameter("radius_metres", _exitRadius * 1.1f);
+        _distortionMaterial.SetParameter("noise_texture", _noise);
+        _distortionMaterial.SetParameter("seed", _seed);
+        _distortionMaterial.SetParameter("radius_metres", _exitRadius * 1.1f);
 
         _distortion = new MeshInstance3D {
 
@@ -280,7 +281,7 @@ public sealed partial class Plume : Node3D {
         float flicker = 0.5f + 0.5f * _flicker.GetNoise1D((inputs.EffectTime * _template.FlickerHertz + _seed) * 100.0f);
         _contact.Sync(this, Source);
 
-        Span<float> controllers = stackalloc float[Enum.GetValues<PlumeModifier.Input>().Length];
+        Span<float> controllers = stackalloc float[InputCount];
         controllers[(int)PlumeModifier.Input.Throttle] = inputs.Throttle;
         controllers[(int)PlumeModifier.Input.Air] = inputs.Air;
         controllers[(int)PlumeModifier.Input.Mach] = inputs.Mach;
@@ -296,11 +297,11 @@ public sealed partial class Plume : Node3D {
         foreach (Layer layer in _layers) {
 
             if (_cluster) {
-                layer.Material.SetShaderParameter("stream_count", _streamCount);
-                layer.Material.SetShaderParameter("stream_exits", _streams);
-                layer.Material.SetShaderParameter("stream_directions", _streamDirections);
-                layer.Material.SetShaderParameter("stream_radius", _streamRadius);
-                layer.Material.SetShaderParameter("stream_power", _streamPower);
+                layer.Material.SetParameter("stream_count", _streamCount);
+                layer.Material.SetParameter("stream_exits", _streams);
+                layer.Material.SetParameter("stream_directions", _streamDirections);
+                layer.Material.SetParameter("stream_radius", _streamRadius);
+                layer.Material.SetParameter("stream_power", _streamPower);
             }
             DriveLayer(layer, controllers, inputs, cellLength, cellContrast);
 
@@ -315,7 +316,7 @@ public sealed partial class Plume : Node3D {
 
             if (_distortion.Visible) {
 
-                _distortionMaterial.SetShaderParameter("cloud_buffer_ready", false);
+                _distortionMaterial.SetParameter("cloud_buffer_ready", false);
                 Planet.Active?.CloudPass.BindRefraction(_distortionMaterial);
                 float reach = _exitRadius * 24.0f * Mathf.Max(inputs.Stretch, 0.25f);
                 float width = _exitRadius * 1.1f + reach * 0.5f;
@@ -323,12 +324,12 @@ public sealed partial class Plume : Node3D {
                 float extent = width + bend.Length() + _contact.Padding;
                 Vector3 boundsMin = new Vector3(-extent, -reach, -extent);
                 Vector3 boundsMax = new Vector3(extent, 0.0f, extent);
-                _distortionMaterial.SetShaderParameter("strength", shimmer * inputs.LightShare);
-                _distortionMaterial.SetShaderParameter("length_metres", reach);
-                _distortionMaterial.SetShaderParameter("effect_time", inputs.EffectTime);
-                _distortionMaterial.SetShaderParameter("crossflow", bend);
-                _distortionMaterial.SetShaderParameter("bounds_min", boundsMin);
-                _distortionMaterial.SetShaderParameter("bounds_max", boundsMax);
+                _distortionMaterial.SetParameter("strength", shimmer * inputs.LightShare);
+                _distortionMaterial.SetParameter("length_metres", reach);
+                _distortionMaterial.SetParameter("effect_time", inputs.EffectTime);
+                _distortionMaterial.SetParameter("crossflow", bend);
+                _distortionMaterial.SetParameter("bounds_min", boundsMin);
+                _distortionMaterial.SetParameter("bounds_max", boundsMax);
                 _distortion.CustomAabb = new Aabb(boundsMin, boundsMax - boundsMin);
                 _contact.Write(_distortionMaterial, Vector3.Zero, reach);
 
@@ -380,7 +381,7 @@ public sealed partial class Plume : Node3D {
 
                 if (modifier.Gradient != null) {
 
-                    layer.Material.SetShaderParameter(modifier.Parameter == PlumeModifier.Target.StartTint ? "start_tint" : "end_tint", modifier.Gradient.Sample(Mathf.Clamp(input, 0.0f, 1.0f)));
+                    layer.Material.SetParameter(modifier.Parameter == PlumeModifier.Target.StartTint ? "start_tint" : "end_tint", modifier.Gradient.Sample(Mathf.Clamp(input, 0.0f, 1.0f)));
 
                 }
 
@@ -418,9 +419,9 @@ public sealed partial class Plume : Node3D {
             length *= 1.0f + spread * 0.35f;
 
         }
-        layer.Material.SetShaderParameter("vacuum_opening", opening);
+        layer.Material.SetParameter("vacuum_opening", opening);
         float radius = layer.Values[(int)PlumeModifier.Target.Radius] * _exitRadius;
-        layer.Material.SetShaderParameter("exit_radius", _exitRadius * 0.94f);
+        layer.Material.SetParameter("exit_radius", _exitRadius * 0.94f);
         Vector3 crossflow = inputs.Bend * length;
 
         foreach (PlumeModifier.Target target in layer.Driven) {
@@ -430,25 +431,25 @@ public sealed partial class Plume : Node3D {
             switch (target) {
 
                 case PlumeModifier.Target.Length:
-                    layer.Material.SetShaderParameter("length_metres", length);
+                    layer.Material.SetParameter("length_metres", length);
                     break;
 
                 case PlumeModifier.Target.Radius:
-                    layer.Material.SetShaderParameter("radius_metres", radius);
+                    layer.Material.SetParameter("radius_metres", radius);
                     break;
 
                 case PlumeModifier.Target.CellStrength:
-                    layer.Material.SetShaderParameter("cell_strength", value * cellContrast);
-                    layer.Material.SetShaderParameter("cell_length", cellLength);
+                    layer.Material.SetParameter("cell_strength", value * cellContrast);
+                    layer.Material.SetParameter("cell_length", cellLength);
                     break;
 
                 case PlumeModifier.Target.TileX:
                 case PlumeModifier.Target.TileY:
-                    layer.Material.SetShaderParameter("tile", new Vector2(layer.Values[(int)PlumeModifier.Target.TileX], layer.Values[(int)PlumeModifier.Target.TileY]));
+                    layer.Material.SetParameter("tile", new Vector2(layer.Values[(int)PlumeModifier.Target.TileX], layer.Values[(int)PlumeModifier.Target.TileY]));
                     break;
 
                 case PlumeModifier.Target.ScrollY:
-                    layer.Material.SetShaderParameter("scroll", new Vector2(definition.Scroll.X, value));
+                    layer.Material.SetParameter("scroll", new Vector2(definition.Scroll.X, value));
                     break;
 
                 case PlumeModifier.Target.StartTint:
@@ -456,18 +457,18 @@ public sealed partial class Plume : Node3D {
                     break;
 
                 default:
-                    layer.Material.SetShaderParameter(Uniform(target), value);
+                    layer.Material.SetParameter(Uniform(target), value);
                     break;
 
             }
 
         }
 
-        layer.Material.SetShaderParameter("crossflow", crossflow);
-        layer.Material.SetShaderParameter("effect_time", inputs.EffectTime);
-        layer.Material.SetShaderParameter("brightness", brightness);
-        layer.Material.SetShaderParameter("expansion", expansion);
-        layer.Material.SetShaderParameter("effect_delta", Mathf.Clamp(inputs.Delta, 0.0f, 0.05f));
+        layer.Material.SetParameter("crossflow", crossflow);
+        layer.Material.SetParameter("effect_time", inputs.EffectTime);
+        layer.Material.SetParameter("brightness", brightness);
+        layer.Material.SetParameter("expansion", expansion);
+        layer.Material.SetParameter("effect_delta", Mathf.Clamp(inputs.Delta, 0.0f, 0.05f));
 
         float mouth = Mathf.Min(radius, _exitRadius * 0.94f);
         if (_cluster) { mouth = Mathf.Max(radius, _exitRadius * 1.12f); }
@@ -475,8 +476,8 @@ public sealed partial class Plume : Node3D {
         float extent = length * 1.6f;
         float reach = (mouth + extent * Mathf.Lerp(0.12f, opening, expansion)) * 1.4f + crossflow.Length() + _contact.Padding;
         _contact.Write(layer.Material, layer.Mesh.Position, extent);
-        layer.Material.SetShaderParameter("bounds_min", new Vector3(-reach, -extent, -reach));
-        layer.Material.SetShaderParameter("bounds_max", new Vector3(reach, 0.0f, reach));
+        layer.Material.SetParameter("bounds_min", new Vector3(-reach, -extent, -reach));
+        layer.Material.SetParameter("bounds_max", new Vector3(reach, 0.0f, reach));
         layer.Mesh.CustomAabb = new Aabb(new Vector3(-reach, -extent, -reach), new Vector3(reach * 2.0f, extent, reach * 2.0f));
 
     }
@@ -572,7 +573,7 @@ public sealed partial class Plume : Node3D {
 
     private static bool Tune(ShaderMaterial material, string parameter, string value) {
 
-        if (material.GetShaderParameter(parameter).VariantType == Variant.Type.Nil) {
+        if (material.GetParameter(parameter).VariantType == Variant.Type.Nil) {
 
             return false;
 
@@ -582,12 +583,12 @@ public sealed partial class Plume : Node3D {
 
         if (parts.Length >= 3) {
 
-            material.SetShaderParameter(parameter, new Color(parts[0].ToFloat(), parts[1].ToFloat(), parts[2].ToFloat()));
+            material.SetParameter(parameter, new Color(parts[0].ToFloat(), parts[1].ToFloat(), parts[2].ToFloat()));
 
         }
         else {
 
-            material.SetShaderParameter(parameter, value.ToFloat());
+            material.SetParameter(parameter, value.ToFloat());
 
         }
 

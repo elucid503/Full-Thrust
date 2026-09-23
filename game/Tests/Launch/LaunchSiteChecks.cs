@@ -1,6 +1,8 @@
 using System;
 using System.Threading.Tasks;
 
+using static FullThrust.Game.Checks;
+
 using Godot;
 
 namespace FullThrust.Game;
@@ -77,8 +79,7 @@ public sealed partial class LaunchSiteChecks : Node {
 
         } catch (Exception exception) {
 
-            GD.PushError(exception.ToString());
-            GetTree().Quit(1);
+            Fail(this, exception);
 
         }
 

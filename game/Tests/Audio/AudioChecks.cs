@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 
 using FullThrust.Sim;
+using static FullThrust.Game.Checks;
 
 using Godot;
 
@@ -11,13 +12,6 @@ namespace FullThrust.Game;
 public sealed partial class AudioChecks : Node {
 
     private readonly Dictionary<string, int> _heard = new();
-
-    private static void Check(bool condition, string label) {
-
-        if (!condition) { throw new InvalidOperationException(label); }
-        GD.Print("PASS " + label);
-
-    }
 
     // Counts every one-shot the world bus is handed, by file name.
     private void Counted(Node node) {
@@ -155,8 +149,7 @@ public sealed partial class AudioChecks : Node {
 
         } catch (Exception exception) {
 
-            GD.PushError(exception.ToString());
-            GetTree().Quit(1);
+            Fail(this, exception);
 
         }
 

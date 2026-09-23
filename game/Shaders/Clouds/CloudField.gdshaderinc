@@ -106,12 +106,6 @@ vec4 cloud_base(vec3 p, float footprint, vec2 conditions) {
 
 }
 
-float cloud_envelope(vec3 p, float footprint, vec2 conditions) {
-
-    return cloud_base(p, footprint, conditions).x;
-
-}
-
 float density_from_base(vec3 p, float footprint, vec4 base) {
 
     // The body field climbs about one unit per 900 m across an edge. An edge sharper than the pixel

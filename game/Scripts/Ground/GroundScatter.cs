@@ -36,9 +36,7 @@ public sealed partial class GroundScatter : Node3D {
 
     private CelestialBody _body;
     private Terrain _terrain;
-    private byte[] _biomes;
-    private int _width;
-    private int _height;
+    private BiomeMap _biomes;
     private int _rows;
     private double _latitudeStep;
     private ArrayMesh[] _meshes;
@@ -69,25 +67,16 @@ public sealed partial class GroundScatter : Node3D {
         Samples = broad ? 16 : 40;
         _body = body;
         _terrain = body.Terrain;
-        using Image image = biomes.GetImage();
-        if (image.IsCompressed()) {
-
-            image.Decompress();
-
-        }
-        image.Convert(Image.Format.Rgba8);
-        _width = image.GetWidth();
-        _height = image.GetHeight();
-        _biomes = image.GetData();
+        _biomes = BiomeMap.Of(biomes);
         _rows = (int)Math.Ceiling(Math.PI * body.Radius / CellSize);
         _latitudeStep = Math.PI / _rows;
         _meshes = new[] { RockMesh(0), GrassMesh(0), RockMesh(1), GrassMesh(1), RockMesh(2), GrassMesh(2) };
         if (broad) { _palmettos = new[] { PalmettoMesh(0), PalmettoMesh(1), PalmettoMesh(2) }; }
         _material = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Ground/GroundScatter.gdshader") };
-        _material.SetShaderParameter("grass_range", broad ? new Vector2(500, 850) : new Vector2(160, 290));
-        _material.SetShaderParameter("stone_range", broad ? new Vector2(800, 1200) : new Vector2(230, 330));
-        _material.SetShaderParameter("rock_colour", GD.Load<Texture2D>("res://Assets/Planet/Ground/Rock/rock_colour.jpg"));
-        _material.SetShaderParameter("rock_normal", GD.Load<Texture2D>("res://Assets/Planet/Ground/Rock/rock_normal.jpg"));
+        _material.SetParameter("grass_range", broad ? new Vector2(500, 850) : new Vector2(160, 290));
+        _material.SetParameter("stone_range", broad ? new Vector2(800, 1200) : new Vector2(230, 330));
+        _material.SetParameter("rock_colour", GD.Load<Texture2D>("res://Assets/Planet/Ground/Rock/rock_colour.jpg"));
+        _material.SetParameter("rock_normal", GD.Load<Texture2D>("res://Assets/Planet/Ground/Rock/rock_normal.jpg"));
 
     }
 
@@ -158,8 +147,8 @@ public sealed partial class GroundScatter : Node3D {
 
         }
         Basis turn = new Basis(Vector3.Up, (float)_body.SpinAt(time));
-        _material.SetShaderParameter("eye_position", Frames.Point(eye));
-        _material.SetShaderParameter("wind_time", (float)(time % 4096.0));
+        _material.SetParameter("eye_position", Frames.Point(eye));
+        _material.SetParameter("wind_time", (float)(time % 4096.0));
         foreach (Grove grove in _groves.Values) {
 
             if (grove.Instance != null) {
@@ -167,7 +156,7 @@ public sealed partial class GroundScatter : Node3D {
                 if (!grove.Faded) {
 
                     float fade = Mathf.Clamp((Time.GetTicksMsec() - grove.Born) / 450.0f, 0.0f, 1.0f);
-                    grove.Instance.SetInstanceShaderParameter("cell_fade", fade);
+                    grove.Instance.SetInstanceParameter("cell_fade", fade);
                     grove.Faded = fade >= 1.0f;
 
                 }
@@ -306,25 +295,7 @@ public sealed partial class GroundScatter : Node3D {
 
     }
 
-    private Color Cover(Vector3d direction) {
-
-        double x = (Math.Atan2(direction.Y, direction.X) / (Math.PI * 2.0) + 0.5) * _width - 0.5;
-        double y = (0.5 - Math.Asin(direction.Z) / Math.PI) * _height - 0.5;
-        int left = (int)Math.Floor(x);
-        int top = (int)Math.Floor(y);
-        Color upper = Pixel(left, top).Lerp(Pixel(left + 1, top), (float)(x - left));
-        Color lower = Pixel(left, top + 1).Lerp(Pixel(left + 1, top + 1), (float)(x - left));
-        return upper.Lerp(lower, (float)(y - top));
-
-    }
-
-    private Color Pixel(int x, int y) {
-
-        int index = (Math.Clamp(y, 0, _height - 1) * _width + ((x % _width) + _width) % _width) * 4;
-        return new Color(_biomes[index] / 255.0f, _biomes[index + 1] / 255.0f,
-            _biomes[index + 2] / 255.0f, _biomes[index + 3] / 255.0f);
-
-    }
+    private Color Cover(Vector3d direction) => _biomes.Cover(direction);
 
     private Grove Generate(Key key, CancellationToken cancellation) {
 
@@ -357,18 +328,18 @@ public sealed partial class GroundScatter : Node3D {
             cancellation.ThrowIfCancellationRequested();
             for (int x = 0; x < samples; x++) {
 
-                Vector3d direction = Direction(key, (x + Random(ref seed)) / samples, (y + Random(ref seed)) / samples);
+                Vector3d direction = Direction(key, (x + Landscape.Random(ref seed)) / samples, (y + Landscape.Random(ref seed)) / samples);
                 Color cover = Cover(direction);
-                double chance = Random(ref seed);
-                double scale = key.Grass ? 0.35 + Math.Pow(Random(ref seed), 0.7) * 1.30 : 0.08 + Math.Pow(Random(ref seed), 2.0) * 0.90;
+                double chance = Landscape.Random(ref seed);
+                double scale = key.Grass ? 0.35 + Math.Pow(Landscape.Random(ref seed), 0.7) * 1.30 : 0.08 + Math.Pow(Landscape.Random(ref seed), 2.0) * 0.90;
                 if (_broad) { scale = key.Grass ? 1.3 + scale : 0.6 + scale * 2.4; }
-                double rotation = Random(ref seed) * Math.PI * 2.0;
-                double variation = Random(ref seed);
+                double rotation = Landscape.Random(ref seed) * Math.PI * 2.0;
+                double variation = Landscape.Random(ref seed);
                 Vector3d field = direction * (_body.Radius / 18.0);
                 double patch = 0.5 + 0.5 * FullThrust.Sim.Noise.Value(field.X, field.Y, field.Z);
                 Vector3d broadField = direction * (_body.Radius / 95.0);
                 double colony = 0.5 + 0.5 * FullThrust.Sim.Noise.Value(broadField.X + 17.0, broadField.Y, broadField.Z);
-                double clustered = Smooth(0.25, 0.72, patch * 0.55 + colony * 0.45);
+                double clustered = Ocean.Smooth(0.25, 0.72, patch * 0.55 + colony * 0.45);
                 double density = key.Grass ? cover.R * (1.0 - cover.B * 0.7) * (0.12 + clustered * 0.95)
                     : (0.15 + cover.B * 0.3) * (0.35 + clustered * 1.3);
                 double mosaic = Landscape.Mosaic(direction, _body.Radius);
@@ -380,7 +351,7 @@ public sealed partial class GroundScatter : Node3D {
 
                 }
                 double height = _terrain.Elevation(direction);
-                double snowLine = 950.0 + (80.0 - 950.0) * Smooth(0.3, 0.96, Math.Abs(direction.Z));
+                double snowLine = 950.0 + (80.0 - 950.0) * Ocean.Smooth(0.3, 0.96, Math.Abs(direction.Z));
                 if (height < 1.2 || (key.Grass && height > snowLine - 30.0)) {
 
                     continue;
@@ -404,7 +375,7 @@ public sealed partial class GroundScatter : Node3D {
                 transforms.Add(new Transform3D(basis, Frames.Direction(direction * (_body.Radius + height - (key.Grass ? 0.07 : scale * 0.20)) - anchor)));
                 Color green = new Color(0.12f, 0.17f, 0.045f).Lerp(new Color(0.30f, 0.25f, 0.09f), cover.B);
                 Color stone = new Color(0.25f, 0.235f, 0.20f).Lerp(new Color(0.34f, 0.22f, 0.13f), cover.B);
-                green = green.Lerp(new Color(0.32f, 0.245f, 0.095f), (float)(Smooth(0.45, 0.8, colony) * 0.6));
+                green = green.Lerp(new Color(0.32f, 0.245f, 0.095f), (float)(Ocean.Smooth(0.45, 0.8, colony) * 0.6));
                 stone = stone.Lerp(new Color(0.40f, 0.36f, 0.29f), (float)(variation * 0.45));
                 Color colour = (key.Grass ? green : stone) * (float)(0.65 + variation * 0.7);
                 colour.A = (float)variation;
@@ -461,7 +432,7 @@ public sealed partial class GroundScatter : Node3D {
 
         };
         grove.Born = Time.GetTicksMsec();
-        grove.Instance.SetInstanceShaderParameter("cell_fade", 0.0f);
+        grove.Instance.SetInstanceParameter("cell_fade", 0.0f);
         AddChild(grove.Instance);
         if (!grove.Grass) { Obstacles.Add(grove.Key, grove.Anchor, grove.Transforms, multi, grove.Instance); }
 
@@ -477,9 +448,9 @@ public sealed partial class GroundScatter : Node3D {
             float angle = frond * 2.399963f + variant;
             Vector3 outward = new(Mathf.Cos(angle), 0.0f, Mathf.Sin(angle));
             Vector3 side = outward.Cross(Vector3.Up);
-            float rise = (float)(0.22 + Random(ref seed) * 0.16);
+            float rise = (float)(0.22 + Landscape.Random(ref seed) * 0.16);
             Vector3 hub = outward * 0.22f + Vector3.Up * rise;
-            Vector3 axis = (outward * 0.8f + Vector3.Up * (float)(0.25 + Random(ref seed) * 0.6)).Normalized();
+            Vector3 axis = (outward * 0.8f + Vector3.Up * (float)(0.25 + Landscape.Random(ref seed) * 0.6)).Normalized();
             Vector3 normal = side.Cross(axis).Normalized();
             void Vertex(Vector3 point, Vector2 uv) {
 
@@ -498,7 +469,7 @@ public sealed partial class GroundScatter : Node3D {
                 float fanAngle = (leaflet - 6) * 0.19f;
                 Vector3 direction = axis * Mathf.Cos(fanAngle) + side * Mathf.Sin(fanAngle);
                 Vector3 edge = normal.Cross(direction).Normalized();
-                float length = (float)(0.29 + Random(ref seed) * 0.10);
+                float length = (float)(0.29 + Landscape.Random(ref seed) * 0.10);
                 Vector3 tip = hub + direction * length - Vector3.Up * (0.03f + 0.04f * Mathf.Abs(fanAngle));
                 Vector3 fold = hub + direction * length * 0.48f + normal * 0.014f;
                 Vertex(hub - edge * 0.012f, new Vector2(0.0f, 0.4f));
@@ -526,11 +497,11 @@ public sealed partial class GroundScatter : Node3D {
         uint seed = (uint)(7919 + variant * 104729);
         for (int blade = 0; blade < 9 + variant * 3; blade++) {
 
-            float angle = (float)(Random(ref seed) * Math.PI * 2.0);
+            float angle = (float)(Landscape.Random(ref seed) * Math.PI * 2.0);
             Vector3 side = new Vector3(Mathf.Cos(angle), 0, Mathf.Sin(angle));
-            Vector3 root = side * (float)(Random(ref seed) * 0.27);
-            float height = (float)(0.25 + Random(ref seed) * 0.48);
-            float width = (float)(0.013 + Random(ref seed) * 0.021);
+            Vector3 root = side * (float)(Landscape.Random(ref seed) * 0.27);
+            float height = (float)(0.25 + Landscape.Random(ref seed) * 0.48);
+            float width = (float)(0.013 + Landscape.Random(ref seed) * 0.021);
             Vector3 bend = side.Cross(Vector3.Up) * height * 0.32f;
             Vector3 normal = side.Cross(Vector3.Up).Normalized();
             void Vertex(Vector3 point, Vector2 uv) {
@@ -610,20 +581,6 @@ public sealed partial class GroundScatter : Node3D {
         imported.AddSurface(Mesh.PrimitiveType.Triangles, surface.CommitToArrays());
         imported.GenerateLods(60.0f, 25.0f, new Godot.Collections.Array());
         return imported.GetMesh();
-
-    }
-
-    private static double Random(ref uint seed) {
-
-        seed = unchecked(seed * 1664525u + 1013904223u);
-        return (seed >> 8) / 16777216.0;
-
-    }
-
-    private static double Smooth(double low, double high, double value) {
-
-        double t = Math.Clamp((value - low) / (high - low), 0.0, 1.0);
-        return t * t * (3.0 - 2.0 * t);
 
     }
 

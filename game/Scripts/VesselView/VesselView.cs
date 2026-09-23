@@ -294,12 +294,12 @@ public sealed partial class VesselView : Node3D {
 
         if (parts.Length == 3) {
 
-            material.SetShaderParameter(parameter, new Color(parts[0].ToFloat(), parts[1].ToFloat(), parts[2].ToFloat()));
+            material.SetParameter(parameter, new Color(parts[0].ToFloat(), parts[1].ToFloat(), parts[2].ToFloat()));
 
         }
         else {
 
-            material.SetShaderParameter(parameter, value.ToFloat());
+            material.SetParameter(parameter, value.ToFloat());
 
         }
 

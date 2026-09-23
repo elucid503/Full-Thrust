@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using FullThrust.Sim;
+using static FullThrust.Game.Checks;
 using Godot;
 
 namespace FullThrust.Game;
@@ -64,8 +65,7 @@ public sealed partial class PlumeContinuityChecks : Node {
             GD.Print("Plume continuity: gimbal, partial shutdown, inverted attitude, stream bindings and shader parsing passed");
             GetTree().Quit();
         } catch (Exception exception) {
-            GD.PushError(exception.ToString());
-            GetTree().Quit(1);
+            Fail(this, exception);
         } finally {
             typeof(Flight).GetProperty("Active").SetValue(null, null);
             flight.Free();

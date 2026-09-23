@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Threading.Tasks;
 
 using FullThrust.Sim;
+using static FullThrust.Game.Checks;
 
 using Godot;
 
@@ -15,13 +16,6 @@ public sealed partial class TransitionChecks : Node {
     private static ulong _restartAt;
     private static Terrain _survey;
     private static ulong _shorelineId;
-
-    private static void Check(bool condition, string label) {
-
-        if (!condition) { throw new InvalidOperationException(label); }
-        GD.Print("PASS " + label);
-
-    }
 
     private async Task Settle() {
 
@@ -108,8 +102,7 @@ public sealed partial class TransitionChecks : Node {
 
         } catch (Exception exception) {
 
-            GD.PushError(exception.ToString());
-            GetTree().Quit(1);
+            Fail(this, exception);
 
         }
 

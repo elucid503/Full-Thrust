@@ -48,8 +48,8 @@ public sealed partial class ExhaustImpact : Node3D {
             Noise = new FastNoiseLite { Seed = 1204, Frequency = 0.075f, FractalOctaves = 3 },
 
         };
-        impact._smokeSkin.SetShaderParameter("flow_noise", _volumeNoise);
-        impact._smokeSkin.SetShaderParameter("tint", template.SmokeColour);
+        impact._smokeSkin.SetParameter("flow_noise", _volumeNoise);
+        impact._smokeSkin.SetParameter("tint", template.SmokeColour);
         impact._smoke = impact.Emitter("Smoke", impact._dust, impact._smokeSkin, Math.Min(48 * nozzles, 256), 10.0f, bellRadius * 2.4f);
 
         impact._spraySkin = Skin(0.2f);
@@ -249,7 +249,7 @@ public sealed partial class ExhaustImpact : Node3D {
         // Follow the rotating surface while the scene origin follows the vessel.
         Vector3d anchor = _anchored ? body.ToInertial(_anchor, time) : Vector3d.Zero;
         if (_anchored) { GlobalTransform = new Transform3D(_cloudBasis, Frames.Point(anchor)); }
-        _smokeSkin.SetShaderParameter("effect_time", (float)(time % 4096.0));
+        _smokeSkin.SetParameter("effect_time", (float)(time % 4096.0));
 
         float reach = _bellRadius * ReachRadii;
         double hit = Hit(body, time, exit, axis, reach);
@@ -309,10 +309,10 @@ public sealed partial class ExhaustImpact : Node3D {
         float daylight = Mathf.Clamp(vertical.Dot(sunDirection) * 2.5f + 0.3f, 0.12f, 1.0f);
         Color tint = water ? new Color(0.94f, 0.96f, 0.99f) : _template.SmokeColour;
         Color glow = _template.LightAirColour * (0.25f * strength * (1.0f - daylight));
-        _smokeSkin.SetShaderParameter("tint", tint);
-        _smokeSkin.SetShaderParameter("sun_direction", sunDirection);
-        _smokeSkin.SetShaderParameter("daylight", daylight);
-        _smokeSkin.SetShaderParameter("flame_light", glow);
+        _smokeSkin.SetParameter("tint", tint);
+        _smokeSkin.SetParameter("sun_direction", sunDirection);
+        _smokeSkin.SetParameter("daylight", daylight);
+        _smokeSkin.SetParameter("flame_light", glow);
 
         _spraySkin.AlbedoColor = new Color(0.82f, 0.90f, 0.98f, 0.85f) * Mathf.Max(daylight, 0.25f);
 

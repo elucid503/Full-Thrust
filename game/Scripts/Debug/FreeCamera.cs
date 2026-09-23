@@ -39,6 +39,12 @@ public sealed partial class FreeCamera : Camera3D {
 
     private bool _looking;
 
+    public override void _ExitTree() {
+
+        if (Active == this) { Active = null; }
+
+    }
+
     public override void _Ready() {
 
         Active = this;

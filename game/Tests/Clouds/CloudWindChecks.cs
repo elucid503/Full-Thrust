@@ -1,6 +1,7 @@
 using System;
 
 using FullThrust.Sim;
+using static FullThrust.Game.Checks;
 
 using Godot;
 
@@ -8,15 +9,6 @@ namespace FullThrust.Game;
 
 public sealed partial class CloudWindChecks : Node {
 
-    private int _checks;
-
-    private void Check(bool condition, string label) {
-
-        if (!condition) { throw new InvalidOperationException(label); }
-        GD.Print("PASS " + label);
-        _checks++;
-
-    }
 
     public override async void _Ready() {
 
@@ -67,13 +59,12 @@ public sealed partial class CloudWindChecks : Node {
                 }
 
             }
-            GD.Print($"Cloud wind: {_checks} checks passed");
+            GD.Print($"Cloud wind: {Passed} checks passed");
             GetTree().Quit();
 
         } catch (Exception exception) {
 
-            GD.PushError(exception.ToString());
-            GetTree().Quit(1);
+            Fail(this, exception);
 
         }
 

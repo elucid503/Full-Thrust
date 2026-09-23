@@ -2,6 +2,8 @@ using System;
 using System.Reflection;
 using System.Threading.Tasks;
 
+using static FullThrust.Game.Checks;
+
 using Godot;
 
 namespace FullThrust.Game;
@@ -11,13 +13,6 @@ public sealed partial class CloudPipelineChecks : Node {
     private async Task Frames(int count) {
 
         for (int i = 0; i < count; i++) { await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw); }
-
-    }
-
-    private static void Check(bool condition, string message) {
-
-        if (!condition) { throw new InvalidOperationException(message); }
-        GD.Print("PASS " + message);
 
     }
 
@@ -86,8 +81,7 @@ public sealed partial class CloudPipelineChecks : Node {
 
         } catch (Exception exception) {
 
-            GD.PushError(exception.ToString());
-            GetTree().Quit(1);
+            Fail(this, exception);
 
         }
 

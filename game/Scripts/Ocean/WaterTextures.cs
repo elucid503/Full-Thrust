@@ -46,7 +46,7 @@ internal static class WaterTextures {
                 double kz = Math.Tau * (row < Size / 2 ? row : row - Size);
                 double k = Math.Sqrt(kx * kx + kz * kz);
                 double across = k / Math.Tau;
-                double window = Smooth(LongestWaves * 0.7, LongestWaves * 1.4, across) * (1.0 - Smooth(ShortestWaves * 0.7, ShortestWaves, across));
+                double window = FullThrust.Sim.Ocean.Smooth(LongestWaves * 0.7, LongestWaves * 1.4, across) * (1.0 - FullThrust.Sim.Ocean.Smooth(ShortestWaves * 0.7, ShortestWaves, across));
 
                 if (window <= 0.0) {
 
@@ -178,13 +178,6 @@ internal static class WaterTextures {
         foam.GenerateMipmaps();
 
         return ImageTexture.CreateFromImage(foam);
-
-    }
-
-    private static double Smooth(double low, double high, double value) {
-
-        double t = Math.Clamp((value - low) / (high - low), 0.0, 1.0);
-        return t * t * (3.0 - 2.0 * t);
 
     }
 
