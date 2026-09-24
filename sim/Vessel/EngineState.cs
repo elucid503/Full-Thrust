@@ -21,6 +21,9 @@ public sealed class EngineState {
     public Vector3d Mount { get; init; }
     public double ExitRadius { get; init; }
     public double ExitDistance { get; init; }
+
+    /// <summary>Static pressure at the nozzle exit at full chamber pressure, from the bell's area ratio.</summary>
+    public double ExitPressure { get; init; }
     // Rings in engine-local coordinates, with the mount at Z=0. The view can refine these
     // from an imported mesh; the authored profile remains available to headless simulation.
     private Hull.Station[] _contactProfile;

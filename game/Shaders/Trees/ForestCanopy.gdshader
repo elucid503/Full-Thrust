@@ -2,10 +2,14 @@ shader_type spatial;
 render_mode cull_disabled;
 
 uniform vec3 eye_position;
+uniform vec3 planet_centre = vec3(0.0);
+uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
+uniform float planet_radius = 1274200.0;
 varying vec3 world_position;
-varying float cloud_light;
+varying vec3 sun_light;
 varying float variation;
 
+#include "res://Shaders/Atmosphere/Sunlight.gdshaderinc"
 #include "res://Shaders/Clouds/CloudShadowSampling.gdshaderinc"
 
 void vertex() {
@@ -34,8 +38,7 @@ void fragment() {
     float radius = length(p) / lobes;
     if (radius > 1.0) { discard; }
     NORMAL = normalize(vec3(p.x * 0.7, -p.y * 0.7, sqrt(max(1.0 - radius * radius, 0.01))));
-    vec2 shadow = local_cloud_light(world_position);
-    cloud_light = 1.0 - 0.32 * shadow.x * shadow.y;
+    sun_light = sun_radiance * sun_transmittance(world_position - planet_centre) * ground_cloud_sun(world_position);
     float crown = 0.72 + 0.28 * sqrt(max(1.0 - radius * radius, 0.0));
     ALBEDO = mix(vec3(0.055, 0.095, 0.022), vec3(0.085, 0.13, 0.037), variation) * crown * COLOR.rgb;
     ROUGHNESS = 0.92;
@@ -45,7 +48,7 @@ void fragment() {
 
 void light() {
 
-    float shade = LIGHT_IS_DIRECTIONAL ? cloud_light : 1.0;
-    DIFFUSE_LIGHT += LIGHT_COLOR * ATTENUATION * shade * (0.3 + 0.7 * max(dot(NORMAL, LIGHT), 0.0)) / PI;
+    vec3 radiance = (LIGHT_IS_DIRECTIONAL ? sun_light : LIGHT_COLOR) * ATTENUATION;
+    DIFFUSE_LIGHT += radiance * (0.3 + 0.7 * max(dot(NORMAL, LIGHT), 0.0)) / PI;
 
 }

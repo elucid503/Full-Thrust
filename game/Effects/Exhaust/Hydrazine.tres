@@ -3,8 +3,9 @@
 [ext_resource type="Script" path="res://Scripts/Exhaust/PlumeTemplate.cs" id="1_t"]
 [ext_resource type="Script" path="res://Scripts/Exhaust/PlumeLayer.cs" id="2_l"]
 [ext_resource type="Script" path="res://Scripts/Exhaust/PlumeModifier.cs" id="3_m"]
+
 [sub_resource type="Curve" id="Curve_1"]
-_data = [Vector2(0.0, 0.0), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+_data = [Vector2(0.0, 0.0), 1.0, 1.0, 0, 0, Vector2(1.0, 1.0), 1.0, 1.0, 0, 0]
 point_count = 2
 
 [sub_resource type="Resource" id="Modifier_2"]
@@ -15,61 +16,50 @@ Combine = 0
 Curve = SubResource("Curve_1")
 
 [sub_resource type="Curve" id="Curve_3"]
-max_value = 5.0
-_data = [Vector2(0.0, 5.0), 0.0, 0.0, 0, 0, Vector2(1.0, 1.2), 0.0, 0.0, 0, 0]
+max_value = 1.12
+_data = [Vector2(0.0, 0.88), 0.24, 0.24, 0, 0, Vector2(1.0, 1.12), 0.24, 0.24, 0, 0]
 point_count = 2
 
 [sub_resource type="Resource" id="Modifier_4"]
 script = ExtResource("3_m")
-Controller = 1
-Parameter = 4
-Combine = 2
+Controller = 3
+Parameter = 0
+Combine = 0
 Curve = SubResource("Curve_3")
 
 [sub_resource type="Curve" id="Curve_5"]
-max_value = 1.3
-_data = [Vector2(0.0, 1.3), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+max_value = 2.4
+_data = [Vector2(0.0, 2.4), -1.7, -1.7, 0, 0, Vector2(1.0, 0.7), -1.7, -1.7, 0, 0]
 point_count = 2
 
 [sub_resource type="Resource" id="Modifier_6"]
 script = ExtResource("3_m")
 Controller = 1
-Parameter = 1
-Combine = 0
+Parameter = 3
+Combine = 2
 Curve = SubResource("Curve_5")
 
 [sub_resource type="Resource" id="Layer_7"]
 script = ExtResource("2_l")
 Name = "Jet"
-Length = 12.0
-Radius = 0.9
-Offset = 0.0
-ExpandOffset = 0.0
-ExpandLinear = 1.7
-ExpandSquare = 0.0
-ExpandBounded = 0.0
+Model = 0
+Length = 11.0
+Radius = 0.95
+Falloff = 2.2
+Fresnel = 1.4
+FadeOut = 0.2
+Noise = 2.0
+Tile = Vector2(1.2, 1.0)
+Speed = Vector2(0.0, 30.0)
+LengthBrightness = 0.6
+TintFalloff = 1.0
 StartTint = Color(0.86, 0.9, 1.0, 1)
 EndTint = Color(0.74, 0.74, 0.92, 1)
-TintFalloff = 0.6
-Brightness = 1.4
-Falloff = 5.6
-FalloffStart = 0.0
-Fresnel = 6.0
-FresnelInvert = 0.0
-FadeIn = 0.01
-FadeOut = 0.0
-Symmetry = 0.0
-SymmetryStrength = 0.0
-Noise = 3.2
-Tile = Vector2(5.0, 1.0)
-Scroll = Vector2(0.0, 14.0)
-CellStrength = 0.0
-CellPinch = 0.0
-CellDecay = 3.0
+Brightness = 1.3
 Modifiers = Array[ExtResource("3_m")]([SubResource("Modifier_2"), SubResource("Modifier_4"), SubResource("Modifier_6")])
 
 [sub_resource type="Curve" id="Curve_8"]
-_data = [Vector2(0.0, 0.0), 0.0, 0.0, 0, 0, Vector2(1.0, 1.0), 0.0, 0.0, 0, 0]
+_data = [Vector2(0.0, 0.0), 1.0, 1.0, 0, 0, Vector2(1.0, 1.0), 1.0, 1.0, 0, 0]
 point_count = 2
 
 [sub_resource type="Resource" id="Modifier_9"]
@@ -80,106 +70,82 @@ Combine = 0
 Curve = SubResource("Curve_8")
 
 [sub_resource type="Curve" id="Curve_10"]
-max_value = 1.14
-_data = [Vector2(0.0, 0.86), 0.0, 0.0, 0, 0, Vector2(1.0, 1.14), 0.0, 0.0, 0, 0]
+max_value = 6.0
+_data = [Vector2(0.0, 6.0), -4.0, -4.0, 0, 0, Vector2(1.0, 2.0), -4.0, -4.0, 0, 0]
 point_count = 2
 
 [sub_resource type="Resource" id="Modifier_11"]
 script = ExtResource("3_m")
-Controller = 3
-Parameter = 0
-Combine = 0
+Controller = 1
+Parameter = 3
+Combine = 2
 Curve = SubResource("Curve_10")
 
-[sub_resource type="Curve" id="Curve_12"]
-max_value = 6.0
-_data = [Vector2(0.0, 6.0), 0.0, 0.0, 0, 0, Vector2(1.0, 1.7), 0.0, 0.0, 0, 0]
-point_count = 2
-
-[sub_resource type="Resource" id="Modifier_13"]
-script = ExtResource("3_m")
-Controller = 1
-Parameter = 4
-Combine = 2
-Curve = SubResource("Curve_12")
-
-[sub_resource type="Resource" id="Layer_14"]
+[sub_resource type="Resource" id="Layer_12"]
 script = ExtResource("2_l")
 Name = "Halo"
-Length = 12.0
+Model = 0
+Length = 9.0
 Radius = 1.0
-Offset = 0.0
-ExpandOffset = -0.3
-ExpandLinear = 2.2
-ExpandSquare = 0.0
-ExpandBounded = 0.0
+Falloff = 2.5
+Fresnel = 2.5
+FadeOut = 0.2
+Noise = 1.5
+Tile = Vector2(1.0, 0.8)
+Speed = Vector2(0.0, 20.0)
+LengthBrightness = 0.5
+TintFalloff = 1.0
 StartTint = Color(0.86, 0.9, 1.0, 1)
 EndTint = Color(0.74, 0.74, 0.92, 1)
-TintFalloff = 0.6
-Brightness = 1.1
-Falloff = 5.6
-FalloffStart = 0.0
-Fresnel = 4.6
-FresnelInvert = 0.0
-FadeIn = 0.0
-FadeOut = 0.0
-Symmetry = 0.0
-SymmetryStrength = 0.0
-Noise = 3.2
-Tile = Vector2(4.0, 1.0)
-Scroll = Vector2(0.0, 13.0)
-CellStrength = 0.0
-CellPinch = 0.0
-CellDecay = 3.0
-Modifiers = Array[ExtResource("3_m")]([SubResource("Modifier_9"), SubResource("Modifier_11"), SubResource("Modifier_13")])
+Brightness = 0.7
+Modifiers = Array[ExtResource("3_m")]([SubResource("Modifier_9"), SubResource("Modifier_11")])
+
+[sub_resource type="Curve" id="Curve_13"]
+_data = [Vector2(0.0, 0.0), 0.45, 0.45, 0, 0, Vector2(1.0, 0.45), 0.45, 0.45, 0, 0]
+point_count = 2
+
+[sub_resource type="Resource" id="Modifier_14"]
+script = ExtResource("3_m")
+Controller = 7
+Parameter = 0
+Combine = 2
+Curve = SubResource("Curve_13")
 
 [sub_resource type="Curve" id="Curve_15"]
-_data = [Vector2(0.0, 0.0), 0.0, 0.0, 0, 0, Vector2(1.0, 0.45), 0.0, 0.0, 0, 0]
+max_value = 4.5
+_data = [Vector2(0.0, 4.5), -2.5, -2.5, 0, 0, Vector2(1.0, 2.0), -2.5, -2.5, 0, 0]
 point_count = 2
 
 [sub_resource type="Resource" id="Modifier_16"]
 script = ExtResource("3_m")
-Controller = 6
-Parameter = 0
+Controller = 1
+Parameter = 3
 Combine = 2
 Curve = SubResource("Curve_15")
 
 [sub_resource type="Resource" id="Layer_17"]
 script = ExtResource("2_l")
 Name = "Purge"
-ResidualGas = true
-VacuumOpening = 1.0
+Model = 0
 Length = 12.0
 Radius = 1.0
-Offset = 0.0
-ExpandOffset = 0.0
-ExpandLinear = 2.2
-ExpandSquare = 0.0
-ExpandBounded = 0.6
+ExpandSquare = 0.1
+Falloff = 1.8
+Fresnel = 1.2
+FadeOut = 0.3
+Noise = 3.0
+Tile = Vector2(1.2, 1.0)
+Speed = Vector2(0.0, 5.0)
+LengthBrightness = 0.6
+TintFalloff = 1.0
 StartTint = Color(0.7, 0.72, 0.8, 1)
 EndTint = Color(0.45, 0.46, 0.55, 1)
-TintFalloff = 1.0
 Brightness = 1.0
-Falloff = 1.8
-FalloffStart = 0.0
-Fresnel = 1.2
-FresnelInvert = 0.0
-FadeIn = 0.0
-FadeOut = 0.0
-Symmetry = 0.0
-SymmetryStrength = 0.0
-Noise = 1.6
-Tile = Vector2(2.0, 1.0)
-Scroll = Vector2(0.0, 1.5)
-CellStrength = 0.0
-CellPinch = 0.0
-CellDecay = 3.0
-Modifiers = Array[ExtResource("3_m")]([SubResource("Modifier_16")])
+Modifiers = Array[ExtResource("3_m")]([SubResource("Modifier_14"), SubResource("Modifier_16")])
 
 [resource]
 script = ExtResource("1_t")
-Layers = Array[ExtResource("2_l")]([SubResource("Layer_7"), SubResource("Layer_14"), SubResource("Layer_17")])
-ClusterLayers = Array[ExtResource("2_l")]([])
+Layers = Array[ExtResource("2_l")]([SubResource("Layer_7"), SubResource("Layer_12"), SubResource("Layer_17")])
 LightColour = Color(0.86, 0.9, 1.0, 1)
 LightAirColour = Color(0.9, 0.8, 0.9, 1)
 LightEnergy = 0.12
@@ -192,6 +158,14 @@ Distortion = 0.3
 IgnitionSeconds = 0.3
 CutoffSeconds = 0.4
 FlickerHertz = 9.0
-CellContrast = 0.4
+WobbleHertz = 2.0
+TailHot = Color(0.86, 0.9, 1.0, 1)
+TailCool = Color(0.74, 0.74, 0.92, 1)
+TailEmission = 0.0
+TailLength = 0.0
+TailSpread = 0.08
+TailHandover = 7.0
+TailSpeed = 30.0
+TailTurbulence = 0.0
 SmokeColour = Color(0.7, 0.7, 0.72, 1)
 SmokeAmount = 0.3

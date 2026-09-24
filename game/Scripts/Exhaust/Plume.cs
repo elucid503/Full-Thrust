@@ -15,11 +15,13 @@ public struct PlumeInputs {
     public float Mach;
     public float Purge;
     public float Burnoff;
-    public float Cluster;
     public float LightShare;
 
     public float AmbientPressure;
     public float ExitPressure;
+
+    public float Sunlit;
+    public Vector3 Sun;
 
     public Vector3 Bend;
     public float Stretch;
@@ -29,12 +31,15 @@ public struct PlumeInputs {
 
 }
 
-// Emissive volumes flow down -Y from the nozzle exit.
+// Waterfall's layered near field: analytic volumes flowing down -Y from the nozzle exit, each shaped
+// by controller curves. The turbulent far field belongs to the stage's ExhaustTail.
 public sealed partial class Plume : Node3D {
 
     private const float MinimumIntensity = 0.004f;
     private const float VacuumPressure = 30.0f;
-    private const float LengthScale = 1.6f;
+    private const float OpenFloor = -4.0f;
+    private const float CapEnd = -1.5f;
+    private const float ExpansionSeconds = 1.5f;
 
     /// <summary>Hides every exhaust effect, so its whole cost can be measured against a bare scene.</summary>
     public static bool Enabled { get; set; } = true;
@@ -45,20 +50,22 @@ public sealed partial class Plume : Node3D {
         public MeshInstance3D Mesh;
         public ShaderMaterial Material;
         public PlumeModifier.Target[] Driven;
-        public float[] Values = new float[Enum.GetValues<PlumeModifier.Target>().Length];
+        public float[] Values = new float[PlumeModifier.TargetCount];
 
     }
 
     private static readonly BoxMesh Proxy = new() { Size = Vector3.One };
     private static readonly int InputCount = Enum.GetValues<PlumeModifier.Input>().Length;
     private static ImageTexture _noise;
-    private static FastNoiseLite _flicker;
-    private static Shader _layerShader;
+    private static FastNoiseLite _random;
+    private static Shader _volumetricShader;
+    private static Shader _conesShader;
     private static Shader _distortionShader;
     private static int _seeds;
 
     private readonly List<Layer> _layers = new();
     private readonly List<StandardMaterial3D> _bell = new();
+    private readonly PlumeContact _contact = new();
 
     private PlumeTemplate _template;
     private MeshInstance3D _distortion;
@@ -66,50 +73,48 @@ public sealed partial class Plume : Node3D {
     private OmniLight3D _light;
     private float _exitRadius;
     private float _seed;
-    private bool _cluster;
     private bool _wasLit;
     private float _ignitionAt = float.NegativeInfinity;
     private float _cutoffAt = float.NegativeInfinity;
     private float _heat;
+    private float _expansion = -1.0f;
 
     public bool Burning { get; private set; }
     public float ExitRadius => _exitRadius;
     public FullThrust.Sim.Vessel Source { get; set; }
-    private readonly PlumeContact _contact = new();
-    private readonly Vector4[] _streams = new Vector4[32];
-    private readonly Vector4[] _streamDirections = new Vector4[32];
-    private int _streamCount;
-    private float _streamRadius;
-    private float _streamPower;
-
-    public void BeginStreams() { _streamCount = 0; _streamRadius = 0.0f; _streamPower = 0.0f; }
-
-    public void AddStream(Plume nozzle, float power) {
-        if (power <= 0.001f || _streamCount == _streams.Length) { return; }
-        Transform3D local = GlobalTransform.AffineInverse() * nozzle.GlobalTransform;
-        Vector3 direction = -local.Basis.Y.Normalized();
-        _streams[_streamCount] = new Vector4(local.Origin.X, local.Origin.Y, local.Origin.Z, nozzle.ExitRadius);
-        _streamDirections[_streamCount++] = new Vector4(direction.X, direction.Y, direction.Z, power);
-        _streamRadius = Mathf.Max(_streamRadius, nozzle.ExitRadius);
-        _streamPower = Mathf.Max(_streamPower, power);
-    }
 
     /// <summary>The bell surfaces that glow with chamber heat; the owner hands them over.</summary>
     public List<StandardMaterial3D> Bell => _bell;
 
-    public static Plume Create(string name, PlumeTemplate template, float exitRadius, bool cluster = false, bool jet = false) {
+    /// <summary>Waterfall-style pressure controller: 0.25 is an ideally expanded nozzle, and each
+    /// quarter either side is a decade of over- or under-expansion. Chamber pressure follows throttle.</summary>
+    public static float Expansion(float exitPressure, float ambientPressure, float throttle) {
+
+        if (ambientPressure <= VacuumPressure) {
+
+            return 1.0f;
+
+        }
+
+        float ratio = exitPressure * Mathf.Max(throttle, 0.1f) / ambientPressure;
+
+        return Mathf.Clamp((Mathf.Log(Mathf.Max(ratio, 0.001f)) / Mathf.Log(10.0f) + 1.0f) * 0.25f, 0.0f, 1.0f);
+
+    }
+
+    public static Plume Create(string name, PlumeTemplate template, float exitRadius, bool jet = false) {
 
         Prepare();
 
-        Plume plume = new Plume { Name = name, _template = template, _exitRadius = exitRadius, _cluster = cluster, _seed = (float)(_seeds++ * 7.31 % 97.0) };
+        Plume plume = new Plume { Name = name, _template = template, _exitRadius = exitRadius, _seed = (float)(_seeds++ * 7.31 % 97.0) };
 
-        foreach (PlumeLayer definition in cluster ? template.ClusterLayers : template.Layers) {
+        foreach (PlumeLayer definition in template.Layers) {
 
             plume.AddLayer(definition);
 
         }
 
-        if (!jet && !cluster) {
+        if (!jet) {
 
             plume.AddDistortion();
             plume.AddLight();
@@ -124,13 +129,13 @@ public sealed partial class Plume : Node3D {
 
     private static void Prepare() {
 
-        if (_layerShader != null) {
+        if (_volumetricShader != null) {
 
             return;
 
         }
 
-        // Two independent channels: one drives brightness, the pair drives the shimmer offset.
+        // Red is Waterfall's scrolling noise texture; the pair drives the shimmer offset.
         FastNoiseLite red = new FastNoiseLite { Seed = 4813, Frequency = 0.02f, FractalOctaves = 4, FractalGain = 0.55f };
         FastNoiseLite green = new FastNoiseLite { Seed = 9127, Frequency = 0.02f, FractalOctaves = 4, FractalGain = 0.55f };
         using Image a = red.GetSeamlessImage(256, 256);
@@ -150,16 +155,18 @@ public sealed partial class Plume : Node3D {
         joined.GenerateMipmaps();
         _noise = ImageTexture.CreateFromImage(joined);
 
-        _flicker = new FastNoiseLite { Seed = 271, Frequency = 1.0f, FractalOctaves = 2 };
-        _layerShader = GD.Load<Shader>("res://Shaders/Exhaust/Plume.gdshader");
+        _random = new FastNoiseLite { Seed = 271, Frequency = 1.0f, FractalOctaves = 2 };
+        _volumetricShader = GD.Load<Shader>("res://Shaders/Exhaust/Volumetric.gdshader");
+        _conesShader = GD.Load<Shader>("res://Shaders/Exhaust/Cones.gdshader");
         _distortionShader = GD.Load<Shader>("res://Shaders/Exhaust/Distortion.gdshader");
 
     }
 
     private void AddLayer(PlumeLayer definition) {
 
-        ShaderMaterial material = new ShaderMaterial { Shader = _layerShader, RenderPriority = 4 + _layers.Count };
-        material.SetParameter("merged_layer", _cluster ? 1.0f : 0.0f);
+        Shader shader = definition.Model == PlumeLayer.Kind.Cones ? _conesShader : _volumetricShader;
+        ShaderMaterial material = new ShaderMaterial { Shader = shader, RenderPriority = 4 + _layers.Count };
+        material.SetParameter("noise_texture", _noise);
         material.SetParameter("seed", _seed + _layers.Count * 0.37f);
         definition.Write(material);
 
@@ -171,7 +178,7 @@ public sealed partial class Plume : Node3D {
             Layers = 2,
             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             IgnoreOcclusionCulling = true,
-            Position = new Vector3(0.0f, _cluster ? 0.0f : -Mathf.Max(definition.Offset, 0.0f) * _exitRadius, 0.0f),
+            Position = new Vector3(0.0f, -Mathf.Max(definition.Offset, 0.0f) * _exitRadius, 0.0f),
 
         };
 
@@ -185,14 +192,13 @@ public sealed partial class Plume : Node3D {
 
         }
 
-        // Cells scale with the nozzle even when nothing else drives them.
-        if (definition.CellStrength > 0.0f) {
-
-            driven.Add(PlumeModifier.Target.CellStrength);
-
-        }
+        // The surface and its closing cap derive from expansion, so both are always evaluated.
+        driven.Add(PlumeModifier.Target.ExpandLinear);
+        driven.Add(PlumeModifier.Target.ExpandSquare);
+        driven.Add(PlumeModifier.Target.ConeExpansion);
 
         Layer layer = new Layer { Definition = definition, Mesh = mesh, Material = material };
+
         foreach (PlumeModifier.Target target in Enum.GetValues<PlumeModifier.Target>()) {
 
             layer.Values[(int)target] = definition.Base(target);
@@ -278,32 +284,31 @@ public sealed partial class Plume : Node3D {
 
         }
 
-        float flicker = 0.5f + 0.5f * _flicker.GetNoise1D((inputs.EffectTime * _template.FlickerHertz + _seed) * 100.0f);
-        _contact.Sync(this, Source);
+        float flicker = 0.5f + 0.5f * _random.GetNoise1D(inputs.EffectTime * _template.FlickerHertz + _seed * 13.7f);
+        float wobble = 0.5f + 0.5f * _random.GetNoise1D(inputs.EffectTime * _template.WobbleHertz + _seed * 5.3f + 1000.0f);
+        _contact.Sync(this, _exitRadius, Source);
 
         Span<float> controllers = stackalloc float[InputCount];
         controllers[(int)PlumeModifier.Input.Throttle] = inputs.Throttle;
         controllers[(int)PlumeModifier.Input.Air] = inputs.Air;
         controllers[(int)PlumeModifier.Input.Mach] = inputs.Mach;
         controllers[(int)PlumeModifier.Input.Flicker] = flicker;
+        controllers[(int)PlumeModifier.Input.Wobble] = wobble;
         controllers[(int)PlumeModifier.Input.Ignition] = ignition;
         controllers[(int)PlumeModifier.Input.Cutoff] = cutoff;
         controllers[(int)PlumeModifier.Input.Purge] = inputs.Purge;
         controllers[(int)PlumeModifier.Input.Burnoff] = inputs.Burnoff;
-        controllers[(int)PlumeModifier.Input.Cluster] = inputs.Cluster;
-
-        (float cellLength, float cellContrast) = Cells(inputs);
+        // The expanding plume is eased so layers crossing the thin upper air blend rather than snap; a
+        // fresh ignition starts from the true state.
+        float expansion = Expansion(inputs.ExitPressure, inputs.AmbientPressure, inputs.Throttle);
+        bool fresh = _expansion < 0.0f || inputs.EffectTime - _ignitionAt < inputs.Delta * 1.5f;
+        _expansion = fresh ? expansion : Mathf.Lerp(_expansion, expansion, 1.0f - Mathf.Exp(-inputs.Delta / ExpansionSeconds));
+        controllers[(int)PlumeModifier.Input.Expansion] = _expansion;
+        controllers[(int)PlumeModifier.Input.Sunlit] = inputs.Sunlit;
 
         foreach (Layer layer in _layers) {
 
-            if (_cluster) {
-                layer.Material.SetParameter("stream_count", _streamCount);
-                layer.Material.SetParameter("stream_exits", _streams);
-                layer.Material.SetParameter("stream_directions", _streamDirections);
-                layer.Material.SetParameter("stream_radius", _streamRadius);
-                layer.Material.SetParameter("stream_power", _streamPower);
-            }
-            DriveLayer(layer, controllers, inputs, cellLength, cellContrast);
+            DriveLayer(layer, controllers, inputs);
 
         }
 
@@ -348,40 +353,26 @@ public sealed partial class Plume : Node3D {
 
     }
 
-    private void DriveLayer(Layer layer, ReadOnlySpan<float> controllers, in PlumeInputs inputs, float cellLength, float cellContrast) {
+    private void DriveLayer(Layer layer, ReadOnlySpan<float> controllers, in PlumeInputs inputs) {
 
         PlumeLayer definition = layer.Definition;
-        float pressureMismatch = Mathf.Max(0.0f, (inputs.ExitPressure - inputs.AmbientPressure)
-            / Mathf.Max(inputs.ExitPressure + inputs.AmbientPressure, 1.0f));
-        float expansion = inputs.AmbientPressure <= VacuumPressure ? 1.0f : Mathf.SmoothStep(0.0f, 0.95f, pressureMismatch);
-        cellContrast *= (1.0f - expansion) * (1.0f - expansion);
+        float[] values = layer.Values;
 
         foreach (PlumeModifier.Target target in layer.Driven) {
 
-            layer.Values[(int)target] = definition.Base(target);
+            values[(int)target] = definition.Base(target);
 
         }
 
         foreach (PlumeModifier modifier in definition.Modifiers) {
 
-            // The vacuum envelope uses pressure, not a second density-based brightness gate.
-            if (definition.VacuumEnvelope && modifier.Controller == PlumeModifier.Input.Air
-                && modifier.Parameter == PlumeModifier.Target.Brightness) { continue; }
-
             float input = controllers[(int)modifier.Controller];
-            if (modifier.Controller == PlumeModifier.Input.Air && modifier.Parameter is
-                PlumeModifier.Target.ExpandOffset or PlumeModifier.Target.ExpandLinear or
-                PlumeModifier.Target.ExpandSquare or PlumeModifier.Target.ExpandBounded) {
-
-                input = 1.0f - expansion;
-
-            }
 
             if (modifier.IsColour) {
 
                 if (modifier.Gradient != null) {
 
-                    layer.Material.SetParameter(modifier.Parameter == PlumeModifier.Target.StartTint ? "start_tint" : "end_tint", modifier.Gradient.Sample(Mathf.Clamp(input, 0.0f, 1.0f)));
+                    layer.Material.SetParameter(PlumeModifier.Uniform(modifier.Parameter), modifier.Gradient.Sample(Mathf.Clamp(input, 0.0f, 1.0f)));
 
                 }
 
@@ -389,17 +380,20 @@ public sealed partial class Plume : Node3D {
 
             }
 
-            layer.Values[(int)modifier.Parameter] = modifier.Apply(layer.Values[(int)modifier.Parameter], input);
+            values[(int)modifier.Parameter] = modifier.Apply(values[(int)modifier.Parameter], input);
 
         }
 
-        float brightness = layer.Values[(int)PlumeModifier.Target.Brightness];
-        if (definition.VacuumEnvelope) { brightness *= expansion; }
-        if (definition.ShockOnly && cellContrast <= MinimumIntensity) { brightness = 0.0f; }
-        // Separate jets dominate as atmospheric mixing disappears.
-        if (_cluster) { brightness *= 1.0f - expansion; }
-        else { brightness *= Mathf.Lerp(1.0f, inputs.LightShare, expansion); }
-        layer.Mesh.Visible = brightness > MinimumIntensity;
+        float brightness = values[(int)PlumeModifier.Target.Brightness];
+        float length = values[(int)PlumeModifier.Target.Length] * _exitRadius * inputs.Stretch;
+        float radius = values[(int)PlumeModifier.Target.Radius] * _exitRadius;
+        float offset = Mathf.Max(definition.Offset, 0.0f) * _exitRadius;
+
+        // Volumetric layers march through the contact field and flow around a receiving hull; the
+        // shock train simply ends where the hull stands in the jet.
+        bool marched = definition.Model == PlumeLayer.Kind.Volumetric && _contact.Padding > 0.0f;
+        float floor = float.IsFinite(_contact.Block) && !marched ? -(_contact.Block - offset) / Mathf.Max(length, 0.001f) : OpenFloor;
+        layer.Mesh.Visible = brightness > MinimumIntensity && length > 0.001f && radius > 0.001f && floor < 0.0f;
 
         if (!layer.Mesh.Visible) {
 
@@ -407,122 +401,165 @@ public sealed partial class Plume : Node3D {
 
         }
 
-        float length = layer.Values[(int)PlumeModifier.Target.Length] * _exitRadius * inputs.Stretch * LengthScale;
-        if (definition.DiffuseTail) { length *= 0.85f; }
-        // Extend the flow without also making the vacuum fan proportionally wider.
-        float opening = Mathf.Lerp(definition.VacuumOpening, 0.95f, expansion) / LengthScale;
-        if (definition.ResidualGas) {
-
-            float age = Mathf.Max(inputs.EffectTime - _cutoffAt, 0.0f);
-            float spread = expansion * (1.0f - Mathf.Exp(-age / 0.3f));
-            opening = Mathf.Lerp(opening, 1.1f, spread);
-            length *= 1.0f + spread * 0.35f;
-
-        }
-        layer.Material.SetParameter("vacuum_opening", opening);
-        float radius = layer.Values[(int)PlumeModifier.Target.Radius] * _exitRadius;
-        layer.Material.SetParameter("exit_radius", _exitRadius * 0.94f);
-        Vector3 crossflow = inputs.Bend * length;
-
         foreach (PlumeModifier.Target target in layer.Driven) {
-
-            float value = layer.Values[(int)target];
 
             switch (target) {
 
                 case PlumeModifier.Target.Length:
-                    layer.Material.SetParameter("length_metres", length);
-                    break;
-
                 case PlumeModifier.Target.Radius:
-                    layer.Material.SetParameter("radius_metres", radius);
-                    break;
-
-                case PlumeModifier.Target.CellStrength:
-                    layer.Material.SetParameter("cell_strength", value * cellContrast);
-                    layer.Material.SetParameter("cell_length", cellLength);
-                    break;
-
-                case PlumeModifier.Target.TileX:
-                case PlumeModifier.Target.TileY:
-                    layer.Material.SetParameter("tile", new Vector2(layer.Values[(int)PlumeModifier.Target.TileX], layer.Values[(int)PlumeModifier.Target.TileY]));
-                    break;
-
-                case PlumeModifier.Target.ScrollY:
-                    layer.Material.SetParameter("scroll", new Vector2(definition.Scroll.X, value));
-                    break;
-
+                case PlumeModifier.Target.Brightness:
                 case PlumeModifier.Target.StartTint:
                 case PlumeModifier.Target.EndTint:
                     break;
 
+                case PlumeModifier.Target.TileX:
+                case PlumeModifier.Target.TileY:
+                    layer.Material.SetParameter("tile", new Vector2(values[(int)PlumeModifier.Target.TileX], values[(int)PlumeModifier.Target.TileY]));
+                    break;
+
+                case PlumeModifier.Target.SpeedY:
+                    layer.Material.SetParameter("speed", new Vector2(definition.Speed.X, values[(int)PlumeModifier.Target.SpeedY]));
+                    break;
+
                 default:
-                    layer.Material.SetParameter(Uniform(target), value);
+                    layer.Material.SetParameter(PlumeModifier.Uniform(target), values[(int)target]);
                     break;
 
             }
 
         }
 
-        layer.Material.SetParameter("crossflow", crossflow);
-        layer.Material.SetParameter("effect_time", inputs.EffectTime);
-        layer.Material.SetParameter("brightness", brightness);
-        layer.Material.SetParameter("expansion", expansion);
-        layer.Material.SetParameter("effect_delta", Mathf.Clamp(inputs.Delta, 0.0f, 0.05f));
+        float bottom;
+        float widest;
 
-        float mouth = Mathf.Min(radius, _exitRadius * 0.94f);
-        if (_cluster) { mouth = Mathf.Max(radius, _exitRadius * 1.12f); }
-        // Match the shader's maximum opening slope, including its turbulence envelope.
-        float extent = length * 1.6f;
-        float reach = (mouth + extent * Mathf.Lerp(0.12f, opening, expansion)) * 1.4f + crossflow.Length() + _contact.Padding;
-        _contact.Write(layer.Material, layer.Mesh.Position, extent);
-        layer.Material.SetParameter("bounds_min", new Vector3(-reach, -extent, -reach));
-        layer.Material.SetParameter("bounds_max", new Vector3(reach, 0.0f, reach));
-        layer.Mesh.CustomAabb = new Aabb(new Vector3(-reach, -extent, -reach), new Vector3(reach * 2.0f, extent, reach * 2.0f));
+        if (definition.Model == PlumeLayer.Kind.Cones) {
 
-    }
+            bottom = -1.0f;
+            widest = 1.0f + Mathf.Abs(values[(int)PlumeModifier.Target.ConeExpansion]);
 
-    private static string Uniform(PlumeModifier.Target target) {
+        }
+        else {
 
-        return target switch {
-
-            PlumeModifier.Target.Brightness => "brightness",
-            PlumeModifier.Target.ExpandOffset => "expand_offset",
-            PlumeModifier.Target.ExpandLinear => "expand_linear",
-            PlumeModifier.Target.ExpandSquare => "expand_square",
-            PlumeModifier.Target.ExpandBounded => "expand_bounded",
-            PlumeModifier.Target.Falloff => "falloff",
-            PlumeModifier.Target.FalloffStart => "falloff_start",
-            PlumeModifier.Target.Fresnel => "fresnel",
-            PlumeModifier.Target.FresnelInvert => "fresnel_invert",
-            PlumeModifier.Target.Noise => "noise_strength",
-            PlumeModifier.Target.FadeIn => "fade_in",
-            PlumeModifier.Target.FadeOut => "fade_out",
-            PlumeModifier.Target.TintFalloff => "tint_falloff",
-
-            _ => throw new ArgumentOutOfRangeException(nameof(target)),
-
-        };
-
-    }
-
-    // Cell spacing grows with under-expansion; contrast follows the mismatch and dies in vacuum.
-    private (float Length, float Contrast) Cells(in PlumeInputs inputs) {
-
-        if (inputs.AmbientPressure < VacuumPressure || inputs.ExitPressure <= 0.0f) {
-
-            return (0.0f, 0.0f);
+            (Vector2 ends, Vector3 cap, float span) = Quadric(values[(int)PlumeModifier.Target.ExpandLinear], values[(int)PlumeModifier.Target.ExpandSquare]);
+            layer.Material.SetParameter("plume_ends", ends);
+            layer.Material.SetParameter("cap_quadric", cap);
+            bottom = ends.Y;
+            widest = span;
 
         }
 
-        float ratio = inputs.ExitPressure / inputs.AmbientPressure;
-        float mismatch = Mathf.Abs(Mathf.Log(ratio));
-        // Lose visible compression cells in thin air, well before the vacuum envelope takes over.
-        float confinement = Mathf.SmoothStep(5_000.0f, 60_000.0f, inputs.AmbientPressure);
-        float contrast = Mathf.Clamp(mismatch / 1.5f, 0.0f, 1.0f) * confinement * confinement;
-        float spacing = 2.0f * _exitRadius * Mathf.Min(0.9f + 1.1f * Mathf.Sqrt(Mathf.Max(ratio, 1.0f)), 8.0f);
+        Vector2 shear = new Vector2(inputs.Bend.X, inputs.Bend.Z) * length;
+        float reach = widest * radius + shear.Length() + (marched ? _contact.Padding : 0.0f);
+        Vector3 low = new Vector3(-reach, Mathf.Max(bottom, floor) * length, -reach);
+        Vector3 high = new Vector3(reach, marched ? _contact.Padding : 0.0f, reach);
 
-        return (spacing, contrast * _template.CellContrast);
+        if (definition.Model == PlumeLayer.Kind.Volumetric) {
+
+            layer.Material.SetParameter("exit_radius", _exitRadius);
+            _contact.Write(layer.Material, layer.Mesh.Position, -low.Y);
+
+        }
+
+        if (definition.SunPhase > 0.0f) {
+
+            layer.Material.SetParameter("sun_local", (layer.Mesh.GlobalBasis.Inverse() * inputs.Sun).Normalized());
+
+        }
+
+        layer.Material.SetParameter("brightness", brightness);
+        layer.Material.SetParameter("plume_scale", new Vector3(radius, length, radius));
+        layer.Material.SetParameter("plume_shear", shear);
+        layer.Material.SetParameter("plume_floor", floor);
+        layer.Material.SetParameter("effect_time", inputs.EffectTime);
+        layer.Material.SetParameter("bounds_min", low);
+        layer.Material.SetParameter("bounds_max", high);
+        layer.Mesh.CustomAabb = new Aabb(low, high - low);
+
+    }
+
+    // Waterfall's surface is r² = 1 + b·y + a·y² over y in [-1, 0], closed below by a tangent cap
+    // ending at -1.5, or by a straight taper when the flow converges too steeply for an ellipse.
+    private static (Vector2 Ends, Vector3 Cap, float Widest) Quadric(float linear, float square) {
+
+        float a = linear * linear - 10.0f * square;
+        float b = -2.0f * linear - 10.0f * square;
+        float end = 1.0f - b + a;
+        float widest = Mathf.Max(1.0f, end);
+
+        if (Mathf.Abs(a) > 0.000001f) {
+
+            float vertex = -b / (2.0f * a);
+
+            if (vertex > -1.0f && vertex < 0.0f) {
+
+                widest = Mathf.Max(widest, 1.0f - b * b / (4.0f * a));
+
+            }
+
+        }
+
+        if (end <= 0.0001f) {
+
+            float apex = Apex(a, b);
+
+            return (new Vector2(apex, apex), new Vector3(0.0f, 0.0f, 1.0f), Mathf.Sqrt(widest));
+
+        }
+
+        float slope = b - 2.0f * a;
+        const float gap = -1.0f - CapEnd;
+
+        if (slope * gap - end > 0.0f) {
+
+            return (new Vector2(-1.0f, -1.0f - end / slope), new Vector3(0.0f, slope, end + slope), Mathf.Sqrt(widest));
+
+        }
+
+        float capA = (slope * gap - end) / (gap * gap);
+        float capB = slope + 2.0f * capA;
+        float capC = -CapEnd * (capA * CapEnd + capB);
+
+        if (capA < 0.0f) {
+
+            float vertex = -capB / (2.0f * capA);
+
+            if (vertex > CapEnd && vertex < -1.0f) {
+
+                widest = Mathf.Max(widest, capC - capB * capB / (4.0f * capA));
+
+            }
+
+        }
+
+        return (new Vector2(-1.0f, CapEnd), new Vector3(capA, capB, capC), Mathf.Sqrt(widest));
+
+    }
+
+    // The highest point below the exit where a converging surface closes to the axis.
+    private static float Apex(float a, float b) {
+
+        if (Mathf.Abs(a) < 0.000001f) {
+
+            return Mathf.Clamp(-1.0f / b, -1.0f, 0.0f);
+
+        }
+
+        float root = Mathf.Sqrt(Mathf.Max(b * b - 4.0f * a, 0.0f));
+        float first = (-b + root) / (2.0f * a);
+        float second = (-b - root) / (2.0f * a);
+        float apex = -1.0f;
+
+        foreach (float candidate in stackalloc[] { first, second }) {
+
+            if (candidate < 0.0f && candidate >= -1.0f) {
+
+                apex = Mathf.Max(apex, candidate);
+
+            }
+
+        }
+
+        return apex;
 
     }
 
@@ -571,7 +608,7 @@ public sealed partial class Plume : Node3D {
 
     }
 
-    private static bool Tune(ShaderMaterial material, string parameter, string value) {
+    internal static bool Tune(ShaderMaterial material, string parameter, string value) {
 
         if (material.GetParameter(parameter).VariantType == Variant.Type.Nil) {
 

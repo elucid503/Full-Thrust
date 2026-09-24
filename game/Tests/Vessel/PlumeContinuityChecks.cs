@@ -32,7 +32,7 @@ public sealed partial class PlumeContinuityChecks : Node {
                 }
                 if (pass == 2) { vessel.Orientation = QuaternionD.FromAxisAngle(Vector3d.UnitX, Math.PI); }
                 view.Sync(Frames.Point(vessel.Position), Frames.Rotation(vessel.Orientation));
-                Plume cluster = view.FindChildren("Cluster", "", true, false).OfType<Plume>().Single();
+                ExhaustTail tail = view.FindChildren("Tail", "", true, false).OfType<ExhaustTail>().Single();
                 Plume[] nozzles = view.FindChildren("Plume*", "", true, false).OfType<Plume>().ToArray();
                 Vector3 centre = Vector3.Zero, direction = Vector3.Zero;
                 float power = 0.0f;
@@ -45,10 +45,10 @@ public sealed partial class PlumeContinuityChecks : Node {
                     power += throttle;
                     live++;
                 }
-                if (cluster.GlobalPosition.DistanceTo(centre / power) > 0.15f || (-cluster.GlobalBasis.Y).Dot(direction.Normalized()) < 0.9999f) {
+                if (tail.GlobalPosition.DistanceTo(centre / power) > 0.15f || (-tail.GlobalBasis.Y).Dot(direction.Normalized()) < 0.9999f) {
                     throw new InvalidOperationException("Merged tail lost the weighted nozzle origin or gimbal direction");
                 }
-                MeshInstance3D mesh = cluster.GetChildren().OfType<MeshInstance3D>().First();
+                MeshInstance3D mesh = tail.GetChildren().OfType<MeshInstance3D>().First();
                 ShaderMaterial material = (ShaderMaterial)mesh.MaterialOverride;
                 if (mesh.Position != Vector3.Zero || material.GetShaderParameter("stream_count").AsInt32() != live) {
                     throw new InvalidOperationException("Merged tail lost its individual streams or acquired a detached start");
@@ -57,7 +57,7 @@ public sealed partial class PlumeContinuityChecks : Node {
                     throw new InvalidOperationException("Nozzle footprint uniforms failed to bind");
                 }
             }
-            foreach (string name in new[] { "Plume", "Distortion" }) {
+            foreach (string name in new[] { "Volumetric", "Cones", "Tail", "Distortion" }) {
                 Shader shader = GD.Load<Shader>($"res://Shaders/Exhaust/{name}.gdshader");
                 if (shader.GetShaderUniformList().Count == 0) { throw new InvalidOperationException($"{name} shader failed to parse"); }
             }
@@ -85,8 +85,8 @@ public sealed partial class PlumeContinuityChecks : Node {
         EngineState engine = receiver.Active.EngineStates[0];
         if (engine.ContactProfile.Length < 3 || engine.ContactProfile.Length > 65 || receiver.Active.ContactRevision == 0) { throw new InvalidOperationException("Imported engine did not refine the contact profile"); }
         PlumeContact contact = new();
-        ShaderMaterial material = new() { Shader = GD.Load<Shader>("res://Shaders/Exhaust/Plume.gdshader") };
-        contact.Sync(emitter, source);
+        ShaderMaterial material = new() { Shader = GD.Load<Shader>("res://Shaders/Exhaust/Tail.gdshader") };
+        contact.Sync(emitter, emitter.ExitRadius, source);
         contact.Write(material, Vector3.Zero);
         if (material.GetShaderParameter("contact_engine_count0").AsInt32() != receiver.EngineCount ||
             material.GetShaderParameter("contact_hardware0").AsGodotObject() is not Texture2DArray) {
@@ -94,7 +94,7 @@ public sealed partial class PlumeContinuityChecks : Node {
         }
         Transform3D before = material.GetShaderParameter("contact_engine_transforms0").AsGodotArray()[0].AsTransform3D();
         engine.Traverse(Vector3d.UnitX * 0.1, 0.2, 0.01, 1.0);
-        contact.Sync(emitter, source);
+        contact.Sync(emitter, emitter.ExitRadius, source);
         contact.Write(material, Vector3.Zero);
         Transform3D after = material.GetShaderParameter("contact_engine_transforms0").AsGodotArray()[0].AsTransform3D();
         if (before.IsEqualApprox(after)) { throw new InvalidOperationException("Receiving engine field did not follow gimbal"); }

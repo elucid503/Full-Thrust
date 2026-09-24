@@ -13,8 +13,9 @@ layout(set = 0, binding = 4) uniform sampler3D shape_noise;
 layout(set = 0, binding = 5) uniform sampler3D detail_noise;
 layout(set = 0, binding = 6) uniform sampler2D local_cloud_shadow;
 layout(set = 0, binding = 7) uniform sampler2D local_cloud_lighting;
-layout(std140, set = 0, binding = 8) uniform Parameters {
-    vec4 data[20];
+layout(set = 0, binding = 8) uniform sampler2D sun_optical_depth;
+layout(std140, set = 0, binding = 9) uniform Parameters {
+    vec4 data[24];
 } parameters;
 
 #define planet_centre parameters.data[0].xyz
@@ -37,7 +38,16 @@ layout(std140, set = 0, binding = 8) uniform Parameters {
 #define sun_shafts parameters.data[7].w
 #define cloud_frame mat3(parameters.data[8].xyz, parameters.data[9].xyz, parameters.data[10].xyz)
 #define fog_enabled parameters.data[8].w
+#define atmosphere_radius parameters.data[20].x
+#define rayleigh_height parameters.data[20].y
+#define mie_height parameters.data[20].z
+#define ozone_half_width parameters.data[20].w
+#define rayleigh_coefficients parameters.data[21].xyz
+#define mie_coefficient parameters.data[21].w
+#define ozone_coefficients parameters.data[22].xyz
+#define sun_radiance parameters.data[23].xyz
 
+#include "res://Shaders/Atmosphere/Sunlight.gdshaderinc"
 #include "res://Shaders/Clouds/CloudShadowSampling.gdshaderinc"
 #include "res://Shaders/Clouds/CloudRayGeometry.gdshaderinc"
 #include "res://Shaders/Atmosphere/AtmosphereComposite.gdshaderinc"

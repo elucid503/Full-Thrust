@@ -13,6 +13,9 @@ namespace FullThrust.Game;
 public sealed partial class VesselView : Node3D {
 
     public const uint HardwareLayer = 4;
+
+    // Vehicle meshes alone: the planet's reflected light falls on nothing that shades its own sunlight.
+    public const uint VehicleLayer = 16;
     private const int RadialSegments = 96;
     private const int NozzleSegments = 32;
 
@@ -66,7 +69,7 @@ public sealed partial class VesselView : Node3D {
 
         public float BellRadius { get; set; }
         public readonly List<Engine> Engines = new List<Engine>();
-        public Plume Cluster;
+        public ExhaustTail Tail;
         public ExhaustImpact Impact;
         public EngineVoice Voice;
 
@@ -112,7 +115,7 @@ public sealed partial class VesselView : Node3D {
             _body.AddChild(piece.Node);
             foreach (Node child in piece.Node.FindChildren("*", "MeshInstance3D", true, false)) {
 
-                if (child is MeshInstance3D mesh && mesh.Layers != 2) { mesh.Layers |= HardwareLayer; }
+                if (child is MeshInstance3D mesh && mesh.Layers != 2) { mesh.Layers |= HardwareLayer | VehicleLayer; }
 
             }
 
@@ -274,7 +277,7 @@ public sealed partial class VesselView : Node3D {
 
             }
 
-            ok |= piece.Cluster != null && piece.Cluster.Tune(parameter, value);
+            ok |= piece.Tail != null && piece.Tail.Tune(parameter, value);
 
         }
 
@@ -1413,7 +1416,7 @@ public sealed partial class VesselView : Node3D {
 
         }
 
-        AttachCluster(node, piece, bellRadius, ring, deck, reach);
+        AttachTail(node, piece, bellRadius, ring, deck, reach);
         AttachImpact(node, piece, bellRadius);
 
     }

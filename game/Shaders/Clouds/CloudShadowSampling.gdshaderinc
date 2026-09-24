@@ -7,6 +7,9 @@ uniform float shadow_ready = 0.0;
 uniform float shadow_span = 16000.0;
 #endif
 
+// Share of direct sun a thick cloud removes; the rest arrives forward-scattered. Matches CloudShadows.cs.
+const float cloud_shadow_depth = 0.85;
+
 float filtered_cloud_transmission(vec2 uv, float footprint) {
 
     vec3 levels = textureLod(local_cloud_shadow, uv, 0.0).rgb;
@@ -28,5 +31,14 @@ vec2 local_cloud_light(vec3 world) {
     transmission += texture(local_cloud_shadow, uv - texel).r * 0.15;
     float shade = 1.0 - transmission;
     return vec2(shade, coverage);
+
+}
+
+// Direct-sun factor for anything standing on the ground inside the cached map.
+float ground_cloud_sun(vec3 world) {
+
+    vec2 shadow = local_cloud_light(world);
+
+    return 1.0 - cloud_shadow_depth * shadow.x * shadow.y;
 
 }

@@ -2,6 +2,9 @@ shader_type spatial;
 render_mode cull_disabled;
 
 uniform vec3 eye_position;
+uniform vec3 planet_centre = vec3(0.0);
+uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
+uniform float planet_radius = 1274200.0;
 uniform float wind_time;
 uniform vec2 grass_range = vec2(160.0, 290.0);
 uniform vec2 stone_range = vec2(230.0, 330.0);
@@ -13,7 +16,8 @@ varying vec3 local_normal;
 varying mat3 stone_to_view;
 varying float blade;
 varying vec3 world_position;
-varying float cloud_light;
+varying vec3 sun_light;
+#include "res://Shaders/Atmosphere/Sunlight.gdshaderinc"
 #include "res://Shaders/Clouds/CloudShadowSampling.gdshaderinc"
 
 void vertex() {
@@ -36,8 +40,7 @@ void vertex() {
 
 void fragment() {
 
-    vec2 shadow = local_cloud_light(world_position);
-    cloud_light = 1.0 - 0.32 * shadow.x * shadow.y;
+    sun_light = sun_radiance * sun_transmittance(world_position - planet_centre) * ground_cloud_sun(world_position);
 
     float blade_ridge = 0.82 + 0.18 * sin(UV.x * PI);
     ALBEDO = COLOR.rgb * mix(0.48, 1.20, UV.y) * blade_ridge;
@@ -68,8 +71,8 @@ void fragment() {
 
 void light() {
 
-    float shade = LIGHT_IS_DIRECTIONAL ? cloud_light : 1.0;
+    vec3 radiance = (LIGHT_IS_DIRECTIONAL ? sun_light : LIGHT_COLOR) * ATTENUATION;
     float diffuse = max(dot(NORMAL, LIGHT), 0.0) + max(dot(-NORMAL, LIGHT), 0.0) * blade * 0.3;
-    DIFFUSE_LIGHT += LIGHT_COLOR * ATTENUATION * shade * diffuse / PI;
+    DIFFUSE_LIGHT += radiance * diffuse / PI;
 
 }

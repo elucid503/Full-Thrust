@@ -56,8 +56,7 @@ vec4 coastal_fog(vec3 origin, vec3 ray, float scene_distance, float cloud_distan
         if (stride <= 0.0) { continue; }
         vec3 p = origin + ray * (low + high) * 0.5;
         float solar = dot(normalize(p), sun_direction);
-        float day = smoothstep(-0.02, 0.12, solar);
-        vec3 sunlight = mix(vec3(1.0, 0.48, 0.24), vec3(1.0, 0.97, 0.91), smoothstep(0.02, 0.25, solar));
+        vec3 sunlight = sunlight_colour(p);
         float height = max(ray_height(ray * (low + high) * 0.5), 0.0);
         float marine = exp(-height / 650.0) * (1.0 - smoothstep(500.0, marine_top, height));
         float aerial = 0.40 * exp(-height / 1800.0) * smoothstep(500.0, 1100.0, height)
@@ -78,25 +77,25 @@ vec4 coastal_fog(vec3 origin, vec3 ray, float scene_distance, float cloud_distan
             light = mix(1.0, shaft, coverage * smoothstep(0.03, 0.12, map_solar) * shadow_ready * sun_shafts);
 
         }
-        vec3 scattered = vec3(0.07, 0.10, 0.15) + sunlight * phase * 3.4 * light;
+        vec3 scattered = vec3(0.07, 0.10, 0.15) * skylight(solar) + sunlight * phase * 3.4 * light;
         // Split extinction within the same bin instead of marching foreground fog a second time.
         if (cloud_distance < finish && cloud_distance > low) {
 
             float front_opacity = 1.0 - exp(-density * min(cloud_distance - low, stride) * 0.00024);
             front_radiance = from_far
-                ? scattered * day * front_opacity + front_radiance * (1.0 - front_opacity)
-                : front_radiance + scattered * day * front_transmission * front_opacity;
+                ? scattered * front_opacity + front_radiance * (1.0 - front_opacity)
+                : front_radiance + scattered * front_transmission * front_opacity;
             front_transmission *= 1.0 - front_opacity;
 
         }
         if (from_far) {
 
-            radiance = scattered * day * opacity + radiance * (1.0 - opacity);
+            radiance = scattered * opacity + radiance * (1.0 - opacity);
 
         }
         else {
 
-            radiance += scattered * day * transmission * opacity;
+            radiance += scattered * transmission * opacity;
 
         }
         transmission *= 1.0 - opacity;

@@ -5,6 +5,7 @@ public sealed partial class Stage {
     public EngineLimits OperatingLimits { get; init; } = new();
     public double GimbalResponseSeconds { get; init; } = 0.12;
     public double RatingPressurePascals { get; init; }
+    public double ChamberPressurePascals { get; init; } = 7_000_000.0;
     public EngineState[] EngineStates { get; private set; } = Array.Empty<EngineState>();
     public double DeliveredThrust { get; private set; }
     public double DeliveredFlow { get; private set; }
@@ -40,6 +41,16 @@ public sealed partial class Stage {
             double ring = count > 1 ? part.RingRadius > 0.0 ? part.RingRadius : Hull.RadiusAt(part.Top) / (1.0 + 1.2 * Math.Sin(Math.PI / count) / 1.15) : 0.0;
             double fit = count > 1 ? Math.Min(1.0, Hull.RadiusAt(part.Top) / (radius / Math.Sin(Math.PI / count) * 1.15 + radius * 1.2)) : 1.0;
             _exitArea += Math.PI * radius * radius * fit * fit * count;
+            double exitPressure = 0.0;
+            if (part.Profile is { Length: > 1 }) {
+                double throat = double.MaxValue;
+                Hull.Station mouth = part.Profile[0];
+                foreach (Hull.Station station in part.Profile) {
+                    throat = Math.Min(throat, station.Radius);
+                    if (station.Z < mouth.Z) { mouth = station; }
+                }
+                exitPressure = ChamberPressurePascals * Nozzle.PressureRatio(mouth.Radius * mouth.Radius / (throat * throat));
+            }
             for (int i = 0; i < count; i++) {
 
                 double angle = Math.Tau * i / count;
@@ -53,6 +64,7 @@ public sealed partial class Stage {
                     Mount = new Vector3d(Math.Cos(angle) * ring, -Math.Sin(angle) * ring, part.Top),
                     ExitRadius = radius * fit,
                     ExitDistance = part.Length * fit,
+                    ExitPressure = exitPressure,
                     ContactProfile = contact,
 
                 };

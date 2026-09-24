@@ -8,48 +8,26 @@ render_mode unshaded, blend_premul_alpha, depth_draw_never, depth_test_disabled,
 
 uniform sampler2D screen_texture : hint_screen_texture, filter_linear;
 uniform sampler2D depth_buffer : hint_depth_texture, filter_nearest;
-uniform sampler2D sun_optical_depth : filter_linear, repeat_disable;
 
 uniform vec3 planet_centre = vec3(0.0, 0.0, 0.0);
 uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
 
 uniform float planet_radius = 1274200.0;
-uniform float atmosphere_radius = 1334200.0;
 
-uniform float rayleigh_height = 5600.0;
-uniform float mie_height = 1200.0;
-
-uniform vec3 rayleigh_coefficients = vec3(5.8e-6, 1.35e-5, 3.31e-5);
-uniform float mie_coefficient = 7.0e-6;
 uniform float mie_direction : hint_range(0.0, 0.99) = 0.76;
 
-uniform vec3 ozone_coefficients = vec3(0.650e-6, 1.881e-6, 0.085e-6);
 uniform float ozone_height = 22000.0;
-uniform float ozone_half_width = 15000.0;
 
 uniform float sun_intensity = 3.4;
 uniform float sun_shafts = 1.0;
 
+// The weather deck's floor and roof above the datum; cloud shadow only holds for air below it.
+uniform float cloud_floor = 900.0;
+uniform float cloud_ceiling = 3800.0;
+
+#include "res://Shaders/Atmosphere/Sunlight.gdshaderinc"
 #include "res://Shaders/Clouds/CloudShadowSampling.gdshaderinc"
 #include "res://Shaders/Atmosphere/AtmosphereComposite.gdshaderinc"
-
-float cloud_sunlight(vec3 position, vec3 ray, float stride) {
-
-    if (sun_shafts < 0.001 || shadow_ready < 0.001) { return 1.0; }
-    vec3 up = normalize(shadow_centre - planet_centre);
-    float solar = dot(up, sun_direction);
-    float height = max(length(position) - planet_radius, 0.0);
-    float influence = (1.0 - smoothstep(900.0, 3200.0, height)) * smoothstep(0.03, 0.12, solar);
-    if (influence < 0.001) { return 1.0; }
-    vec3 offset = position + planet_centre - shadow_centre;
-    offset -= sun_direction * dot(offset, up) / max(solar, 0.03);
-    vec2 uv = vec2(dot(offset, shadow_east), dot(offset, shadow_north)) / shadow_span + 0.5;
-    float coverage = 1.0 - smoothstep(0.38, 0.49, max(abs(uv.x - 0.5), abs(uv.y - 0.5)));
-    float footprint = length(ray - sun_direction * dot(ray, up) / max(solar, 0.03)) * stride;
-    float transmission = filtered_cloud_transmission(uv, footprint);
-    return 1.0 - (1.0 - transmission) * influence * coverage * sun_shafts * shadow_ready;
-
-}
 
 // Single scattering alone leaves a daytime sky too dark and too directional: most of what reaches
 // the eye from overhead has bounced more than once. An isotropic term on the Rayleigh phase is the
@@ -57,6 +35,9 @@ float cloud_sunlight(vec3 position, vec3 ray, float stride) {
 uniform float multiscatter : hint_range(0.0, 0.2) = 0.035;
 
 const int view_samples = 20;
+
+// View samples sit kilometres apart; a crepuscular ray is the width of a gap between two clouds.
+const int shaft_samples = 24;
 
 // Returns the near and far ray parameters of a sphere hit, or a reversed pair when the ray misses.
 vec2 sphere_span(vec3 origin, vec3 direction, float radius) {
@@ -86,6 +67,73 @@ vec3 densities(vec3 position) {
     float ozone = max(1.0 - abs(height - ozone_height) / ozone_half_width, 0.0);
 
     return vec3(exp(-height / rayleigh_height), exp(-height / mie_height), ozone);
+
+}
+
+// Rayleigh and Mie weights of the sunlit air the deck shades, extinguished both ways; TAA resolves the jitter.
+void cloud_shaded_air(vec3 origin, vec3 ray, float near, float far, vec2 pixel, float time, out vec3 rayleigh, out vec3 mie) {
+
+    rayleigh = vec3(0.0);
+    mie = vec3(0.0);
+
+    if (sun_shafts < 0.001 || shadow_ready < 0.001) { return; }
+
+    vec3 up = normalize(shadow_centre - planet_centre);
+    float solar = dot(up, sun_direction);
+    float daylight = smoothstep(0.03, 0.12, solar);
+
+    if (daylight < 0.001) { return; }
+
+    vec2 roof = sphere_span(origin, ray, planet_radius + cloud_ceiling);
+    float start = max(near, roof.x);
+    // The cached map covers a little under half its span either side of centre.
+    float finish = min(min(far, roof.y), start + shadow_span);
+
+    if (roof.y <= roof.x || finish <= start) { return; }
+
+    vec3 projection = sun_direction / max(solar, 0.03);
+    vec3 projected_ray = ray - projection * dot(ray, up);
+
+    float noise = fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+    float jitter = fract(noise + fract(time * 60.0) * 0.618034);
+
+    // Air above the roof, when the eye is up there, taken at its midpoint density.
+    vec3 lead = densities(origin + ray * start * 0.5) * start;
+    vec3 view_depth = rayleigh_coefficients * lead.x + vec3(mie_coefficient * 1.1 * lead.y);
+
+    float span = finish - start;
+    float previous = 0.0;
+
+    for (int index = 0; index < shaft_samples; index++) {
+
+        // Bunched towards the eye, where a shaft covers the most screen.
+        float fraction = pow((float(index) + jitter) / float(shaft_samples), 1.6);
+        float next = pow((float(index) + 1.0) / float(shaft_samples), 1.6);
+        float step_length = span * (next - previous);
+        previous = next;
+
+        vec3 position = origin + ray * (start + span * fraction);
+        float height = length(position) - planet_radius;
+        vec3 density = densities(position) * step_length;
+
+        vec3 offset = position + planet_centre - shadow_centre;
+        offset -= projection * dot(offset, up);
+        vec2 uv = vec2(dot(offset, shadow_east), dot(offset, shadow_north)) / shadow_span + 0.5;
+        float coverage = 1.0 - smoothstep(0.38, 0.49, max(abs(uv.x - 0.5), abs(uv.y - 0.5)));
+        float footprint = length(projected_ray) * step_length;
+        float shade = (1.0 - filtered_cloud_transmission(uv, footprint)) * coverage
+            * (1.0 - smoothstep(cloud_floor, cloud_ceiling, height));
+
+        vec3 carried = exp(-view_depth) * sun_transmittance(position) * shade;
+        rayleigh += carried * density.x;
+        mie += carried * density.y;
+
+        view_depth += rayleigh_coefficients * density.x + vec3(mie_coefficient * 1.1 * density.y);
+
+    }
+
+    rayleigh *= daylight * shadow_ready * sun_shafts;
+    mie *= daylight * shadow_ready * sun_shafts;
 
 }
 
@@ -175,20 +223,14 @@ void fragment() {
         }
 
         float radial_distance = length(position);
-        float solar_cosine = dot(position, sun_direction) / radial_distance;
-        vec2 lookup_uv = vec2(0.5 + 0.5 * sign(solar_cosine) * sqrt(abs(solar_cosine)),
-            sqrt(clamp((radial_distance - planet_radius) / (atmosphere_radius - planet_radius), 0.0, 1.0)));
-        lookup_uv = (lookup_uv * vec2(255.0, 127.0) + 0.5) / vec2(256.0, 128.0);
-        vec3 light_optical_depth = textureLod(sun_optical_depth, lookup_uv, 0.0).rgb
-            * vec3(rayleigh_height, mie_height, ozone_half_width);
+        vec3 light_optical_depth = sun_optical_depth_at(radial_distance, dot(position, sun_direction) / radial_distance);
 
         vec3 attenuation = exp(-(rayleigh_coefficients * (view_optical_depth.x - density.x * 0.5 + light_optical_depth.x)
             + vec3(mie_coefficient * 1.1 * (view_optical_depth.y - density.y * 0.5 + light_optical_depth.y))
             + ozone_coefficients * (view_optical_depth.z - density.z * 0.5 + light_optical_depth.z)));
 
-        float sunlight = cloud_sunlight(position, ray, step_length);
-        rayleigh_total += density.x * attenuation * mix(1.0, sunlight, 0.18);
-        mie_total += density.y * attenuation * sunlight;
+        rayleigh_total += density.x * attenuation;
+        mie_total += density.y * attenuation;
 
     }
 
@@ -200,6 +242,13 @@ void fragment() {
     float mie_phase = 3.0 / (8.0 * PI) * ((1.0 - g * g) * (1.0 + cosine * cosine)) / ((2.0 + g * g) * pow(1.0 + g * g - 2.0 * g * cosine, 1.5));
 
     vec3 inscatter = sun_intensity * (rayleigh_total * rayleigh_coefficients * rayleigh_phase + mie_total * mie_coefficient * mie_phase);
+
+    // The isotropic multiple-scatter share comes from the whole sky, so cloud shade leaves it.
+    vec3 shaded_rayleigh;
+    vec3 shaded_mie;
+    cloud_shaded_air(origin, ray, near, far, FRAGCOORD.xy, TIME, shaded_rayleigh, shaded_mie);
+    inscatter = max(inscatter - sun_intensity * (shaded_rayleigh * rayleigh_coefficients * (rayleigh_phase - multiscatter)
+        + shaded_mie * mie_coefficient * mie_phase), vec3(0.0));
 
     vec3 transmittance = exp(-(rayleigh_coefficients * view_optical_depth.x
         + vec3(mie_coefficient * 1.1 * view_optical_depth.y)

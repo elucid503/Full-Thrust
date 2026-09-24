@@ -43,6 +43,16 @@ public sealed partial class Planet : Node3D {
     private ShaderMaterial _atmosphere;
     private readonly Dictionary<string, double> _opticalParameters = new();
 
+    private static readonly HashSet<string> SharedOptics = new() { "rayleigh_coefficients", "mie_coefficient", "ozone_coefficients", "sun_radiance" };
+
+    // Everything that works out its own sunlight per pixel, and so needs the air's optics.
+    private readonly List<ShaderMaterial> _sunlit = new();
+
+    public Sunlight Sunlight { get; private set; }
+
+    // Share of the sun the weather deck lets through to the lit subject.
+    public float CloudTransmission => _cloudShadows.Transmission;
+
     // The shells sit on the planet's centre; the quadtree places every patch on its own absolute
     // transform, so this node stays at the origin and nothing under it is offset twice.
     private MeshInstance3D _deck;
@@ -116,8 +126,8 @@ public sealed partial class Planet : Node3D {
         _cloudShape = _sharedCloudShape;
         _cloudDetail = _sharedCloudDetail;
 
-        BuildFaces(radius, cloud, sunDirection);
-        BuildWater(radius, cloud, sunDirection);
+        BuildFaces(radius, cloud);
+        BuildWater(radius, cloud);
 
         _ground = new Ground { Name = "Surface" };
 
@@ -154,17 +164,14 @@ public sealed partial class Planet : Node3D {
         _atmosphere = new ShaderMaterial { Shader = GD.Load<Shader>("res://Shaders/Atmosphere/Atmosphere.gdshader") };
         _cloudShadows.AddReceiver(_atmosphere);
 
-        _atmosphere.SetParameter("planet_radius", radius);
-        _atmosphere.SetParameter("atmosphere_radius", atmosphereRadius);
-        _atmosphere.SetParameter("sun_direction", sunDirection);
-        _atmosphere.SetParameter("rayleigh_height", (float)body.Atmosphere.ScaleHeight);
+        _atmosphere.SetParameter("cloud_floor", CloudBase);
+        _atmosphere.SetParameter("cloud_ceiling", CloudTop);
         _opticalParameters["planet_radius"] = radius;
         _opticalParameters["atmosphere_radius"] = atmosphereRadius;
         _opticalParameters["rayleigh_height"] = body.Atmosphere.ScaleHeight;
         _opticalParameters["mie_height"] = 1200.0;
         _opticalParameters["ozone_height"] = 22000.0;
         _opticalParameters["ozone_half_width"] = 15000.0;
-        RefreshAtmosphereLookup();
 
         // Clouds composite afterward and integrate foreground air to their optical centroid.
         _atmosphere.RenderPriority = 0;
@@ -177,12 +184,22 @@ public sealed partial class Planet : Node3D {
         _clouds.SetParameter("detail_noise", _cloudDetail);
         _clouds.SetParameter("coastal_weather_direction", CoastalWeatherDirection());
 
-        _clouds.SetParameter("sun_direction", sunDirection);
-        _clouds.SetParameter("planet_radius", radius);
         _clouds.SetParameter("base_radius", radius + CloudBase);
         _clouds.SetParameter("top_radius", radius + CloudTop);
 
         _clouds.RenderPriority = 2;
+
+        _sunlit.AddRange(_faces);
+        _sunlit.AddRange(new[] { _water, _forest.SurfaceMaterial, _canopy.SurfaceMaterial, _scatter.SurfaceMaterial,
+            _broadScatter.SurfaceMaterial, _atmosphere, _clouds });
+
+        foreach (ShaderMaterial material in _sunlit) {
+
+            material.SetParameter("sun_direction", sunDirection);
+
+        }
+
+        RefreshAtmosphereLookup();
 
         _deck = SkyPass("Clouds", _clouds);
 
@@ -229,7 +246,7 @@ public sealed partial class Planet : Node3D {
 
     }
 
-    private void BuildFaces(float radius, Texture2D cloud, Vector3 sunDirection) {
+    private void BuildFaces(float radius, Texture2D cloud) {
 
         Shader shader = GD.Load<Shader>("res://Shaders/Ground/Ground.gdshader");
 
@@ -274,9 +291,6 @@ public sealed partial class Planet : Node3D {
             material.SetParameter("soil_colour", soilColour);
             material.SetParameter("soil_normal", soilNormal);
 
-            material.SetParameter("planet_radius", radius);
-            material.SetParameter("sun_direction", sunDirection);
-
             _faces[face] = material;
 
         }
@@ -308,6 +322,19 @@ public sealed partial class Planet : Node3D {
             foreach (ShaderMaterial face in _faces) {
 
                 face.SetParameter(parameter, setting);
+
+            }
+
+            return true;
+
+        }
+
+        // Every sunlit surface reads the same optics, or the ground and the sky disagree.
+        if (target == "atmosphere" && SharedOptics.Contains(parameter)) {
+
+            foreach (ShaderMaterial sunlit in _sunlit) {
+
+                sunlit.SetParameter(parameter, setting);
 
             }
 
@@ -353,14 +380,34 @@ public sealed partial class Planet : Node3D {
 
         }
 
-        _atmosphere.SetParameter("sun_optical_depth", AtmosphereLookup.Build(
-            _opticalParameters["planet_radius"], _opticalParameters["atmosphere_radius"],
+        double radius = _opticalParameters["planet_radius"];
+        double top = _opticalParameters["atmosphere_radius"];
+
+        Sunlight = new Sunlight(radius, top, _opticalParameters["rayleigh_height"], _opticalParameters["mie_height"],
+            _opticalParameters["ozone_height"], _opticalParameters["ozone_half_width"]);
+
+        Texture2D table = AtmosphereLookup.Build(radius, top,
             _opticalParameters["rayleigh_height"], _opticalParameters["mie_height"],
-            _opticalParameters["ozone_height"], _opticalParameters["ozone_half_width"]));
+            _opticalParameters["ozone_height"], _opticalParameters["ozone_half_width"]);
+
+        foreach (ShaderMaterial material in _sunlit) {
+
+            material.SetParameter("sun_optical_depth", table);
+            material.SetParameter("planet_radius", (float)radius);
+            material.SetParameter("atmosphere_radius", (float)top);
+            material.SetParameter("rayleigh_height", (float)_opticalParameters["rayleigh_height"]);
+            material.SetParameter("mie_height", (float)_opticalParameters["mie_height"]);
+            material.SetParameter("ozone_half_width", (float)_opticalParameters["ozone_half_width"]);
+            material.SetParameter("rayleigh_coefficients", Sunlight.RayleighCoefficients);
+            material.SetParameter("mie_coefficient", Sunlight.MieCoefficient);
+            material.SetParameter("ozone_coefficients", Sunlight.OzoneCoefficients);
+            material.SetParameter("sun_radiance", Sunlight.Radiance);
+
+        }
 
     }
 
-    public void Sync(double time, Vector3d eye, Vector3d? flightEye = null) {
+    public void Sync(double time, Vector3d eye, Vector3d subject, Vector3d? flightEye = null) {
 
         if (_shapeReady && _cloudShape != _sharedCloudShape) {
 
@@ -394,7 +441,7 @@ public sealed partial class Planet : Node3D {
         _mapGround.Visible = _mapOpen;
         _ground.Sync(time, flightEye ?? eye);
         if (_mapOpen) { _mapGround.Sync(time, eye); }
-        _cloudShadows.Sync(_body, time, eye, Main.SunDirection);
+        _cloudShadows.Sync(_body, time, eye, subject, Main.SunDirection);
 
         Basis cloudFrame = CloudWind.Frame(_body, time);
         Vector3d scatterEye = flightEye ?? eye;
@@ -417,6 +464,12 @@ public sealed partial class Planet : Node3D {
         }
 
         SyncWater(time, centre, materialAltitude, rotation, cloudFrame);
+
+        foreach (ShaderMaterial material in new[] { _forest.SurfaceMaterial, _canopy.SurfaceMaterial, _scatter.SurfaceMaterial, _broadScatter.SurfaceMaterial }) {
+
+            material.SetParameter("planet_centre", centre);
+
+        }
 
         _clouds.SetParameter("planet_centre", centre);
         _clouds.SetParameter("cloud_frame", cloudFrame);

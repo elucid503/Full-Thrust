@@ -8,9 +8,13 @@ namespace FullThrust.Game;
 
 public sealed partial class CloudRender : CompositorEffect {
 
+    // Twenty-four std140 vec4 slots; CloudRender.glsl names each one.
+    private const int ParameterFloats = 96;
+    private const int ParameterBytes = ParameterFloats * sizeof(float);
+
     private sealed record Frame(float[] Parameters, Rid[] Textures);
     private sealed record Target(Rid Color, Rid Depth);
-    private static readonly string[] TextureNames = { "cloud_map", "shape_noise", "detail_noise", "local_cloud_shadow", "local_cloud_lighting" };
+    private static readonly string[] TextureNames = { "cloud_map", "shape_noise", "detail_noise", "local_cloud_shadow", "local_cloud_lighting", "sun_optical_depth" };
     private readonly RDShaderFile _source = GD.Load<RDShaderFile>("res://Shaders/Clouds/CloudRender.glsl");
     private readonly Texture2Drd _color = new();
     private readonly Texture2Drd _depth = new();
@@ -68,7 +72,7 @@ public sealed partial class CloudRender : CompositorEffect {
         }
         material.SetParameter("cloud_buffer_ready", _color.TextureRdRid.IsValid);
         if (!visible) { return; }
-        float[] data = new float[80];
+        float[] data = new float[ParameterFloats];
         void Pack(int slot, string vector, string scalar, float fallback = 0.0f) {
 
             Vector3 v = material.GetParameter(vector).AsVector3();
@@ -94,6 +98,12 @@ public sealed partial class CloudRender : CompositorEffect {
         Put(data, 8, new Vector4(cloudFrame.X.X, cloudFrame.X.Y, cloudFrame.X.Z, Scalar("fog_enabled", 1)));
         Put(data, 9, new Vector4(cloudFrame.Y.X, cloudFrame.Y.Y, cloudFrame.Y.Z, 0.0f));
         Put(data, 10, new Vector4(cloudFrame.Z.X, cloudFrame.Z.Y, cloudFrame.Z.Z, 0.0f));
+        Put(data, 20, new Vector4(Scalar("atmosphere_radius", 0), Scalar("rayleigh_height", 0), Scalar("mie_height", 0), Scalar("ozone_half_width", 0)));
+        Pack(21, "rayleigh_coefficients", "mie_coefficient");
+        Vector3 ozone = material.GetParameter("ozone_coefficients").AsVector3();
+        Vector3 radiance = material.GetParameter("sun_radiance").AsVector3();
+        Put(data, 22, new Vector4(ozone.X, ozone.Y, ozone.Z, 0.0f));
+        Put(data, 23, new Vector4(radiance.X, radiance.Y, radiance.Z, 0.0f));
         Rid[] textures = new Rid[TextureNames.Length];
         for (int i = 0; i < textures.Length; i++) {
 
@@ -157,7 +167,7 @@ public sealed partial class CloudRender : CompositorEffect {
             _linear = Sampler(RenderingDevice.SamplerFilter.Linear, RenderingDevice.SamplerRepeatMode.ClampToEdge);
             _nearest = Sampler(RenderingDevice.SamplerFilter.Nearest, RenderingDevice.SamplerRepeatMode.ClampToEdge);
             _repeat = Sampler(RenderingDevice.SamplerFilter.Linear, RenderingDevice.SamplerRepeatMode.Repeat);
-            _uniformBuffer = _device.UniformBufferCreate(320);
+            _uniformBuffer = _device.UniformBufferCreate(ParameterBytes);
 
         }
         if (!_pipeline.IsValid) { return; }
@@ -182,9 +192,9 @@ public sealed partial class CloudRender : CompositorEffect {
         Put(data, 13, new Vector4(camera.Basis.Y.X, camera.Basis.Y.Y, camera.Basis.Y.Z, 0));
         Put(data, 14, new Vector4(camera.Basis.Z.X, camera.Basis.Z.Y, camera.Basis.Z.Z, 0));
         Put(data, 15, new Vector4(camera.Origin.X, camera.Origin.Y, camera.Origin.Z, 0));
-        byte[] bytes = new byte[320];
+        byte[] bytes = new byte[ParameterBytes];
         Buffer.BlockCopy(data, 0, bytes, 0, bytes.Length);
-        _device.BufferUpdate(_uniformBuffer, 0, 320, bytes);
+        _device.BufferUpdate(_uniformBuffer, 0, ParameterBytes, bytes);
         Godot.Collections.Array<RDUniform> uniforms = new();
         void Bind(int binding, RenderingDevice.UniformType type, params Rid[] ids) {
 
@@ -201,7 +211,7 @@ public sealed partial class CloudRender : CompositorEffect {
             Bind(i + 3, RenderingDevice.UniformType.SamplerWithTexture, i < 3 ? _repeat : _linear, RenderingServer.TextureGetRdTexture(frame.Textures[i]));
 
         }
-        Bind(8, RenderingDevice.UniformType.UniformBuffer, _uniformBuffer);
+        Bind(TextureNames.Length + 3, RenderingDevice.UniformType.UniformBuffer, _uniformBuffer);
         Rid set = UniformSetCacheRD.GetCache(_shader, 0, uniforms);
         foreach (RDUniform uniform in uniforms) { uniform.Dispose(); }
         long commands = _device.ComputeListBegin();

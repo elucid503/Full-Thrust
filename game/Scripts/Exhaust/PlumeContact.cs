@@ -34,16 +34,20 @@ internal sealed class PlumeContact {
     private readonly Field[] _fields = new Field[2];
     public float Padding { get; private set; }
 
-    public void Sync(Plume plume, Vessel owner) {
+    /// <summary>Metres along the emitter's axis to the first receiving hull, or infinity when the jet runs clear.</summary>
+    public float Block { get; private set; } = float.PositiveInfinity;
+
+    public void Sync(Node3D emitter, float exitRadius, Vessel owner) {
         Array.Clear(_targets);
         Array.Fill(_distances, float.MaxValue);
         Padding = 0.0f;
+        Block = float.PositiveInfinity;
         if (owner == null || Flight.Active == null) { return; }
+        float reach = exitRadius * (float)ExhaustInteraction.ReachRadii;
         void Consider(Vessel vessel) {
             if (vessel == owner) { return; }
-            Vector3 position = plume.ToLocal(Frames.Point(vessel.Position));
+            Vector3 position = emitter.ToLocal(Frames.Point(vessel.Position));
             float bound = (float)VesselCollision.Radius(vessel);
-            float reach = plume.ExitRadius * (float)ExhaustInteraction.ReachRadii;
             if (position.Y > bound || position.Y < -reach - bound || new Vector2(position.X, position.Z).Length() > bound + reach * 0.65f) { return; }
             float distance = position.LengthSquared();
             int slot = distance < _distances[0] ? 0 : distance < _distances[1] ? 1 : -1;
@@ -53,15 +57,19 @@ internal sealed class PlumeContact {
         }
         Consider(Flight.Active.Vessel);
         foreach (Flight.Tracked track in Flight.Active.Debris) { Consider(track.Vessel); }
+        Vector3d origin = Frames.Origin + Frames.Sim(emitter.GlobalPosition);
+        Vector3d axis = Frames.Sim(-emitter.GlobalBasis.Y).Normalized;
         for (int i = 0; i < 2; i++) {
             Vessel target = _targets[i];
             if (target == null) { continue; }
+            double hit = ExhaustInteraction.Raycast(target, origin, axis, reach);
+            if (hit >= 0.0) { Block = Mathf.Min(Block, (float)hit); }
             Field field = Fields.GetValue(target, Bake);
             if (field.Revision != VesselSurface.Revision(target)) { Fields.Remove(target); field = Fields.GetValue(target, Bake); }
             _fields[i] = field;
             Basis basis = new Basis(Frames.Rotation(target.Orientation));
             Transform3D hull = new Transform3D(basis, Frames.Point(target.Position) - basis.Y * (float)target.CentreOfMassZ);
-            _transforms[i] = hull.AffineInverse() * plume.GlobalTransform;
+            _transforms[i] = hull.AffineInverse() * emitter.GlobalTransform;
             bool changed = !field.Posed;
             for (int j = 0; j < field.Engines.Count; j++) {
                 EngineState engine = field.Engines[j];

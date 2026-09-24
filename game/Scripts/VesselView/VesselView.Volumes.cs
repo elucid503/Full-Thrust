@@ -161,25 +161,11 @@ public sealed partial class VesselView {
 
     }
 
-    private static void AttachCluster(Node3D node, Piece piece, float bellRadius, float ring, float deck, float reach) {
+    private static void AttachTail(Node3D node, Piece piece, float bellRadius, float ring, float deck, float reach) {
 
-        if (piece.Engines.Count < 2) {
-
-            return;
-
-        }
-
-        PlumeTemplate template = PlumeTemplate.For(piece.Stage.Fuel);
-
-        if (template.ClusterLayers.Count == 0) {
-
-            return;
-
-        }
-
-        piece.Cluster = Plume.Create("Cluster", template, ring + bellRadius, cluster: true);
-        piece.Cluster.Position = new Vector3(0.0f, deck - reach, 0.0f);
-        node.AddChild(piece.Cluster);
+        piece.Tail = ExhaustTail.Create(PlumeTemplate.For(piece.Stage.Fuel), bellRadius, ring);
+        piece.Tail.Position = new Vector3(0.0f, deck - reach, 0.0f);
+        node.AddChild(piece.Tail);
 
     }
 
@@ -371,6 +357,7 @@ public sealed partial class VesselView {
 
         // Waterfall's atmosphere depth: density to a power that stretches the thin upper air out.
         float air = Mathf.Pow(Mathf.Clamp(density / 1.225f, 0.0f, 1.0f), 0.512f);
+        float sunlit = Sunlit(body, Frames.Sim(Main.SunDirection).Normalized);
         float mach = _vessel.Aero.InAir ? Mathf.Clamp((float)_vessel.Aero.Mach / 6.0f, 0.0f, 1.0f) : 0.0f;
 
         Vector3d relativeAir = body.AirVelocityAt(_vessel.Position, now) - _vessel.Velocity;
@@ -387,7 +374,7 @@ public sealed partial class VesselView {
             }
 
             Stage stage = piece.Stage;
-            float exitPressure = stage.RatingPressurePascals > 0.0 ? (float)stage.RatingPressurePascals : DefaultExitPressure;
+            float exitPressure = 0.0f;
             float thrustEach = (float)stage.ThrustNewtons / Math.Max(stage.EngineCount, 1);
             float jetPressure = thrustEach / (Mathf.Pi * piece.BellRadius * piece.BellRadius);
             float lightShare = 1.0f / Mathf.Sqrt(piece.Engines.Count);
@@ -407,6 +394,8 @@ public sealed partial class VesselView {
 
                 EngineState state = stage.EngineStates[engine.Index];
                 engine.Power = _vessel.Intact ? (float)state.Power : 0.0f;
+                float rated = state.ExitPressure > 0.0 ? (float)state.ExitPressure : DefaultExitPressure;
+                exitPressure += rated / piece.Engines.Count;
 
                 PlumeInputs inputs = new PlumeInputs {
 
@@ -416,18 +405,20 @@ public sealed partial class VesselView {
                     Mach = mach,
                     Purge = _vessel.Intact ? (float)state.Purge : 0.0f,
                     Burnoff = _vessel.Intact ? (float)state.Burnoff : 0.0f,
-                    Cluster = piece.Engines.Count > 1 ? (float)stage.EnginesLit / piece.Engines.Count : 0.0f,
                     LightShare = lightShare,
 
                     AmbientPressure = pressure,
-                    ExitPressure = exitPressure,
+                    ExitPressure = rated,
+
+                    Sunlit = sunlit,
+                    Sun = Main.SunDirection,
 
                     EffectTime = _effectTime,
                     Delta = _effectDelta,
 
                 };
 
-                Flow(engine.Plume, wind, dynamicPressure, jetPressure, ref inputs);
+                (inputs.Bend, inputs.Stretch) = Flow(engine.Plume, wind, dynamicPressure, jetPressure);
                 engine.Plume.Source = _vessel;
                 engine.Plume.Drive(inputs);
 
@@ -443,35 +434,26 @@ public sealed partial class VesselView {
 
             }
 
-            if (piece.Cluster != null) {
+            float throttle = powerSum / piece.Engines.Count;
 
-                // The shared tail starts at the live nozzles and follows their thrust-weighted
-                // direction. Individual stream axes retain differential gimbal through the merge.
+            if (piece.Tail != null) {
+
+                // The tail starts at the live nozzles and follows their thrust-weighted direction;
+                // each stream keeps its own axis, so differential gimbal survives into the merge.
                 if (lit > 0 && axisSum.LengthSquared > 0.000001) {
+
                     Vector3 up = Frames.Direction(-axisSum.Normalized);
-                    piece.Cluster.GlobalTransform = new Transform3D(new Basis(new Quaternion(Vector3.Up, up)), Frames.Direction(exitSum / powerSum));
+                    piece.Tail.GlobalTransform = new Transform3D(new Basis(new Quaternion(Vector3.Up, up)), Frames.Direction(exitSum / powerSum));
+
                 }
-                piece.Cluster.BeginStreams();
-                foreach (Engine engine in piece.Engines) { piece.Cluster.AddStream(engine.Plume, engine.Power); }
 
-                PlumeInputs shared = new PlumeInputs {
+                piece.Tail.BeginStreams();
 
-                    Lit = lit > 0,
-                    Throttle = lit > 1 ? powerSum / piece.Engines.Count : 0.0f,
-                    Air = air,
-                    Mach = mach,
-                    Cluster = (float)lit / piece.Engines.Count,
-                    LightShare = lightShare,
-                    AmbientPressure = pressure,
-                    ExitPressure = exitPressure,
-                    EffectTime = _effectTime,
-                    Delta = _effectDelta,
+                foreach (Engine engine in piece.Engines) {
 
-                };
+                    piece.Tail.AddStream(engine.Plume, engine.Power);
 
-                Flow(piece.Cluster, wind, dynamicPressure, jetPressure, ref shared);
-                piece.Cluster.Source = _vessel;
-                piece.Cluster.Drive(shared);
+                }
 
             }
 
@@ -479,7 +461,35 @@ public sealed partial class VesselView {
 
                 Vector3d exit = lit > 0 ? Frames.Origin + exitSum / powerSum : Vector3d.Zero;
                 Vector3d axis = lit > 0 ? axisSum.Normalized : Vector3d.UnitZ;
-                piece.Impact.Sync(body, now, exit, axis, powerSum / piece.Engines.Count, surfaceWind, Main.SunDirection);
+                piece.Impact.Sync(body, now, exit, axis, throttle, surfaceWind, Main.SunDirection);
+
+            }
+
+            if (piece.Tail != null) {
+
+                TailInputs tail = new TailInputs {
+
+                    Throttle = throttle,
+                    Air = air,
+                    Expansion = Plume.Expansion(exitPressure, pressure, throttle),
+
+                    EffectTime = _effectTime,
+
+                };
+
+                (tail.Bend, tail.Stretch) = Flow(piece.Tail, wind, dynamicPressure, jetPressure);
+
+                if (piece.Impact != null && piece.Impact.Distance >= 0.0) {
+
+                    tail.Grounded = true;
+                    tail.GroundPoint = Frames.Point(piece.Impact.Surface);
+                    tail.GroundNormal = Frames.Direction(piece.Impact.Normal);
+                    tail.GroundDistance = (float)piece.Impact.Distance;
+
+                }
+
+                piece.Tail.Source = _vessel;
+                piece.Tail.Drive(tail);
 
             }
 
@@ -489,24 +499,39 @@ public sealed partial class VesselView {
 
     }
 
-    // Ambient air bends the tail sideways and stretches or stops it along the axis, in proportion
-    // to how its dynamic pressure compares with the jet's own.
-    private static void Flow(Plume plume, Vector3 wind, float dynamicPressure, float jetPressure, ref PlumeInputs inputs) {
+    // Whether the vessel stands in sunlight or in the body's cylindrical shadow, softened across the terminator.
+    private float Sunlit(CelestialBody body, Vector3d sun) {
 
-        inputs.Stretch = 1.0f;
+        double along = Vector3d.Dot(_vessel.Position, sun);
 
-        if (dynamicPressure <= 0.0f || jetPressure <= 0.0f) {
+        if (along >= 0.0) {
 
-            return;
+            return 1.0f;
 
         }
 
-        Vector3 local = plume.GlobalBasis.Inverse() * wind;
+        double off = (_vessel.Position - sun * along).Length;
+
+        return Mathf.SmoothStep((float)(body.Radius * 0.995), (float)(body.Radius * 1.01), (float)off);
+
+    }
+
+    // Ambient air bends the tail sideways and stretches or stops it along the axis, in proportion
+    // to how its dynamic pressure compares with the jet's own.
+    private static (Vector3 Bend, float Stretch) Flow(Node3D emitter, Vector3 wind, float dynamicPressure, float jetPressure) {
+
+        if (dynamicPressure <= 0.0f || jetPressure <= 0.0f) {
+
+            return (Vector3.Zero, 1.0f);
+
+        }
+
+        Vector3 local = emitter.GlobalBasis.Inverse() * wind;
         float speed = local.Length();
 
         if (speed < 0.001f) {
 
-            return;
+            return (Vector3.Zero, 1.0f);
 
         }
 
@@ -515,8 +540,9 @@ public sealed partial class VesselView {
         float downstream = -direction.Y;
         Vector3 lateral = new Vector3(direction.X, 0.0f, direction.Z);
 
-        inputs.Bend = lateral * ratio;
-        inputs.Stretch = downstream >= 0.0f ? 1.0f + 0.25f * ratio * downstream : 1.0f / (1.0f + 2.0f * ratio * -downstream);
+        float stretch = downstream >= 0.0f ? 1.0f + 0.25f * ratio * downstream : 1.0f / (1.0f + 2.0f * ratio * -downstream);
+
+        return (lateral * ratio, stretch);
 
     }
 
@@ -536,6 +562,8 @@ public sealed partial class VesselView {
             engine.FuelName = piece.Stage.Fuel?.Name;
 
         }
+
+        piece.Tail?.Use(template);
 
     }
 

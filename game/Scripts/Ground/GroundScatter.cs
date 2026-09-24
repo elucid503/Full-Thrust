@@ -405,11 +405,12 @@ public sealed partial class GroundScatter : Node3D {
             return;
 
         }
+        bool palmetto = _broad && grove.Grass && grove.Coastal;
         MultiMesh multi = new MultiMesh {
 
             TransformFormat = MultiMesh.TransformFormatEnum.Transform3D,
             UseColors = true,
-            Mesh = _broad && grove.Grass && grove.Coastal
+            Mesh = palmetto
                 ? _palmettos[Math.Abs((grove.Key.Row ^ grove.Key.Column) % 3)]
                 : _meshes[Math.Abs((grove.Key.Row ^ grove.Key.Column) % 3) * 2 + (grove.Grass ? 1 : 0)],
             InstanceCount = grove.Transforms.Length,
@@ -426,7 +427,8 @@ public sealed partial class GroundScatter : Node3D {
             Layers = 4,
             Multimesh = multi,
             MaterialOverride = _material,
-            CastShadow = GeometryInstance3D.ShadowCastingSetting.On,
+            // Swaying blades are finer than a shadow texel and only speckle the cascades as they move.
+            CastShadow = grove.Grass && !palmetto ? GeometryInstance3D.ShadowCastingSetting.Off : GeometryInstance3D.ShadowCastingSetting.On,
             GIMode = GeometryInstance3D.GIModeEnum.Disabled,
             ExtraCullMargin = 4.0f,
 

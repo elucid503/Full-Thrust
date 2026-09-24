@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 
 using FullThrust.Sim;
 
@@ -10,6 +11,9 @@ namespace FullThrust.Game;
 public sealed partial class CloudShadows : Node {
 
     private const int LightingResolution = 256;
+
+    // Matches cloud_shadow_depth in CloudShadowSampling.gdshaderinc, so the vessel shades like the ground.
+    public const float ShadowDepth = 0.85f;
     private readonly List<ShaderMaterial> _receivers = new();
     private SubViewport _viewport;
     private ShaderMaterial _material;
@@ -32,6 +36,14 @@ public sealed partial class CloudShadows : Node {
     private bool _hasMap;
     private double _updatedTime = double.NaN;
     private double _visibleTime;
+
+    private SubViewport _probeViewport;
+    private ShaderMaterial _probeMaterial;
+    private bool _probing;
+    private float _transmission = 1.0f;
+
+    // Share of direct sun the deck lets through to the subject, a few frames behind.
+    public float Transmission => Volatile.Read(ref _transmission);
 
     public void Build(Texture2D weather, Texture3D shape, Texture3D detail, float radius, float cloudBase, float cloudTop, Vector3 coastalWeather) {
 
@@ -75,7 +87,18 @@ public sealed partial class CloudShadows : Node {
         _backLightingMaterial = (ShaderMaterial)_lightingMaterial.Duplicate();
         _lightingViewport = LightingViewport(_lightingMaterial);
         _backLightingViewport = LightingViewport(_backLightingMaterial);
-        _materials = new[] { _material, _backMaterial, _lightingMaterial, _backLightingMaterial };
+        _probeMaterial = (ShaderMaterial)_material.Duplicate();
+        _probeMaterial.SetParameter("probe", true);
+        _probeViewport = new SubViewport {
+
+            Size = Vector2I.One,
+            Disable3D = true,
+            RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
+
+        };
+        AddChild(_probeViewport);
+        _probeViewport.AddChild(new ColorRect { Size = Vector2.One, Material = _probeMaterial, Color = Colors.White });
+        _materials = new[] { _material, _backMaterial, _lightingMaterial, _backLightingMaterial, _probeMaterial };
 
     }
 
@@ -119,7 +142,9 @@ public sealed partial class CloudShadows : Node {
 
     }
 
-    public void Sync(CelestialBody body, double time, Vector3d eye, Vector3 sun) {
+    public void Sync(CelestialBody body, double time, Vector3d eye, Vector3d subject, Vector3 sun) {
+
+        Probe(body, time, subject, sun);
 
         if (_pending && Engine.GetProcessFrames() > _pendingFrame) {
 
@@ -195,6 +220,54 @@ public sealed partial class CloudShadows : Node {
             receiver.SetParameter("shadow_ready", _hasMap ? (float)(1.0 - Ocean.Smooth(10000.0, 12000.0, eye.Length - body.Radius)) : 0.0f);
 
         }
+
+    }
+
+    private void Probe(CelestialBody body, double time, Vector3d subject, Vector3 sun) {
+
+        _probeMaterial.SetParameter("probe_position", Frames.Direction(body.ToBodyFixed(subject, time)));
+        _probeMaterial.SetParameter("map_sun", Frames.Direction(body.ToBodyFixed(Frames.Sim(sun), time)));
+        _probeMaterial.SetParameter("cloud_frame", CloudWind.Frame(body, time, true));
+
+        if (Volatile.Read(ref _probing)) {
+
+            return;
+
+        }
+
+        Rid texture = RenderingServer.TextureGetRdTexture(_probeViewport.GetTexture().GetRid());
+
+        if (!texture.IsValid) {
+
+            return;
+
+        }
+
+        // One texel, read back asynchronously: a synchronous read would stall on the GPU every frame.
+        _probing = true;
+        RenderingServer.CallOnRenderThread(Callable.From(() => {
+
+            Error error = RenderingServer.GetRenderingDevice().TextureGetDataAsync(texture, 0, Callable.From<byte[]>(Receive));
+
+            if (error != Error.Ok) {
+
+                Volatile.Write(ref _probing, false);
+
+            }
+
+        }));
+
+    }
+
+    private void Receive(byte[] data) {
+
+        if (data.Length > 0) {
+
+            Volatile.Write(ref _transmission, data[0] / 255.0f);
+
+        }
+
+        Volatile.Write(ref _probing, false);
 
     }
 

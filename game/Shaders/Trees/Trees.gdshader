@@ -2,6 +2,9 @@ shader_type spatial;
 render_mode cull_disabled;
 
 uniform vec3 eye_position;
+uniform vec3 planet_centre = vec3(0.0);
+uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
+uniform float planet_radius = 1274200.0;
 uniform float wind_time;
 uniform sampler2D broadleaf_map : source_color, filter_linear_mipmap_anisotropic;
 uniform sampler2D pine_map : source_color, filter_linear_mipmap_anisotropic;
@@ -9,8 +12,9 @@ uniform sampler2D birch_map : source_color, filter_linear_mipmap_anisotropic;
 varying vec3 local_position;
 varying float distance_to_eye;
 varying vec3 world_position;
-varying float cloud_light;
+varying vec3 sun_light;
 varying float leaf_amount;
+#include "res://Shaders/Atmosphere/Sunlight.gdshaderinc"
 #include "res://Shaders/Clouds/CloudShadowSampling.gdshaderinc"
 
 void vertex() {
@@ -32,8 +36,7 @@ void vertex() {
 void fragment() {
     float leaves = step(0.5, UV2.x);
     leaf_amount = leaves;
-    vec2 shadow = local_cloud_light(world_position);
-    cloud_light = 1.0 - 0.32 * shadow.x * shadow.y;
+    sun_light = sun_radiance * sun_transmittance(world_position - planet_centre) * ground_cloud_sun(world_position);
     vec4 foliage = vec4(1.0);
     if (leaves > 0.5) {
         if (UV2.y < 0.5) { foliage = texture(broadleaf_map, UV); }
@@ -54,8 +57,8 @@ void fragment() {
 
 void light() {
 
-    float shade = LIGHT_IS_DIRECTIONAL ? cloud_light : 1.0;
+    vec3 radiance = (LIGHT_IS_DIRECTIONAL ? sun_light : LIGHT_COLOR) * ATTENUATION;
     float diffuse = max(dot(NORMAL, LIGHT), 0.0) + max(dot(-NORMAL, LIGHT), 0.0) * leaf_amount * 0.2;
-    DIFFUSE_LIGHT += LIGHT_COLOR * ATTENUATION * shade * diffuse / PI;
+    DIFFUSE_LIGHT += radiance * diffuse / PI;
 
 }

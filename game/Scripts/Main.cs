@@ -12,13 +12,11 @@ public sealed partial class Main : Node3D {
 
     public static readonly Vector3 SunDirection = new Vector3(0.93f, 0.20f, 0.31f).Normalized();
 
-    private const float EarthshineEnergy = 0.26f;
-
     // Wide enough to hold the vessel and its plume; the probe is a mirror of the planet, not a room.
     private const float ProbeExtent = 48.0f;
 
-    // Keep nearby vegetation shadows bounded independently of a distant free camera.
-    private const float ShadowSlack = 45.0f;
+    // Fixed cascades: a range that tracks the camera re-fits every shadow texel as it zooms.
+    private const float ShadowRange = 480.0f;
 
     private Flight _flight;
     private Planet _planet;
@@ -64,18 +62,24 @@ public sealed partial class Main : Node3D {
         _sun.LookAtFromPosition(Vector3.Zero, -SunDirection, Vector3.Up);
 
         _sun.LightEnergy = 1.0f;
-        _sun.LightColor = new Color(1.0f, 0.973f, 0.941f);
 
-        // Godot's frustum culler goes degenerate over a planet-sized scene, so the cascade is kept to the vessel.
+        // Godot's frustum culler goes degenerate over a planet-sized scene, so the cascades are kept to the vessel.
         _sun.ShadowEnabled = true;
-        _sun.DirectionalShadowMode = DirectionalLight3D.ShadowMode.Parallel2Splits;
+        _sun.DirectionalShadowMode = DirectionalLight3D.ShadowMode.Parallel4Splits;
+        _sun.DirectionalShadowMaxDistance = ShadowRange;
+        _sun.DirectionalShadowSplit1 = 0.05f;
+        _sun.DirectionalShadowSplit2 = 0.15f;
+        _sun.DirectionalShadowSplit3 = 0.40f;
         _sun.DirectionalShadowBlendSplits = true;
         _sun.DirectionalShadowFadeStart = 0.85f;
-        _sun.ShadowBias = 0.06f;
-        _sun.ShadowNormalBias = 0.8f;
-        _sun.ShadowBlur = 0.35f;
+        _sun.ShadowBias = 0.04f;
+        _sun.ShadowNormalBias = 1.1f;
+        _sun.ShadowBlur = 0.5f;
 
+        // Only the vehicle: every other surface already carries its own sky and ground light.
         _earthshine.LightColor = new Color(0.62f, 0.72f, 0.88f);
+        _earthshine.LightCullMask = VesselView.VehicleLayer;
+        _earthshine.SkyMode = DirectionalLight3D.SkyModeEnum.LightOnly;
         _earthshine.ShadowEnabled = false;
 
         // The sky is a star map, so on its own it leaves a metal nothing to mirror. In low orbit the
@@ -106,6 +110,7 @@ public sealed partial class Main : Node3D {
         };
 
         _planet.Build(_flight.Body, SunDirection);
+        _starfield.SetParameter("sun_colour", _planet.Sunlight.Radiance / Mathf.Pi);
         _complex.Build(_flight.Body, _flight.Site);
         _vessel.Build(_flight.Vessel);
         _hud.Build(_flight);
@@ -195,9 +200,6 @@ public sealed partial class Main : Node3D {
 
         Vector3 up = Frames.Direction(_flight.Vessel.Position.Normalized);
 
-        _earthshine.LookAtFromPosition(Vector3.Zero, up, Mathf.Abs(up.Y) > 0.99f ? Vector3.Right : Vector3.Up);
-        _earthshine.LightEnergy = EarthshineEnergy * Mathf.Max(up.Dot(SunDirection), 0.0f);
-
         Vector3 focus = Frames.Point(_flight.Vessel.Position);
 
         _vessel.Visible = _flight.Vessel.Fate != VesselFate.BurnedUp;
@@ -224,9 +226,6 @@ public sealed partial class Main : Node3D {
         bool free = _map.Open ? _map.ReturnToFreeCamera : FreeCamera.Flying;
         _sound.Sync(delta, free ? _free.GlobalTransform : _camera.View, !free);
 
-        // Two bounded cascades retain trunk/rock contact shadows without covering kilometres of scatter.
-        _sun.DirectionalShadowMaxDistance = Mathf.Clamp(_camera.Distance + ShadowSlack, 180.0f, 300.0f);
-
         // The ground subdivides towards whoever is looking at it, and culls what is under their
         // horizon - so it has to be the camera actually rendering, or the map frames a whole planet
         // and gets back only the hemisphere the vehicle can see.
@@ -251,7 +250,9 @@ public sealed partial class Main : Node3D {
 
         long planetStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         Vector3d flightEye = _map.ReturnToFreeCamera ? _free.Where : Frames.Origin + Frames.Sim(_camera.Eye);
-        _planet.Sync(_flight.Time, eye, _map.Open ? flightEye : null);
+        Vector3d subject = Frames.Anchor ?? _flight.Vessel.Position;
+        _planet.Sync(_flight.Time, eye, subject, _map.Open ? flightEye : null);
+        SyncLight(subject);
         PlanetMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(planetStarted).TotalMilliseconds;
         _complex.Sync(_flight.Time, eye);
 
@@ -290,6 +291,24 @@ public sealed partial class Main : Node3D {
             }
 
         }
+
+    }
+
+    // Sun and planet as the vehicle sees them; the ground, sea and vegetation light themselves per pixel.
+    private void SyncLight(Vector3d subject) {
+
+        Sunlight light = _planet.Sunlight;
+        Vector3d sun = Frames.Sim(SunDirection);
+
+        float clouds = 1.0f - CloudShadows.ShadowDepth * (1.0f - _planet.CloudTransmission);
+        Vector3 direct = light.Transmittance(subject, sun) * light.Radiance * (clouds / Mathf.Pi);
+
+        _sun.LightColor = new Color(direct.X, direct.Y, direct.Z).LinearToSrgb();
+
+        Vector3 arriving = -Frames.Direction(light.Reflected(subject, sun, out double irradiance));
+
+        _earthshine.LookAtFromPosition(Vector3.Zero, arriving, Mathf.Abs(arriving.Y) > 0.99f ? Vector3.Right : Vector3.Up);
+        _earthshine.LightEnergy = (float)irradiance;
 
     }
 

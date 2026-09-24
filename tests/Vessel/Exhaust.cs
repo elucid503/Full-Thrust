@@ -3,6 +3,16 @@ using FullThrust.Sim;
 namespace FullThrust.Sim.Tests;
 
 public static partial class Program {
+    private static void Nozzles() {
+        Section("nozzle expansion");
+        Expect("sonic throat is the critical ratio", Math.Abs(Nozzle.PressureRatio(1.0) - Math.Pow(2.0 / 2.2, 6.0)) < 1e-12, "gamma 1.2");
+        Expect("booster bell exits near sea level", Math.Abs(Nozzle.PressureRatio(16.0) - 0.00677) < 0.0001, $"ratio={Nozzle.PressureRatio(16.0)}");
+        Expect("larger bells expand further", Nozzle.PressureRatio(165.0) < Nozzle.PressureRatio(28.8), "monotonic");
+        double booster = Zenith.BuildStage().EngineStates[0].ExitPressure;
+        double upper = Meridian.BuildStage().EngineStates[0].ExitPressure;
+        Expect("stage bells rate booster above upper stage", booster > 50_000.0 && upper < booster && upper > 5_000.0, $"booster={booster} upper={upper}");
+    }
+
     private static void ExhaustContacts() {
         Section("volumetric exhaust contacts");
         Vessel source = new("source", new[] { Meridian.BuildStage() }) { Throttle = 1.0 };

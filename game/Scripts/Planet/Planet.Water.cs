@@ -16,7 +16,7 @@ public sealed partial class Planet {
 
     public Wakes Wakes { get; private set; }
 
-    private void BuildWater(float radius, Texture2D cloud, Vector3 sunDirection) {
+    private void BuildWater(float radius, Texture2D cloud) {
 
         WaterTextures.Bake();
 
@@ -34,8 +34,6 @@ public sealed partial class Planet {
         _water.SetParameter("coastal_weather_direction", CoastalWeatherDirection());
         _water.SetParameter("base_radius", radius + CloudBase);
         _water.SetParameter("top_radius", radius + CloudTop);
-        _water.SetParameter("planet_radius", radius);
-        _water.SetParameter("sun_direction", sunDirection);
 
         Wakes = new Wakes { Name = "Wakes" };
         AddChild(Wakes);

@@ -76,8 +76,6 @@ uniform float sea_roughness_far = 0.28;
 uniform float swell_near = 1.5;
 uniform float swell_far = 26.0;
 
-uniform float cloud_shadow : hint_range(0.0, 1.0) = 0.32;
-
 uniform float snow_albedo : hint_range(0.4, 1.0) = 0.72;
 
 // Optional close-range palette adjustment, neutral by default.
@@ -95,12 +93,13 @@ uniform float night_gain = 0.32;
 uniform float night_dusk = -0.02;
 uniform float night_dark = -0.20;
 
-varying float cloud_light;
+varying vec3 sun_light;
 varying float glint_share;
 varying vec3 world_position;
 varying float surface_elevation;
 instance uniform float lod_morph : instance_index(0) = 0.0;
 
+#include "res://Shaders/Atmosphere/Sunlight.gdshaderinc"
 #include "res://Shaders/Clouds/CloudField.gdshaderinc"
 #include "res://Shaders/Ground/OceanField.gdshaderinc"
 #include "res://Shaders/Clouds/CloudShadowSampling.gdshaderinc"
@@ -134,10 +133,6 @@ float surface_grain(vec2 metres, float scale) {
         mix(landscape_hash(vec3(low.x, high.y, scale)), landscape_hash(vec3(high, scale)), f.x), f.y);
 
 }
-
-// Offset the shadow sample sunward by deck height over the cosine of the solar zenith angle, so a
-// cloud shades the ground it is actually over rather than the ground directly beneath it.
-
 
 float overcast(vec3 radial, vec3 up) {
 
@@ -450,12 +445,12 @@ void fragment() {
         vec2 local_shadow = local_cloud_light(world_position);
         float opacity = local_shadow.x;
         if (local_shadow.y < 0.999) { opacity = mix(overcast(radial, up), opacity, local_shadow.y); }
-        lit -= cloud_shadow * opacity;
+        lit -= cloud_shadow_depth * opacity;
 
     }
 
-    // Cloud attenuation belongs to direct illumination, not the material reflectance.
-    cloud_light = lit;
+    // Cloud and air attenuation belong to direct illumination, not the material reflectance.
+    sun_light = sun_radiance * sun_transmittance(radial) * lit;
     ALBEDO = mix(ground, water, cover);
 
     METALLIC = 0.0;
@@ -492,9 +487,10 @@ void fragment() {
     float ascent = smoothstep(350.0, 1800.0, camera_altitude);
     lights *= ascent;
 
-    float sky_day = smoothstep(-0.08, 0.22, dot(up, sun_direction));
-    vec3 sky_irradiance = mix(vec3(0.52, 0.68, 1.0), vec3(0.78, 0.82, 0.88), 1.0 - lit)
-        * sky_fill * sky_day * dome * AO;
+    // Twilight sky is the deep blue of light that has crossed the ozone layer edgewise.
+    vec3 sky_tint = mix(vec3(0.36, 0.40, 0.66), vec3(0.52, 0.68, 1.0), smoothstep(-0.02, 0.25, dot(up, sun_direction)));
+    vec3 sky_irradiance = mix(sky_tint, vec3(0.78, 0.82, 0.88), 1.0 - lit)
+        * sky_fill * skylight(dot(up, sun_direction)) * dome * AO;
 
     // The environment cubemap supplies the reflected sky to the sea. This small Fresnel fill keeps
     // the horizon physically readable while that low-resolution probe is filtering its brightest
@@ -529,7 +525,8 @@ void light() {
     float fd90 = 0.5 + 2.0 * ROUGHNESS * lh * lh;
     float diffuse = (1.0 + (fd90 - 1.0) * pow(1.0 - nl, 5.0))
         * (1.0 + (fd90 - 1.0) * pow(1.0 - nv, 5.0));
-    vec3 radiance = LIGHT_COLOR * ATTENUATION * cloud_light;
+    // Every directional light that reaches the ground is the sun; its per-pixel colour replaces the vessel's.
+    vec3 radiance = (LIGHT_IS_DIRECTIONAL ? sun_light : LIGHT_COLOR) * ATTENUATION;
     DIFFUSE_LIGHT += radiance * nl * diffuse / PI;
     float alpha = max(ROUGHNESS * ROUGHNESS, 0.0025);
     float alpha2 = alpha * alpha;

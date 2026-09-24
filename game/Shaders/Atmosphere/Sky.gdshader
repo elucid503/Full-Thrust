@@ -16,6 +16,9 @@ uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
 uniform float atmosphere_amount : hint_range(0.0, 1.0) = 0.0;
 uniform float daylight : hint_range(0.0, 1.0) = 0.0;
 
+// Above the air, for the camera's own view, which the atmosphere pass then dims.
+uniform vec3 sun_colour = vec3(1.0);
+
 uniform float sun_angular_radius = 0.00465;
 uniform float sun_intensity = 46.0;
 uniform float limb_darkening : hint_range(0.0, 1.0) = 0.6;
@@ -58,7 +61,10 @@ void sky() {
 
             float mu = sqrt(max(1.0 - pow(angle / sun_angular_radius, 2.0), 0.0));
 
-            colour += LIGHT0_COLOR * sun_intensity * (1.0 - limb_darkening * (1.0 - mu));
+            // Reflections see the sun as the vehicle does: reddened, clouded or eclipsed.
+            vec3 disc = AT_CUBEMAP_PASS ? LIGHT0_COLOR : sun_colour;
+
+            colour += disc * sun_intensity * (1.0 - limb_darkening * (1.0 - mu));
 
         }
 

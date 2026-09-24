@@ -16,7 +16,6 @@ uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
 uniform vec3 planet_centre = vec3(0.0, 0.0, 0.0);
 uniform float planet_radius = 1274200.0;
 uniform bool shoreline_debug = false;
-uniform float cloud_shadow : hint_range(0.0, 1.0) = 0.32;
 
 // Light passing through a crest facing away from the sun.
 uniform vec3 crest_colour : source_color = vec3(0.10, 0.42, 0.36);
@@ -50,12 +49,13 @@ uniform vec4 wake_bounds = vec4(0.0, 0.0, 0.0, -1.0);
 
 varying vec3 rest_position;
 varying vec3 world_position;
-varying float cloud_light;
+varying vec3 sun_light;
 varying float reflectance;
 
 instance uniform float lod_morph : instance_index(0) = 0.0;
 instance uniform float mesh_spacing : instance_index(1) = 1.0;
 
+#include "res://Shaders/Atmosphere/Sunlight.gdshaderinc"
 #include "res://Shaders/Clouds/CloudField.gdshaderinc"
 #include "res://Shaders/Ground/OceanField.gdshaderinc"
 #include "res://Shaders/Clouds/CloudShadowSampling.gdshaderinc"
@@ -315,10 +315,10 @@ void fragment() {
         vec2 local_shadow = local_cloud_light(world_position);
         float opacity = local_shadow.x;
         if (local_shadow.y < 0.999) { opacity = mix(1.0 - cloud_transmittance(radial, sun_direction, 0.004), opacity, local_shadow.y); }
-        lit -= cloud_shadow * opacity;
+        lit -= cloud_shadow_depth * opacity;
 
     }
-    cloud_light = lit;
+    sun_light = sun_radiance * sun_transmittance(radial) * lit;
 
     // Swell: the Jacobian turns rest-frame slopes into slopes of the surface as drawn.
     vec3 shift;
@@ -426,8 +426,7 @@ void fragment() {
     mirrored.a *= 1.0 - smoothstep(300.0, 600.0, surface_distance);
 
     float behind_crest = pow(clamp(dot(-view_world, sun_direction), 0.0, 1.0), 4.0);
-    vec3 crest_light = crest_colour * crest_strength * behind_crest * max(crest, 0.0)
-        * smoothstep(-0.05, 0.25, dot(up, sun_direction)) * lit;
+    vec3 crest_light = crest_colour * crest_strength * behind_crest * max(crest, 0.0) * sun_light / PI;
 
     // The environment cubemap filters its brightest sky away; a small Fresnel fill keeps the horizon readable.
     vec3 horizon = vec3(0.16, 0.29, 0.43) * fresnel * daylight * 0.18;
@@ -464,7 +463,7 @@ void fragment() {
 void light() {
 
     float nl = max(dot(NORMAL, LIGHT), 0.0);
-    vec3 radiance = LIGHT_COLOR * ATTENUATION * cloud_light;
+    vec3 radiance = (LIGHT_IS_DIRECTIONAL ? sun_light : LIGHT_COLOR) * ATTENUATION;
     DIFFUSE_LIGHT += radiance * nl / PI;
     float nv = max(dot(NORMAL, VIEW), 0.001);
     vec3 half_vector = normalize(LIGHT + VIEW);

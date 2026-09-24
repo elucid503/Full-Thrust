@@ -9,6 +9,7 @@ uniform sampler2D local_cloud_lighting : filter_linear, repeat_disable;
 #endif
 
 #ifndef CLOUD_COMPUTE
+#include "res://Shaders/Atmosphere/Sunlight.gdshaderinc"
 #include "res://Shaders/Clouds/CloudShadowSampling.gdshaderinc"
 #endif
 
@@ -50,19 +51,31 @@ float cloud_sun_optical(vec3 p, float footprint, vec2 conditions, float height, 
 
 }
 
-vec3 illumination(vec3 p, float height, float scattering, float density, float sun_optical) {
+// Forward lobe for the silver lining, a weak back lobe for the glory side.
+float cloud_phase(float mu, float g) {
 
-    vec3 up = p / (base_radius + height * (top_radius - base_radius));
-    float solar = dot(up, sun_direction);
-    float day = smoothstep(-0.09, 0.08, solar);
+    return 0.72 * phase(mu, g) + 0.28 * phase(mu, -0.36 * g);
+
+}
+
+vec3 illumination(vec3 p, float height, vec3 scattering, float density, float sun_optical) {
+
+    float solar = dot(p, sun_direction) / length(p);
     float optical = density * 50.0 * extinction + sun_optical;
-    float transmission = exp(-optical);
-    float multiple = 0.32 * exp(-optical * 0.35) + 0.08 * exp(-optical * 0.08);
-    vec3 sunlight = mix(vec3(1.0, 0.38, 0.13), vec3(1.0, 0.96, 0.9), smoothstep(-0.04, 0.12, solar));
+
+    // Each scattering octave is weaker, reaches deeper and has forgotten more of the sun's direction.
+    float scattered = exp(-optical) * scattering.x * 0.24 + exp(-optical * 0.35) * scattering.y * 0.32
+        + exp(-optical * 0.08) * scattering.z * 0.08;
+
+    // Air and the planet's limb colour the sun per sample, so a tower stays lit after its base goes dark.
+    vec3 sunlight = sunlight_colour(p) * sun_power;
+
     height = clamp(height, 0.0, 1.0);
-    vec3 ambient = vec3(0.43, 0.58, 0.83) * ambient_gain * mix(0.4, 1.0, height) * exp(-density * 0.5);
-    return (sunlight * sun_power * (transmission * scattering * 0.24 + multiple) + ambient) * day
-        + vec3(0.0007, 0.001, 0.0018);
+    vec3 sky = mix(vec3(0.36, 0.40, 0.66), vec3(0.43, 0.58, 0.83), smoothstep(-0.02, 0.25, solar))
+        * ambient_gain * skylight(solar) * mix(0.4, 1.0, height);
+    vec3 bounce = sunlight * max(solar, 0.0) * vec3(0.016, 0.017, 0.015) * (1.0 - height);
+
+    return sunlight * scattered + (sky + bounce) * exp(-density * 0.5) + vec3(0.0007, 0.001, 0.0018);
 
 }
 
@@ -99,7 +112,7 @@ vec4 cloud_radiance(vec3 origin, vec3 ray, float scene_distance, float angular_f
     // only near clouds, where fixed offsets would show as slices, can afford it.
     jitter = mix(jitter, 0.5, smoothstep(3000.0, 12000.0, start));
     float mu = dot(ray, sun_direction);
-    float scattering = 0.72 * phase(mu, 0.55) + 0.28 * phase(mu, -0.2);
+    vec3 scattering = vec3(cloud_phase(mu, 0.55), cloud_phase(mu, 0.275), cloud_phase(mu, 0.1375));
     vec2 light_uv = vec2(0.0);
     vec2 light_uv_step = vec2(0.0);
     float cache_strength = 0.0;
@@ -213,9 +226,11 @@ vec4 cloud_radiance(vec3 origin, vec3 ray, float scene_distance, float angular_f
         air_depth += exp(-height / 5600.0) * distance * 0.25;
 
     }
-    vec3 air_transmission = exp(-vec3(5.8e-6, 1.35e-5, 3.31e-5) * air_depth);
-    float day = smoothstep(-0.12, 0.08, dot(normalize(origin + ray * distance), sun_direction));
-    vec3 haze = vec3(0.12, 0.24, 0.43) * day;
+    vec3 air_transmission = exp(-rayleigh_coefficients * air_depth);
+    vec3 middle = origin + ray * distance * 0.5;
+    // Skylight plus a forward glow of the sun's own colour, which is what turns sunset haze amber.
+    vec3 haze = vec3(0.12, 0.24, 0.43) * skylight(dot(normalize(middle), sun_direction))
+        + sunlight_colour(middle) * vec3(0.025, 0.02, 0.0125) * phase(mu, 0.6);
     return vec4(radiance * air_transmission + haze * (1.0 - air_transmission) * alpha, alpha);
 
 }

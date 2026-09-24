@@ -17,6 +17,7 @@ public sealed partial class ExhaustImpact : Node3D {
 
     private GpuParticles3D _smoke;
     private GpuParticles3D _spray;
+    private OmniLight3D _light;
     private ParticleProcessMaterial _dust;
     private ParticleProcessMaterial _steam;
     private ShaderMaterial _smokeSkin;
@@ -33,6 +34,12 @@ public sealed partial class ExhaustImpact : Node3D {
     public float Strength { get; private set; }
     public bool Water => _water;
     public Vector3d Point { get; private set; }
+
+    /// <summary>Where the axis meets the surface this frame, however weakly: metres from the exit
+    /// (negative when out of reach), the inertial point and its outward vertical.</summary>
+    public double Distance { get; private set; } = -1.0;
+    public Vector3d Surface { get; private set; }
+    public Vector3d Normal { get; private set; }
 
     public static ExhaustImpact Create(PlumeTemplate template, float bellRadius, int nozzles) {
 
@@ -59,6 +66,20 @@ public sealed partial class ExhaustImpact : Node3D {
         impact._smoke.DrawPass1 = new BoxMesh { Size = Vector3.One, Material = impact._smokeSkin };
         impact.AddChild(impact._smoke);
         impact.AddChild(impact._spray);
+
+        // The strike lights the ground and the billows around it, not only the nozzle's own light.
+        impact._light = new OmniLight3D {
+
+            Name = "Strike",
+            TopLevel = true,
+            OmniAttenuation = 1.4f,
+            ShadowEnabled = false,
+            LightColor = template.LightAirColour,
+            Visible = false,
+
+        };
+
+        impact.AddChild(impact._light);
 
         return impact;
 
@@ -252,10 +273,12 @@ public sealed partial class ExhaustImpact : Node3D {
         _smokeSkin.SetParameter("effect_time", (float)(time % 4096.0));
 
         float reach = _bellRadius * ReachRadii;
-        double hit = Hit(body, time, exit, axis, reach);
+        double hit = power > 0.001f ? Hit(body, time, exit, axis, reach) : -1.0;
+        Distance = hit;
 
         if (!Plume.Enabled || power <= 0.001f || hit < 0.0) {
 
+            _light.Visible = false;
             Stop();
             return;
 
@@ -263,6 +286,9 @@ public sealed partial class ExhaustImpact : Node3D {
 
         Vector3d point = exit + axis * hit;
         Vector3d up = point.Normalized;
+        Surface = point;
+        Normal = up;
+        Light(point, up, power * Mathf.Pow(Mathf.Clamp(1.0f - (float)hit / (reach * 0.6f), 0.0f, 1.0f), 2.0f));
         float strength = power * Mathf.Clamp(1.0f - (float)hit / reach, 0.0f, 1.0f) * _template.SmokeAmount;
         strength *= Mathf.SmoothStep(0.0f, 0.35f, strength);
 
@@ -330,6 +356,23 @@ public sealed partial class ExhaustImpact : Node3D {
         Strength = strength;
         Point = point;
         Active = true;
+
+    }
+
+    private void Light(Vector3d point, Vector3d up, float glow) {
+
+        _light.Visible = glow > 0.01f;
+
+        if (!_light.Visible) {
+
+            return;
+
+        }
+
+        _light.GlobalPosition = Frames.Point(point) + Frames.Direction(up) * (_bellRadius * 3.0f);
+        _light.OmniRange = _bellRadius * (14.0f + 26.0f * glow);
+        _light.LightEnergy = glow * _template.LightEnergy * 2.2f;
+        _light.LightColor = _template.LightAirColour;
 
     }
 
